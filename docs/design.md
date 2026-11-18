@@ -921,5 +921,10 @@ The first stage was played in a window, with sound, from `work/game/inhale`.
   Windows path (`taskkill /T`) was not tried.
 - Both builds print a traceback from `nx2/shader_census.py`, which reads `romfs/Pack/ZsDic.pack.zs` (the other game's
   file), then "the shader list was not made". It is make_game's own and the build goes on. Not looked into.
-- Not tried: the window itself clicked through by a person on either system, the release workflow on GitHub.
+- Played by hand (the user): the AppImage's window, a build into the default `~/Games/Inhale`, Play: the game works.
+- The release workflow (run 44315474239, from a branch with a commit adding it to the push trigger, dropped after):
+  the three jobs passed, and the `nightly` prerelease got `Inhale-x86_64.AppImage` (245 MB), `Inhale-Setup-x64.exe`
+  (132 MB) and `SHA256SUMS`. Downloaded, both match the sums; the AppImage carries the hot list and no profiles, and
+  its `--cli --check` in a clean `ubuntu:22.04` container accepts the package.
+- Not tried: the window clicked through on Windows; Cancel there.
 
