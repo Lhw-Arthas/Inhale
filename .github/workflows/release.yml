@@ -1,4 +1,5 @@
-# The release packages (packaging/): Inhale-x86_64.AppImage and Inhale-Setup-x64.exe, each with its build tools inside,
+# The release packages (packaging/): Inhale-x86_64.AppImage, Inhale-Setup-x64.exe and Inhale-Windows-x64.zip (the same
+# install folder unpacked), each with its build tools inside,
 # built on Linux in the packaging image (packaging/linux/docker.sh, pulled from ghcr.io: pkg-image.yml), with SHA256SUMS.
 # A v* tag publishes a release (a prerelease for -rc.N); a push to main, or Run workflow, makes the rolling "nightly"
 # prerelease again at that commit.
@@ -72,6 +73,7 @@ jobs:
           A=work/pkg/Inhale-x86_64.AppImage
           "$A" --appimage-extract-and-run --cli --help | head -3
           (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$A" --appimage-extract >/dev/null)
+          test -f "$RUNNER_TEMP/squashfs-root/recomplauncher.json"
           R=$RUNNER_TEMP/squashfs-root/usr/lib/inhale
           printf '#include <stdio.h>\nint main(void){puts("ok");return 0;}\n' > "$RUNNER_TEMP/t.c"
           "$R/llvm/upstream/bin/clang" --sysroot="$R/sysroot" -fuse-ld=lld "$RUNNER_TEMP/t.c" -o "$RUNNER_TEMP/t"
@@ -110,17 +112,22 @@ jobs:
         env:
           INHALE_VERSION: ${{ needs.version.outputs.name }}
         run: packaging/linux/docker.sh windows
-      # (the staged Python starts under Wine and reaches make_game.py)
+      # (the staged Python starts under Wine and reaches make_game.py, by itself and through Inhale.exe --cli)
       - name: Smoke test
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends wine64
           export WINEPREFIX="$RUNNER_TEMP/wine" WINEDEBUG=-all WINEDLLOVERRIDES="mscoree=;mshtml="
           cd work/pkg/win-stage
-          "$(command -v wine || command -v wine64 || echo /usr/lib/wine/wine64)" python/python.exe -I nx2/make_game.py --help | head -3
+          WINE=$(command -v wine || command -v wine64 || echo /usr/lib/wine/wine64)
+          "$WINE" python/python.exe -I nx2/make_game.py --help | head -3
+          "$WINE" Inhale.exe --cli --help | head -3
+          unzip -l ../Inhale-Windows-x64.zip Inhale.exe
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
-          path: work/pkg/Inhale-Setup-x64.exe
+          path: |
+            work/pkg/Inhale-Setup-x64.exe
+            work/pkg/Inhale-Windows-x64.zip
           if-no-files-found: error
           compression-level: 0
 
@@ -142,7 +149,7 @@ jobs:
         env:
           NAME: ${{ needs.version.outputs.name }}
         run: |
-          cd dist && sha256sum Inhale-x86_64.AppImage Inhale-Setup-x64.exe > SHA256SUMS && cat SHA256SUMS && cd ..
+          cd dist && sha256sum Inhale-x86_64.AppImage Inhale-Setup-x64.exe Inhale-Windows-x64.zip > SHA256SUMS && cat SHA256SUMS && cd ..
           last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
           {
             echo "Inhale $NAME ($(git rev-parse --short HEAD)). Unsigned: see the README, \"Play (no command line)\"."
@@ -156,7 +163,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NAME: ${{ needs.version.outputs.name }}
         run: |
-          files=(dist/Inhale-x86_64.AppImage dist/Inhale-Setup-x64.exe dist/SHA256SUMS)
+          files=(dist/Inhale-x86_64.AppImage dist/Inhale-Setup-x64.exe dist/Inhale-Windows-x64.zip dist/SHA256SUMS)
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
             pre=(); [[ $GITHUB_REF_NAME == *-rc.* ]] && pre=(--prerelease)
             gh release create "$GITHUB_REF_NAME" "${pre[@]}" --verify-tag --title "Inhale $GITHUB_REF_NAME" \

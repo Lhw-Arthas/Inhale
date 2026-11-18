@@ -58,6 +58,7 @@ VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
   Delete "$INSTDIR\CREDITS.md"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\PROVENANCE.md"
+  Delete "$INSTDIR\Inhale.exe"
 !macroend
 
 Function StartBuilder

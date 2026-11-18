@@ -1,7 +1,8 @@
 #!/bin/bash
 # The Windows installer, made on Linux: packaging/windows/deps.sh, then the install folder staged in work/pkg/win-stage,
 # a64emit.dll and the third-party objects prebuilt with llvm-mingw (RX_TARGET=windows), then NSIS (makensis) packs it into
-# work/pkg/Inhale-Setup-x64.exe. Runs in the build image: packaging/linux/docker.sh windows.
+# work/pkg/Inhale-Setup-x64.exe, and the same folder is zipped into work/pkg/Inhale-Windows-x64.zip (no installer,
+# Inhale.exe at its top). Runs in the build image: packaging/linux/docker.sh windows.
 #
 # The install folder (packaging/windows/inhale.nsi copies it whole to %LOCALAPPDATA%\Programs\Inhale):
 #   nx2 host gpu scripts third_party ...   Inhale's sources (the tracked files), VERSION
@@ -9,6 +10,7 @@
 #   third_party\sdl2\SDL2.dll, SDL3.dll     put beside the game by build.py
 #   gui\                                    Inhale Builder's window (packaging/gui), its icon
 #   third_party_objects\  licenses\
+#   Inhale.exe                             packaging/windows/inhale_launch.c (--cli, --play)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
@@ -59,8 +61,30 @@ fi
 find "$S" -name __pycache__ -prune -exec rm -rf {} +
 rm -f "$S"/third_party/a64-kit/tools/lld-link*.exe
 
+# ---- Inhale.exe, the Windows AppRun (--cli, --play) ----
+"$MINGW/bin/x86_64-w64-mingw32-clang" -O2 -mwindows -municode -static -o "$S/Inhale.exe" packaging/windows/inhale_launch.c \
+    -lshell32
+
 # ---- the installer ----
 NUM=0.0.0
 [[ $VERSION =~ ^v([0-9]+\.[0-9]+\.[0-9]+) ]] && NUM=${BASH_REMATCH[1]}
 makensis -V2 -DSTAGE="$S" -DVERSION="$VERSION" -DVERNUM="$NUM.0" -DOUT="$B/Inhale-Setup-x64.exe" packaging/windows/inhale.nsi
 echo "$B/Inhale-Setup-x64.exe ($VERSION): $(du -h "$B/Inhale-Setup-x64.exe" | cut -f1)"
+
+# ---- the zip: the install folder's contents at its top (no folder around them), sorted, every time stamp the same ----
+rm -f "$B/Inhale-Windows-x64.zip"
+python3 -I - "$S" "$B/Inhale-Windows-x64.zip" <<'PY'
+import os, sys, zipfile
+stage, out = sys.argv[1], sys.argv[2]
+names = sorted(os.path.relpath(os.path.join(d, f), stage) for d, _, fs in os.walk(stage) for f in fs)
+with zipfile.ZipFile(out + ".new", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for name in names:
+        info = zipfile.ZipInfo(name.replace(os.sep, "/"), (1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.external_attr = (0o100755 if os.access(os.path.join(stage, name), os.X_OK) else 0o100644) << 16
+        with open(os.path.join(stage, name), "rb") as f, z.open(info, "w", force_zip64=True) as w:
+            while chunk := f.read(1 << 20):
+                w.write(chunk)
+os.replace(out + ".new", out)
+PY
+echo "$B/Inhale-Windows-x64.zip ($VERSION): $(du -h "$B/Inhale-Windows-x64.zip" | cut -f1)"
