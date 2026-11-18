@@ -1,8 +1,8 @@
 #!/bin/bash
 # The Windows installer, made on Linux: packaging/windows/deps.sh, then the install folder staged in work/pkg/win-stage,
 # a64emit.dll and the third-party objects prebuilt with llvm-mingw (RX_TARGET=windows), then NSIS (makensis) packs it into
-# work/pkg/Inhale-Setup-x64.exe, and the same folder is zipped into work/pkg/Inhale-Windows-x64.zip (no installer,
-# Inhale.exe at its top). Runs in the build image: packaging/linux/docker.sh windows.
+# work/pkg/Inhale-Setup-x64.exe, and the same folder is zipped into work/pkg/Inhale-Windows-x64.zip (RecompLauncher's: no
+# installer, Inhale.exe and recomplauncher.json at its top). Runs in the build image: packaging/linux/docker.sh windows.
 #
 # The install folder (packaging/windows/inhale.nsi copies it whole to %LOCALAPPDATA%\Programs\Inhale):
 #   nx2 host gpu scripts third_party ...   Inhale's sources (the tracked files), VERSION
@@ -10,7 +10,7 @@
 #   third_party\sdl2\SDL2.dll, SDL3.dll     put beside the game by build.py
 #   gui\                                    Inhale Builder's window (packaging/gui), its icon
 #   third_party_objects\  licenses\
-#   Inhale.exe                             packaging/windows/inhale_launch.c (--cli, --play)
+#   Inhale.exe  recomplauncher.json        packaging/windows/inhale_launch.c (--cli, --play) and the launcher's manifest
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
@@ -61,9 +61,10 @@ fi
 find "$S" -name __pycache__ -prune -exec rm -rf {} +
 rm -f "$S"/third_party/a64-kit/tools/lld-link*.exe
 
-# ---- Inhale.exe, the Windows AppRun (--cli, --play) ----
+# ---- Inhale.exe, the Windows AppRun (--cli, --play), and RecompLauncher's manifest beside it ----
 "$MINGW/bin/x86_64-w64-mingw32-clang" -O2 -mwindows -municode -static -o "$S/Inhale.exe" packaging/windows/inhale_launch.c \
     -lshell32
+cp packaging/recomplauncher.json "$S/recomplauncher.json"
 
 # ---- the installer ----
 NUM=0.0.0

@@ -1,5 +1,5 @@
 # The release packages (packaging/): Inhale-x86_64.AppImage, Inhale-Setup-x64.exe and Inhale-Windows-x64.zip (the same
-# install folder unpacked), each with its build tools inside,
+# install folder unpacked, for RecompLauncher: packaging/recomplauncher.json), each with its build tools inside,
 # built on Linux in the packaging image (packaging/linux/docker.sh, pulled from ghcr.io: pkg-image.yml), with SHA256SUMS.
 # A v* tag publishes a release (a prerelease for -rc.N); a push to main, or Run workflow, makes the rolling "nightly"
 # prerelease again at that commit.
@@ -121,7 +121,7 @@ jobs:
           WINE=$(command -v wine || command -v wine64 || echo /usr/lib/wine/wine64)
           "$WINE" python/python.exe -I nx2/make_game.py --help | head -3
           "$WINE" Inhale.exe --cli --help | head -3
-          unzip -l ../Inhale-Windows-x64.zip Inhale.exe
+          unzip -l ../Inhale-Windows-x64.zip Inhale.exe recomplauncher.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows

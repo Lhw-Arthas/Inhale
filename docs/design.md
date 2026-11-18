@@ -234,7 +234,7 @@ to the tree before it, with the script, and nothing else); the fork's documents 
 
 ## 10. The release packages
 
-Two downloads, made by `.github/workflows/release.yml` on Linux runners (a `v*` tag: a release; a push to `main` or
+Three downloads, made by `.github/workflows/release.yml` on Linux runners (a `v*` tag: a release; a push to `main` or
 Run workflow: the rolling `nightly` prerelease, with `SHA256SUMS`, unsigned):
 
 - `Inhale-x86_64.AppImage` (`packaging/linux/`, built in an Ubuntu 22.04 container by `packaging/linux/docker.sh`).
@@ -255,6 +255,21 @@ Run workflow: the rolling `nightly` prerelease, with `SHA256SUMS`, unsigned):
   (sdl2-compat) and `SDL3.dll`, `a64emit.dll` and the third-party objects prebuilt with `RX_TARGET=windows`, `gui\`.
   The uninstaller removes only those names, so a folder chosen by hand keeps its other files; the game folders and
   saves stay, and it asks about the work folder.
+- `Inhale-Windows-x64.zip`: the installer's folder, zipped with its contents at the top (no installer, nothing written
+  outside the folder), for RecompLauncher. `Inhale.exe` at its top (`packaging/windows/inhale_launch.c`) is the Windows
+  `AppRun`: no argument starts the window as the installer's shortcut does, `--cli` runs `make_game.py` with the
+  variables `tools_env.build_env` sets (`LONGSHOT_MINGW`, `RX_CPM`, `PYTHONUTF8`, `PYTHONUNBUFFERED`), `--play <dir>`
+  starts `<dir>\inhale.exe` in `<dir>`; both wait and return the child's exit code. The installer carries it too.
+
+**RecompLauncher.** `packaging/recomplauncher.json` (format 1) sits at the AppImage's top and the zip's. `prepare` runs
+`--cli --prepare --game {game} --out {install}/Inhale` (`make_game.py --prepare`: its `progress` and `error` lines) and
+`start` runs `--play {install}/Inhale`, so the game, its `inhale_options.ini` (the `config`) and Windows' `user/` saves
+are in the launcher's install folder (upstream's RecompLauncher issue 215: a build into `~/Games` missed the drive the
+player chose); Linux's saves are `{local}/inhale`. The check is `nup_build_id` 395fc326, `make_game.py`'s `BUILD_ID`.
+Its ten settings are rows this game's menu shows (none of `is_oot_row`'s); Frame generation offers Off and Auto only
+(the fixed multipliers' freezes, section 9, "played by hand past the first boss"). No `prepare.options`: DLSS, FSR 4
+and XeSS reach this game only through the Upscaler row and Frame generation by, both hidden for it. No `dumps`: Redump
+and No-Intro list no `.nup`. `tests/test_recomplauncher_inhale.py` checks all of this against the sources.
 
 Everything downloaded is in `packaging/pins.txt` (name, version, system, URL, SHA-256), fetched and checked by
 `packaging/fetch.py` into `work/pkg/dl`; the versions are upstream's at `9af4808f` (LLVM 23.1.5, llvm-mingw 20261104,
@@ -940,3 +955,26 @@ The first stage was played in a window, with sound, from `work/game/inhale`.
   V-Sync on and Frame pacing on (`vsync=1`, `frame_pacing=1`); the multiplier was not noted, and frame generation is
   now off there. No log was kept. Section 13's rules were measured by upstream on NVIDIA under Windows only; this
   is the first report from RADV. Not looked into.
+
+### 2026-11-18: RecompLauncher's manifest and the Windows zip
+
+`packaging/recomplauncher.json`, `Inhale.exe` and `Inhale-Windows-x64.zip` (section 10), checked here at `6d5040d` plus
+the changes. `tests/run_all.py`: 561 passed, 0 failed, 79 skipped.
+
+- The manifest validates against RecompLauncher's `schema.json` (`jsonschema`).
+- `packaging/linux/docker.sh windows`: `Inhale-Setup-x64.exe` 127 MB and `Inhale-Windows-x64.zip` 270 MB (deflate,
+  against the installer's LZMA), with `Inhale.exe` and `recomplauncher.json` at its top. `docker.sh`: the AppImage,
+  235 MB, with `recomplauncher.json` at its root.
+- Under Wine, from the unpacked zip: `Inhale.exe --cli --help` prints `make_game.py`'s usage; `--cli -c` returns 2,
+  `make_game.py`'s own code; `--play <empty folder>` says "no built game" and returns 1. An argument with spaces,
+  quotes and a trailing backslash reaches `make_game.py` whole. A non-ASCII argument came through mangled, as it does
+  when Wine starts `python.exe` directly too, so that part is not shown either way.
+- The AppImage: `--cli --prepare --game <the other game's .nup>` printed `progress` lines, then
+  `error This is build e0f3ccfa. Inhale supports build 395fc326.`, and returned 1. It unpacked the whole 26 GB first,
+  then removed it. `--play ~/Games/Inhale` started the build there: 59.5 presents a second, the window closed at 25 s.
+  With no argument, the window was still up at 15 s.
+- The AppImage, as the manifest starts it: `--cli --prepare --game <this game's .nup> --out work/rl/out` returned 0
+  in 48 s (the object cache from earlier builds), with 469 `progress` lines on stdout, from `0.000 Reading your game
+  files` to `1.000 Done`, and the known `shader_census.py` traceback (section 9, the release packages) on stderr.
+  `--play work/rl/out` ran at 60.0 presents a second at 30 s. No picture was looked at.
+- Not tried: RecompLauncher itself, and the zip on Windows.

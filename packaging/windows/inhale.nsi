@@ -59,6 +59,7 @@ VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\PROVENANCE.md"
   Delete "$INSTDIR\Inhale.exe"
+  Delete "$INSTDIR\recomplauncher.json"
 !macroend
 
 Function StartBuilder

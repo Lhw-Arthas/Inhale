@@ -1,5 +1,7 @@
 # Inhale
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 **Kirby and the Forgotten Land running natively on Windows and Linux, without emulation.**
 
 [Download](https://github.com/mario-ttide/Inhale/releases/latest) | [Status](#project-status) |
@@ -39,7 +41,14 @@ Early. One player has played it by hand on Linux; the Windows installer has been
 
 Older versions and the `nightly` build of the newest code are on the [Releases](https://github.com/mario-ttide/Inhale/releases) page.
 Each download brings its own compiler and every other tool it needs, works without an internet connection, and holds
-nothing of the game.
+nothing of the game. `Inhale-Windows-x64.zip` on the same page is the installer's folder unpacked, without an
+installer: unzip it anywhere and start `Inhale.exe`.
+
+### With RecompLauncher
+
+Both packages carry a `recomplauncher.json`, so [RecompLauncher](https://recomplauncher.com) can ask for your `.nup`
+or folder, build the game into its own install folder and start it, with a few of the menu's settings on its page.
+Inhale is not in RecompLauncher's catalog yet, and this route has not been tried in the launcher itself.
 
 ### On Windows
 

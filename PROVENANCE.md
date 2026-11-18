@@ -47,6 +47,9 @@ Whole paths: `.forgejo/`, `.circleci/`, `.chunk/`, `.pre-commit-config.yaml`, `m
 the other game. `AGENTS.md` and `.claude/skills/fix-with-test/` here are adapted from Longshot's, without its team's
 tooling; they are not imported files, and a sync does not touch them.
 
+`packaging/recomplauncher.json` is this fork's own, written for this game from the shape of Longshot's root
+`recomplauncher.json` (left out above), with `tests/test_recomplauncher_inhale.py` in place of its check.
+
 `nx2/oot_patches.py`: Longshot's file holds text matched against the lifted code of another game. It is not carried.
 The file of that name here is a stand-in written for Inhale, with the same function names and empty tables.
 

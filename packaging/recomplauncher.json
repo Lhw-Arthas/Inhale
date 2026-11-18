@@ -1,0 +1,349 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Inhale",
+  "repo": "mario-ttide/Inhale",
+  "game": {
+    "kind": "iso_or_folder",
+    "label": "Your copy of Kirby and the Forgotten Land, Nintendo Switch 2 Edition + Star-Crossed World (build 395fc326): the .nup file, or the folder that holds its extracted exefs and aoc folders.",
+    "check": {
+      "nup_build_id": "395fc326"
+    }
+  },
+  "start": {
+    "program": [
+      "Inhale-x86_64.AppImage",
+      "Inhale.exe"
+    ],
+    "args": [
+      "--play",
+      "{install}/Inhale"
+    ]
+  },
+  "prepare": {
+    "program": [
+      "Inhale-x86_64.AppImage",
+      "Inhale.exe"
+    ],
+    "args": [
+      "--cli",
+      "--prepare",
+      "--game",
+      "{game}",
+      "--out",
+      "{install}/Inhale"
+    ],
+    "version": "1",
+    "label": "Building the game from your copy (a few minutes with 12 to 16 cores, longer with fewer)",
+    "timeout": 7200
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [
+        {
+          "path": "{install}/Inhale/inhale_options.ini"
+        }
+      ]
+    }
+  ],
+  "saves": [
+    "{local}/inhale",
+    "{install}/Inhale/user"
+  ],
+  "folders": {
+    "saves": [
+      {
+        "path": "{install}/Inhale/user",
+        "if": "{install}/Inhale/user"
+      },
+      {
+        "path": "{local}/inhale"
+      }
+    ],
+    "game": [
+      {
+        "path": "{install}/Inhale"
+      }
+    ]
+  },
+  "settings": [
+    {
+      "id": "fullscreen",
+      "label": "Fullscreen",
+      "help": "Fills the whole screen with the game, without the window's border. The same as F11.",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "fullscreen": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "fullscreen": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "fullscreen": "0"
+      }
+    },
+    {
+      "id": "output",
+      "label": "Output resolution",
+      "help": "The game's whole frame, HUD included, before it is scaled to the window. Docked only. Applies after a restart.",
+      "choices": [
+        {
+          "label": "2048x1152",
+          "set": {
+            "output_res": "2048x1152"
+          }
+        },
+        {
+          "label": "2560x1440",
+          "set": {
+            "output_res": "2560x1440"
+          }
+        },
+        {
+          "label": "3840x2160",
+          "set": {
+            "output_res": "3840x2160"
+          }
+        }
+      ],
+      "defaults": {
+        "output_res": "2560x1440"
+      }
+    },
+    {
+      "id": "profile",
+      "label": "Profile",
+      "help": "Runs the game as the console docked or handheld. Applies after a restart.",
+      "choices": [
+        {
+          "label": "Docked",
+          "set": {
+            "handheld_profile": "0"
+          }
+        },
+        {
+          "label": "Handheld",
+          "set": {
+            "handheld_profile": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "handheld_profile": "0"
+      }
+    },
+    {
+      "id": "filter",
+      "label": "Window scaling filter",
+      "help": "How the finished picture is scaled to the window, when its size differs from the Output resolution.",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "upscaling": "0"
+          }
+        },
+        {
+          "label": "Catmull-Rom",
+          "set": {
+            "upscaling": "1"
+          }
+        },
+        {
+          "label": "Lanczos",
+          "set": {
+            "upscaling": "2"
+          }
+        }
+      ],
+      "defaults": {
+        "upscaling": "0"
+      }
+    },
+    {
+      "id": "sharpness",
+      "label": "Sharpness",
+      "help": "Sharpens the picture as it goes to the window, with any filter. Too much shows halos around edges.",
+      "choices": [
+        {
+          "label": "0%",
+          "set": {
+            "sharpness": "0"
+          }
+        },
+        {
+          "label": "30%",
+          "set": {
+            "sharpness": "30"
+          }
+        },
+        {
+          "label": "60%",
+          "set": {
+            "sharpness": "60"
+          }
+        },
+        {
+          "label": "100%",
+          "set": {
+            "sharpness": "100"
+          }
+        }
+      ],
+      "defaults": {
+        "sharpness": "0"
+      }
+    },
+    {
+      "id": "framegen",
+      "label": "Frame generation",
+      "help": "Makes frames between the game's own, up to the display's refresh, for smoother motion at a little input delay. The menu's fixed 2x and up can freeze the game for a few seconds now and then, so only Auto is offered here.",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "frame_generation": "0"
+          }
+        },
+        {
+          "label": "Auto",
+          "set": {
+            "frame_generation": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "frame_generation": "0"
+      }
+    },
+    {
+      "id": "vsync",
+      "label": "V-Sync",
+      "help": "Whether a frame waits for the display's refresh before it is shown.",
+      "choices": [
+        {
+          "label": "Auto",
+          "set": {
+            "vsync": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "vsync": "1"
+          }
+        },
+        {
+          "label": "Off",
+          "set": {
+            "vsync": "2"
+          }
+        }
+      ],
+      "defaults": {
+        "vsync": "0"
+      }
+    },
+    {
+      "id": "fps",
+      "label": "FPS counter",
+      "help": "Frames per second in the top right corner, and as much more as you choose.",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "fps_counter": "0"
+          }
+        },
+        {
+          "label": "FPS",
+          "set": {
+            "fps_counter": "1"
+          }
+        },
+        {
+          "label": "Frame time",
+          "set": {
+            "fps_counter": "2"
+          }
+        },
+        {
+          "label": "Graph",
+          "set": {
+            "fps_counter": "3"
+          }
+        }
+      ],
+      "defaults": {
+        "fps_counter": "0"
+      }
+    },
+    {
+      "id": "background",
+      "label": "Controller in background",
+      "help": "Whether the controller plays the game while another window has the focus.",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "controller_in_background": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "controller_in_background": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "controller_in_background": "0"
+      }
+    },
+    {
+      "id": "compile_shaders",
+      "label": "Compile shaders",
+      "help": "All: also builds the predicted pipelines, about 40% longer, for pipelines play almost never uses. Most (recommended): every shader and the pipelines the game is known to use. Applies at the next build, update or preparation.",
+      "choices": [
+        {
+          "label": "All",
+          "set": {
+            "compile_shaders": "1"
+          }
+        },
+        {
+          "label": "Most (recommended)",
+          "set": {
+            "compile_shaders": "0"
+          }
+        }
+      ],
+      "defaults": {
+        "compile_shaders": "0"
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "saves",
+      "label": "Saves",
+      "help": "Where your saves are kept.",
+      "open": "saves"
+    },
+    {
+      "id": "game",
+      "label": "Game folder",
+      "help": "The built game, with its log.",
+      "open": "game"
+    }
+  ]
+}
