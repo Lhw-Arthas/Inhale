@@ -26,9 +26,24 @@ post them, or anything made from them (`CONTRIBUTING.md`).
 ## What you need
 
 - Linux, x86-64 (the only system tested so far; the Windows paths of Longshot are still in the tree, unverified).
-- clang and lld, Python 3.12 or newer, git.
-- A GPU and driver with Vulkan 1.3 and mesh shaders; SDL 3 and FFmpeg's development files.
+- clang and lld, pkg-config, Python 3.12 or newer, git.
+- FFmpeg's development files (libavcodec, libavutil, libswscale, libswresample) and dav1d's.
+- The Vulkan, SPIR-V and Vulkan Memory Allocator headers. Distributions ship the first two; VMA is often not packaged:
+  put `include/vk_mem_alloc.h` of [VMA](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) (3.1 or
+  newer) in `/usr/local/include`, or point `INHALE_VMA_HEADERS` at its folder. When a distribution's Vulkan or SPIR-V
+  headers are too old, set `INHALE_VULKAN_HEADERS` and `INHALE_SPIRV_HEADERS` to newer ones (the commits the checks
+  use are in `.github/workflows/ci.yml`).
+- To play: a GPU and driver with Vulkan 1.3 and mesh shaders, the Vulkan loader, and SDL 3 (or SDL 2), which the game
+  loads at run time.
+- For the checks: spirv-tools (`spirv-val`) and glslang 16.6.0.
 - About 12 GB of disk for the extracted game data, plus the build's own files under `work/`.
+
+On Arch Linux (as tested):
+
+```
+pacman -S --needed clang lld pkgconf python git ffmpeg dav1d vulkan-headers spirv-headers vulkan-icd-loader sdl3 \
+    spirv-tools glslang
+```
 
 ## Set up
 

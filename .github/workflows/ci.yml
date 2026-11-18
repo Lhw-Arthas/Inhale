@@ -1,0 +1,68 @@
+# The game-free checks on every push to main and every pull request: tests/run_all.py --strict (a check whose compiler,
+# headers or tool is missing here fails instead of being skipped), third_party/ against its PROVENANCE.md, and the rename.
+# Adapted from upstream's .forgejo/workflows/ci.yml (its "python" job): the same pinned headers, glslang and actions.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Game-free checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # (the versions upstream's scripts/linux/deps.sh builds the Vulkan back end with, fetched by commit hash)
+      - name: Pinned SPIR-V and Vulkan headers
+        run: |
+          fetch() {   # <repository URL> <40-hex commit> <folder>
+            git init -q "$3" && git -C "$3" remote add origin "$1"
+            git -C "$3" fetch -q --no-tags --depth=1 origin "$2"
+            git -C "$3" -c advice.detachedHead=false checkout -q FETCH_HEAD
+            test "$(git -C "$3" rev-parse HEAD)" = "$2"
+          }
+          fetch https://github.com/KhronosGroup/SPIRV-Headers 04f10f650d514df88b76d25e83db360142c7b174 _deps/spirv-headers   # vulkan-sdk-1.4.341.0
+          fetch https://github.com/KhronosGroup/Vulkan-Headers 74d8a6cb930c68ef617b202c3ff3c59d919e086b _deps/vulkan-headers   # v1.4.345
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Python packages
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Compilers and the SPIR-V validator
+        run: sudo apt-get update && sudo apt-get install -y g++ clang spirv-tools libdav1d-dev
+      # (the checked-in shader headers are generated with glslang 16.6.0; older distro compilers lower some GLSL differently)
+      - name: Pinned glslang
+        run: |
+          tool_dir="$RUNNER_TEMP/glslang-16.6.0"
+          mkdir -p "$tool_dir"
+          curl -fL --retry 3 -o "$tool_dir/glslang.tar.gz" https://github.com/KhronosGroup/glslang/releases/download/16.6.0/glslang-16.6.0-linux-x86_64-release.tar.gz
+          echo '2c34071f56ecf39d16233294d3739cf43f981fd39080f2fd9dccb782101191ce  '"$tool_dir/glslang.tar.gz" | sha256sum --check --strict
+          tar -xzf "$tool_dir/glslang.tar.gz" -C "$tool_dir"
+          echo "$tool_dir/bin" >> "$GITHUB_PATH"
+      # (the steps below run when one before them failed, so one run shows every failure)
+      - name: Every test
+        if: ${{ !cancelled() }}
+        env:
+          INHALE_SPIRV_HEADERS: ${{ github.workspace }}/_deps/spirv-headers/include
+          INHALE_VULKAN_HEADERS: ${{ github.workspace }}/_deps/vulkan-headers/include
+        run: python -I -B tests/run_all.py --strict
+      - name: third_party/ is unmodified
+        if: ${{ !cancelled() }}
+        run: python -I scripts/check_third_party.py
+      - name: Nothing left to rename
+        if: ${{ !cancelled() }}
+        # (the script reports and exits 0 either way: its last line says what is left)
+        run: |
+          python -I scripts/rename_full.py | tee "$RUNNER_TEMP/rename.txt"
+          tail -n 1 "$RUNNER_TEMP/rename.txt" | grep -q ': 0 places in 0 files, 0 files renamed$'
