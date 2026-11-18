@@ -14,9 +14,14 @@ permissions:
 
 jobs:
   checks:
-    name: Game-free checks
+    # (two parts at once, split by tests/run_all_times.json, as upstream runs them: every check is in exactly one)
+    name: Game-free checks (part ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1/2, 2/2]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -56,12 +61,15 @@ jobs:
         env:
           INHALE_SPIRV_HEADERS: ${{ github.workspace }}/_deps/spirv-headers/include
           INHALE_VULKAN_HEADERS: ${{ github.workspace }}/_deps/vulkan-headers/include
-        run: python -I -B tests/run_all.py --strict
+          SHARD: ${{ matrix.shard }}
+        # (tests/test_bake_*.py compile the whole recompiler: about 450 s each on a runner's two cores, more on a slow one,
+        # so twice run_all.py's default 600 s)
+        run: python -I -B tests/run_all.py --strict --shard "$SHARD" --timeout 1200
       - name: third_party/ is unmodified
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == '1/2' }}
         run: python -I scripts/check_third_party.py
       - name: Nothing left to rename
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == '1/2' }}
         # (the script reports and exits 0 either way: its last line says what is left)
         run: |
           python -I scripts/rename_full.py | tee "$RUNNER_TEMP/rename.txt"
