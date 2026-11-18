@@ -33,13 +33,13 @@ def main():
     p.add_argument("--cxx", default="g++")
     a = p.parse_args()
     tex = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
-    arena = "constexpr uint64_t kArena = 64ull << 20;"
+    arena = "constexpr uint64_t kArena = 16ull << 20;"   # (inhale) upstream's #637: 16 MB arenas, the fixture's cases with them
     if tex.count(arena) != 1:
-        raise SystemExit("vk_texture.cpp's arenas are no longer 64 MB: update this test")
+        raise SystemExit("vk_texture.cpp's arenas are no longer 16 MB: update this test")
     frame = block(tex, "void texture_frame(")
     loop = block(frame, "for (auto it = arenas.begin(); it != arenas.end();) {")
     for needle in ("const bool idle = it->value <= completed && it->value != rec_value;", "destroy_buffer(it->buffer, it->allocation);",
-                   "kept += it->size;", "const bool recent = burst_s && !pool_pressed && "):
+                   "kept += it->size;", "const bool recent = burst_s && !pool_pressure && "):   # (inhale) #637: pool_pressure
         if needle not in loop:
             raise SystemExit("texture_frame's give-back loop no longer has: " + needle)
     if "st_arena_makes.load()" not in frame:
