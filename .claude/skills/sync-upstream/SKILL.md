@@ -87,3 +87,29 @@ it are then skipped as "not tracked here".
 
 When the person asks: one commit for the sync, with the revision in its message, holding the applied changes, the
 settled conflicts, the stand-in's new names and `PROVENANCE.md` (the base line and the lists).
+
+## 8. Unattended (the nightly run)
+
+`scripts/sync_nightly.py` runs this skill with nobody to ask (a timer starts it each night; its docstring has the
+whole order). When its prompt sends you here, the steps above change in these ways and no others:
+
+- **Step 1 is done.** Longshot's clone is fetched, the revision is in the prompt, and you are in a clean clone of
+  this repository (`work/sync/tree`) on the branch `sync/upstream`. Fetch nothing. Pass the prompt's `--upstream`
+  to the script, and run Python as the prompt says: the clone has no `.venv` of its own. Start at `--list`.
+- **Step 7 is yours.** Make the one commit on `sync/upstream` without being asked. Nothing else is: no push, no
+  other branch, no second commit, nothing written outside the clone.
+- **Add files by name.** Never `git add -A` or `git add .`: the sandbox shows files at the clone's root that are not
+  the repository's (`.bashrc`, `.gitconfig`, `.idea` and others, untracked in `git status`), and build folders
+  belong under `work/`, which git ignores.
+- **Stop where the steps say to ask.** A conflict that needs a decision about this game's behaviour, a failing
+  check that is neither Longshot's (step 5) nor repaired as the steps say, a name `scripts/rename_full.py` reports
+  that the rule should not take: commit nothing and leave the tree as it is, conflict marks and all. A person
+  settles it there, and no later night starts until they have.
+- **Write `work/report.md`** in the clone either way. Its first line is the outcome in one sentence (it goes into a
+  desktop notification): the reason for a stop, or the revision synced to. Then the conflicts and how each was
+  settled, the files removed in step 6, the stand-in's new names, and the last lines of each check.
+
+Your commit does not reach `main` by itself. The script then runs its gate on the clone (a clean tree, one commit,
+`PROVENANCE.md` at the revision, the rename, `third_party`, every check, and where the game's files are at hand the
+lift, the build and a minute of the game with no window), and `main` takes the commit only when all of it passes.
+So do not weaken a check to get through, and do not report a pass you did not see.

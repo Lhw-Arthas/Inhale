@@ -33,6 +33,7 @@ import rename_full  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROVENANCE = os.path.join(ROOT, "PROVENANCE.md")
+UPSTREAM = os.path.join(ROOT, "..", "Longshot")   # (the clone of Longshot; scripts/sync_nightly.py fetches it)
 BASE_LINE = re.compile(r"^(\s*upstream-base:\s*)([0-9a-f]{40})\s*$", re.M)
 PATHS = ["nx2", "host", "gpu", "third_party", "tests", "scripts", "LICENSE", "requirements.txt", ".gitattributes",
          ".gitignore", "docs/compiler-memory-accounting.md"]
@@ -95,7 +96,7 @@ def renamed_tree(upstream, rev, paths, index):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--upstream", default=os.path.join(ROOT, "..", "Longshot"), help="a clone of Longshot")
+    p.add_argument("--upstream", default=UPSTREAM, help="a clone of Longshot")
     p.add_argument("--to", default="HEAD", help="the upstream revision to sync to (default HEAD)")
     p.add_argument("--list", action="store_true", help="print what would be applied, change nothing")
     a = p.parse_args()

@@ -89,6 +89,11 @@ work/sa/build/inhale work/sa/image/image.bin --romfs work/dump/romfs --aoc work/
 sides of Longshot's diff through the rule of `scripts/rename_full.py` first, so the changes arrive under this fork's
 names; run `scripts/rename_full.py` after a sync to see that nothing is left to rename.
 
+`scripts/sync_nightly.py` does a sync with nobody at the keyboard, for a timer to run each night: it fetches
+Longshot, has Claude Code do the sync in a clone under `work/sync/`, and moves `main` only when the checks pass and,
+where the game's files are at hand, the game still starts. Its docstring has the order and what a stopped night
+leaves.
+
 ## Licence
 
 GPL-3.0-or-later (`LICENSE`). Copyright lines, the notice of modification and the people whose work this is:

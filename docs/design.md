@@ -729,3 +729,16 @@ The first stage was played in a window, with sound, from `work/game/inhale`.
   played: that is still to do by hand.
 - Not looked at: what Longshot's 36 commits change for this game beyond the checks and that run (its new settings
   rows, the fullscreen monitor choice, the crash window).
+
+### 2026-11-18: the nightly sync
+
+- `scripts/sync_nightly.py` does the sync unattended (the sync-upstream skill, section 8): Longshot's clone fetched,
+  the agent at work in a clone of this repository (`work/sync/tree`), and `main` moved by fast-forward only when a
+  gate the script runs itself passes. A stopped night is kept, never discarded.
+- The gate runs the game. `INHALE_WORK` and `INHALE_DUMP` (`nx2/kit.py`) give the lift, the build and the run a work
+  folder apart from the one a person builds in, reading the same dump: `work/sync/game`. Measured there on the tree
+  at `v3.0.0-rc.7`, with no hot list and no profiles: lift 17 s, build 73 s from an empty object cache (24 jobs),
+  then 60 s with `HOS_HEADLESS=1 HOS_AUDIO=0 HOS_NO_MOVIES=1` and a new user folder: 3301 frames presented, 60.0 a
+  second over the last 5 s. With the cache filled the three take 81 s together.
+- The gate passes the game when it is still running at 60 s and has presented 1800 frames. It does not look at a
+  picture and plays nothing: a sync that draws wrong or breaks a level still lands.
