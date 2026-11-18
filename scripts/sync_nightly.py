@@ -11,7 +11,7 @@ What needs no judgement is done here, and what does is left to Claude (the sync-
   4. the gate: that commit lands on main only when the clone is clean and one commit past main, PROVENANCE.md
      names the target, the rename, third_party and every game-free check pass, and the game starts. The gate is run
      here, not by the agent, so a tree that fails it cannot reach main whatever the agent reports;
-  5. main takes the commit by fast-forward, or not at all.
+  5. main takes the commit by fast-forward, or not at all, and is pushed to origin.
 
 The game's part of the gate, when this repository has the game's files (nx2/kit.py, DUMP): the clone's lift, its
 build, and SECONDS of the game with no window, sound or movies. It passes when the game is still running at the end
@@ -148,8 +148,12 @@ def land(target, log, no_land):
     if r.returncode:
         sys.exit("the sync to upstream %s passed the gate, and main did not take it; it waits in %s:\n%s"
                  % (target[:8], TREE, r.stderr.decode("utf-8", "replace")))
-    notify("main is at upstream %s" % target[:8])
-    print("main is at upstream %s" % target[:8])
+    r = git(ROOT, "push", "origin", "main", check=False)
+    if r.returncode:
+        sys.exit("main is at upstream %s here, and the push to origin failed; push it by hand:\n%s"
+                 % (target[:8], r.stderr.decode("utf-8", "replace")))
+    notify("main is at upstream %s, pushed" % target[:8])
+    print("main is at upstream %s, pushed" % target[:8])
 
 
 def main():
