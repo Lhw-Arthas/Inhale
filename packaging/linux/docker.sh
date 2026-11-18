@@ -8,13 +8,20 @@
 #   packaging/linux/docker.sh <command>  any other command, run in the checkout
 #
 # The checkout is mounted at /src and the build runs as your user, so work/pkg belongs to you. DOCKER=podman uses Podman.
-# INHALE_VERSION and JOBS are passed through when set.
+# INHALE_VERSION and JOBS are passed through when set. INHALE_IMAGE names the image; one in a registry (a name with a /,
+# as the release workflow gives: .github/workflows/pkg-image.yml pushes it) is pulled, and built here only when the pull
+# fails.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 DOCKER=${DOCKER:-docker}
 IMAGE=${INHALE_IMAGE:-inhale-pkg-build}
 
-"$DOCKER" build -t "$IMAGE" -f packaging/linux/Dockerfile packaging/linux
+if [[ $IMAGE == */* ]] && "$DOCKER" pull "$IMAGE"; then
+    :
+else
+    [[ $IMAGE == */* ]] && echo "docker.sh: no $IMAGE to pull, building it from packaging/linux/Dockerfile" >&2
+    "$DOCKER" build -t "$IMAGE" -f packaging/linux/Dockerfile packaging/linux
+fi
 
 case "${1:-}" in
     "")      CMD=(bash -c 'packaging/linux/deps.sh && packaging/linux/appimage.sh') ;;

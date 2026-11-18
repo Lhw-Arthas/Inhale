@@ -238,6 +238,10 @@ Two downloads, made by `.github/workflows/release.yml` on Linux runners (a `v*` 
 Run workflow: the rolling `nightly` prerelease, with `SHA256SUMS`, unsigned):
 
 - `Inhale-x86_64.AppImage` (`packaging/linux/`, built in an Ubuntu 22.04 container by `packaging/linux/docker.sh`).
+  The container's image is built once per `packaging/linux/Dockerfile` by `.github/workflows/pkg-image.yml` and pushed
+  to `ghcr.io/<owner>/inhale-pkg-build:<first 16 hex digits of the Dockerfile's SHA-256>`; the release jobs pull that
+  tag, so a release does not reach Launchpad (the toolchain PPA, which failed three release runs in a row) or the
+  Ubuntu mirrors. A Dockerfile with no image pushed yet is built by the release run itself.
   Its AppDir: `usr/python` (CPython 3.12 with tkinter and `requirements.txt`), `usr/lib/inhale/{llvm,sysroot,ffmpeg,
   sdl2,cpm}` (clang and lld, the glibc 2.35 sysroot, static FFmpeg with dav1d, `libSDL2-2.0.so.0`, the Vulkan, SPIR-V
   and VMA headers), `usr/share/inhale` (the tracked sources, `VERSION`, `liba64emit.so`, zbic, the prebuilt

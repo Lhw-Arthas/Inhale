@@ -1,0 +1,44 @@
+# The packaging image (packaging/linux/Dockerfile) built once and pushed to ghcr.io/<owner>/inhale-pkg-build, tagged
+# with the first 16 hex digits of the Dockerfile's SHA-256 (and latest). The release workflow pulls that tag, so a
+# release no longer waits on Launchpad (the toolchain PPA) or the Ubuntu mirrors: only this run does, and it tries three
+# times. A Dockerfile whose image is not here yet is built by the release run itself (packaging/linux/docker.sh).
+name: Packaging image
+
+on:
+  push:
+    branches: [main]
+    paths: [packaging/linux/Dockerfile]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: pkg-image
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repo=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/inhale-pkg-build
+          tag=$(sha256sum packaging/linux/Dockerfile | cut -c1-16)
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for try in 1 2 3; do
+            docker build --pull --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+              -t "$repo:$tag" -t "$repo:latest" -f packaging/linux/Dockerfile packaging/linux && break
+            [ "$try" = 3 ] && exit 1
+            echo "build failed (try $try), again in 60 s"; sleep 60
+          done
+          docker push "$repo:$tag"
+          docker push "$repo:latest"
+          echo "pushed $repo:$tag"

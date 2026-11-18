@@ -1,6 +1,7 @@
 # The release packages (packaging/): Inhale-x86_64.AppImage and Inhale-Setup-x64.exe, each with its build tools inside,
-# built on Linux in the packaging image (packaging/linux/docker.sh), with SHA256SUMS. A v* tag publishes a release (a
-# prerelease for -rc.N); a push to main, or Run workflow, makes the rolling "nightly" prerelease again at that commit.
+# built on Linux in the packaging image (packaging/linux/docker.sh, pulled from ghcr.io: pkg-image.yml), with SHA256SUMS.
+# A v* tag publishes a release (a prerelease for -rc.N); a push to main, or Run workflow, makes the rolling "nightly"
+# prerelease again at that commit.
 # Nothing is signed. No game data is in either package or in this run.
 name: Release
 
@@ -39,6 +40,9 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,6 +54,14 @@ jobs:
       # (the LLVM release is 2 GB: room for it, unpacked, beside the build)
       - name: Disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h .
+      # (the packaging image pkg-image.yml pushed for this Dockerfile; docker.sh builds it when there is none)
+      - name: Packaging image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          tag=$(sha256sum packaging/linux/Dockerfile | cut -c1-16)
+          echo "INHALE_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/inhale-pkg-build:$tag" >> "$GITHUB_ENV"
       - name: AppImage
         env:
           INHALE_VERSION: ${{ needs.version.outputs.name }}
@@ -75,6 +87,9 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,6 +98,14 @@ jobs:
         with:
           path: work/pkg/dl
           key: pkg-dl-windows-${{ hashFiles('packaging/pins.txt') }}
+      # (the packaging image pkg-image.yml pushed for this Dockerfile; docker.sh builds it when there is none)
+      - name: Packaging image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          tag=$(sha256sum packaging/linux/Dockerfile | cut -c1-16)
+          echo "INHALE_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/inhale-pkg-build:$tag" >> "$GITHUB_ENV"
       - name: Installer
         env:
           INHALE_VERSION: ${{ needs.version.outputs.name }}
