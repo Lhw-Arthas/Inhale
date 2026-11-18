@@ -3,7 +3,7 @@
 Inhale is a modified version of Longshot, made by importing part of Longshot's tree once and changing it.
 
     upstream:       https://git.magicbean.dev/MagicBeanDev/Longshot.git
-    upstream-base:  31f8d8be2ef4a077a49562136ed8e16689a30483
+    upstream-base:  544229a260c5f5008f241b9cf48ae6b01c1602b9
     imported:       2026-11-16
 
 `scripts/sync_upstream.py` reads the `upstream-base` line, brings Longshot's later changes over and rewrites the line.
@@ -39,21 +39,21 @@ tooling; they are not imported files, and a sync does not touch them.
 The file of that name here is a stand-in written for Inhale, with the same function names and empty tables.
 
 Scripts of Longshot's releases, packaging, team workflow, and of the other game's saves and tour
-(31 files):
+(32 files):
 
 `scripts/builder_package.py`, `scripts/check_guide_screenshots.py`, `scripts/check_pr_description.py`,
 `scripts/check_windows_files.py`, `scripts/cpu_candidates.json`, `scripts/cpu_categories.py`,
-`scripts/cpu_functions.json`, `scripts/cpu_report.py`, `scripts/dev_build.py`, `scripts/dev_packs.py`,
-`scripts/fetch_commit.sh`, `scripts/forge.py`, `scripts/hardware_report.py`, `scripts/job_queue.py`,
-`scripts/linux/Dockerfile`, `scripts/linux/appimage.sh`, `scripts/linux/check_player_build.sh`,
-`scripts/linux/deps.sh`, `scripts/linux/docker.sh`, `scripts/longshot_saves.py`, `scripts/pipeline_tour.py`,
-`scripts/release.py`, `scripts/release_keys.json`, `scripts/screenshots/LauncherCapture.cs`,
-`scripts/screenshots/capture_launcher.py`, `scripts/screenshots/capture_menu.py`,
-`scripts/screenshots/launcher-packages.lock.json`, `scripts/screenshots/menu.cpp`,
-`scripts/tested_configurations.py`, `scripts/tooling.py`, `scripts/tools.py`
+`scripts/cpu_functions.json`, `scripts/cpu_report.py`, `scripts/crash_groups.py`, `scripts/dev_build.py`,
+`scripts/dev_packs.py`, `scripts/fetch_commit.sh`, `scripts/forge.py`, `scripts/hardware_report.py`,
+`scripts/job_queue.py`, `scripts/linux/Dockerfile`, `scripts/linux/appimage.sh`,
+`scripts/linux/check_player_build.sh`, `scripts/linux/deps.sh`, `scripts/linux/docker.sh`,
+`scripts/longshot_saves.py`, `scripts/pipeline_tour.py`, `scripts/release.py`, `scripts/release_keys.json`,
+`scripts/screenshots/LauncherCapture.cs`, `scripts/screenshots/capture_launcher.py`,
+`scripts/screenshots/capture_menu.py`, `scripts/screenshots/launcher-packages.lock.json`,
+`scripts/screenshots/menu.cpp`, `scripts/tested_configurations.py`, `scripts/tooling.py`, `scripts/tools.py`
 
 Tests and fixtures bound to something left out above, or to the text of the original `nx2/oot_patches.py`
-(107 files):
+(110 files):
 
 `tests/builder_cli/.gitignore`, `tests/builder_cli/BuilderCliTests.csproj`, `tests/builder_cli/NuGet.Config`,
 `tests/builder_cli/Program.cs`, `tests/dlss_feature_size_test.cpp`, `tests/fsr_uniform_ownership_test.cpp`,
@@ -66,7 +66,7 @@ Tests and fixtures bound to something left out above, or to the text of the orig
 `tests/test_builder_own_python.py`, `tests/test_builder_python.py`, `tests/test_builder_xml_valid.py`,
 `tests/test_camera_centering.py`, `tests/test_camera_speed.py`, `tests/test_check_pr_description.py`,
 `tests/test_commit_room.py`, `tests/test_cpu_report.py`, `tests/test_cpu_target.py`, `tests/test_crash_dialog.py`,
-`tests/test_dev_build.py`, `tests/test_dev_packs.py`, `tests/test_driver_env_choose.py`,
+`tests/test_crash_groups.py`, `tests/test_dev_build.py`, `tests/test_dev_packs.py`, `tests/test_driver_env_choose.py`,
 `tests/test_frame_rate_cap_step.py`, `tests/test_frame_whole.py`, `tests/test_free_view_anchor.py`,
 `tests/test_gpu_clock.py`, `tests/test_guide_screenshots.py`, `tests/test_hardware_report.py`,
 `tests/test_high_fps_fixes.py`, `tests/test_hle_stats.py`, `tests/test_hold_gpu.py`, `tests/test_hud_layout_row.py`,
@@ -79,12 +79,12 @@ Tests and fixtures bound to something left out above, or to the text of the orig
 `tests/test_no_webgpu.py`, `tests/test_ocarina_wait.py`, `tests/test_oot_damage.py`, `tests/test_oot_heap_retry.py`,
 `tests/test_oot_state_tap.py`, `tests/test_oot_voice_option.py`, `tests/test_opening_skip.py`,
 `tests/test_patch_hooks_defined.py`, `tests/test_pipeline_state_sources.py`, `tests/test_pipeline_tour.py`,
-`tests/test_portable_builder_home.py`, `tests/test_portable_builder_startup.py`,
-`tests/test_portable_setup_paths.py`, `tests/test_portable_setup_start.py`,
-`tests/test_portable_setup_transaction.py`, `tests/test_precompile_save.py`, `tests/test_prepare_at_build.py`,
-`tests/test_quick_pipelines.cpp`, `tests/test_quick_pipelines.py`, `tests/test_readme_menu_rows.py`,
-`tests/test_recomplauncher_json.py`, `tests/test_release.py`, `tests/test_scarecrow_timing.py`,
-`tests/test_scene_format.py`, `tests/test_setup_runtime.py`, `tests/test_setup_runtime_paths.py`,
+`tests/test_portable_builder_home.py`, `tests/test_portable_builder_startup.py`, `tests/test_portable_setup_paths.py`,
+`tests/test_portable_setup_start.py`, `tests/test_portable_setup_transaction.py`, `tests/test_precompile_save.py`,
+`tests/test_prepare_at_build.py`, `tests/test_quick_pipelines.cpp`, `tests/test_quick_pipelines.py`,
+`tests/test_readme_menu_rows.py`, `tests/test_recomplauncher_json.py`, `tests/test_release.py`,
+`tests/test_saved_turn_rate.py`, `tests/test_scarecrow_timing.py`, `tests/test_scene_format.py`,
+`tests/test_setup_rename_retry.py`, `tests/test_setup_runtime.py`, `tests/test_setup_runtime_paths.py`,
 `tests/test_setup_tar_diagnostics.py`, `tests/test_setup_tool_merge.py`, `tests/test_ship_state_list.py`,
 `tests/test_skip_title.py`, `tests/test_split_before_draw.py`, `tests/test_stick_dead_zone.py`,
 `tests/test_tested_configurations.py`, `tests/test_text_size.py`, `tests/test_text_speed.py`,
@@ -104,6 +104,17 @@ can bring them back once they pass upstream:
 `tests/test_replay_write_order.py`, `tests/test_run_all_changed.py`, `tests/test_upscaler_rows.py`,
 `tests/test_vk_occlusion_queries.py`, `tests/test_walk_key.py`
 
+The same at `v3.0.0-rc.7` (`544229a2`), the first sync, on the same machine: twelve that passed at the base, whose
+source moved on without them, and three new ones (`tests/test_profiling_mode.py`, `tests/test_slow_frames.py`,
+`tests/test_switch_table.py`)
+(15 files):
+
+`tests/test_display_startup_failure.py`, `tests/test_framegen_preset.py`, `tests/test_invalidate_vcore.py`,
+`tests/test_mirror_budget.py`, `tests/test_pipeline_play_cache.py`, `tests/test_present_thread.py`,
+`tests/test_profiling_mode.py`, `tests/test_readback_timeout_source.py`, `tests/test_rumble_menu.py`,
+`tests/test_slow_frames.py`, `tests/test_switch_table.py`, `tests/test_target_image_pool.py`,
+`tests/test_upscaler_round_trip.py`, `tests/test_vcore_escape.py`, `tests/test_vk_swapchain_compat.py`
+
 ## Files changed at import
 
 - `host/discord_rpc.c`: no default Discord application id (Longshot's id named Longshot's application).
@@ -115,6 +126,9 @@ can bring them back once they pass upstream:
 - `gpu/vk/menu_i18n.h` is Longshot's file after the rename, with no other change: the menu's texts that are this
   fork's own are in `gpu/vk/menu_i18n_inhale.h`, which `gpu/vk/vk_menu_i18n.cpp` reads after it. A text this fork
   reworded or removed keeps its row in Longshot's tables and is listed there as retired.
+- `nx2/addresses.ini` (new in Longshot at `v3.0.0-rc.7`): every key is empty. Longshot's values are its own services,
+  where the crash window's Send and the performance statistics post. With a key empty nothing is sent, which the
+  file itself provides for.
 - `nx2/make_game.py`, `nx2/nup.py`: messages about incomplete or unreadable game files no longer tell the user how
   to obtain the files (`tests/test_make_game_cache.py` expects the new text).
 - `host/control.c`, `scripts/longshot_ctl.py`, `tests/run_all.py`, `tests/test_doc_anchors.py`,

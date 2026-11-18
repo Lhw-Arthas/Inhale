@@ -37,6 +37,8 @@ void logf(const char* fmt, ...);
 // (longshot) A line at another level than info, as host/hos.h's hos_log_at: "[trace] " leads its text, after the host's thread tag
 enum LogLevel : int { log_error, log_warn, log_info, log_debug, log_trace };
 void logf_at(LogLevel level, const char* fmt, ...);
+void new_refused();                       // (vk_main.cpp, issue 1280: the renderer's new_handler)
+void new_refuse_test(int64_t presents);   // (vk_main.cpp: HOS_TEST_ALLOC_REFUSE's allocation, at the replay's present)
 void queue_flush_locked();   // (vk_replay.cpp, RX_VK_BATCH: held submits out; dev.present_mu held)
 void queue_flush();          // (the same, taking dev.present_mu)
 // (longshot) held submits out, then vkDeviceWaitIdle with the present queue's lock taken too (dev.present_mu held): the device's
@@ -290,6 +292,8 @@ bool memory_has_shadow(uint64_t guest, uint64_t n);
 /// A read of guest memory by the replay as the submission being recorded had it: the pages a kept capture holds from
 /// there (the game writes several submits ahead of the replay), the rest from guest memory. False when unreadable
 bool memory_read_as_submitted(uint64_t gpu, void* dst, uint64_t n);
+struct SubmittedRead { uint64_t gpu; void* dst; uint64_t n; };
+void memory_read_as_submitted_many(const SubmittedRead* reads, size_t count);   // (pools_mu once for all of them)
 bool pools_mirrored();   // (vk_memory.cpp mirror_on: the buffer pools have VRAM mirrors)
 bool memory_sparse_wait(VkSemaphoreSubmitInfo* w);   // (vk_memory.cpp, RX_VK_MIRROR_SPARSE: a submission's wait for the sparse binds; dev.present_mu held)
 uint64_t memory_capture_view();          // (bumped when a capture is published or any page is stamped)

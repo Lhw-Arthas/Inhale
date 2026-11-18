@@ -30,6 +30,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "vk_new.h"   // (NewNothrow)
 #include "shader_recompiler/backend/spirv/mma_layout.h"
 #include "shader_recompiler/ir_opt/passes.h"
 #include "shader_recompiler/ir_opt/fragment_output_guard.h"
@@ -1084,6 +1085,7 @@ std::atomic<int64_t> st_translated, st_failed, st_translate_ns;
 // were counted nowhere
 constexpr int64_t kFailNamed = 30;
 std::atomic<int64_t> st_left_out, st_not_translated, st_mesh_not_translated, st_stage_failed;
+std::atomic<int64_t> st_translate_wait_ns;   // (the translations a draw waited for, program_pick: the performance summary's hitches)
 
 } // namespace
 
@@ -1379,6 +1381,9 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
         ~ModuleProgram() { module_program = 0; }
     } module_for{p.key};
     try {
+        // (issue 1280: an allocation refused in the translation fails this program, as before the renderer's new_handler,
+        // rather than wait 5 s and stop the game: a bad shader can ask for a size no PC has)
+        const NewNothrow nothrow;
         if (driver_faulted_program(p.key)) throw std::runtime_error("the driver faulted on this program before: not asked of it again");
         Shader::Backend::Bindings bindings{};
         int questions = 0;
@@ -1624,6 +1629,9 @@ void translate_mesh_into(Program& p, const NvnState& s, const Code* task, const 
         Shader::Optimization::g_nvn2_miss_log_this = !only || !strncmp(hex, only, strlen(only));
     }
     try {
+        // (issue 1280: an allocation refused in the translation fails this program, as before the renderer's new_handler,
+        // rather than wait 5 s and stop the game: a bad shader can ask for a size no PC has)
+        const NewNothrow nothrow;
         Shader::Backend::Bindings bindings{};
         std::vector<std::vector<uint32_t>> kept;   // (each stage's SPIR-V, for the program cache: mesh programs were never kept,
                                                    // so each was translated and its pipeline built in the middle of play, every run)
@@ -2110,7 +2118,9 @@ const Program* program_pick(const NvnState& s, ProgramKind kind, const uint8_t c
     variants.push_back(std::move(p));
     static const bool sync = env_on("RX_VK_SYNC_SHADERS");
     if (compute || sync) {   // (compute: dispatches are never left out, so they are translated where they are)
+        const auto t0 = std::chrono::steady_clock::now();
         translate_into(*raw, s, stage_code[0], stage_code[1], compute ? stage_code[5] : nullptr, color_types);
+        st_translate_wait_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
         return raw->failed ? nullptr : raw;
     }
     struct Job {
@@ -2619,6 +2629,9 @@ void shader_fail_lines() {
 }
 double shader_translate_ms() {
     return st_translate_ns.load() / 1e6;
+}
+double shader_translate_wait_ms() {
+    return st_translate_wait_ns.load() / 1e6;
 }
 
 void program_released(const nvn_prog* p) {

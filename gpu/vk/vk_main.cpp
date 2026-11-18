@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <new>
 #include <string>
 #include <thread>
 #include <vector>
@@ -21,10 +22,12 @@
 #include "vk_draw.h"
 #include "vk_framegen.h"
 #include "vk_internal.h"
+#include "vk_new.h"
 #include "presenter_queue.h"
 static_assert(mkwvk::kQueueGraphics == VK_QUEUE_GRAPHICS_BIT && mkwvk::kQueueCompute == VK_QUEUE_COMPUTE_BIT);
 #include "gpu_choice.h"
 #include "vk_menu.h"
+#include "vk_bug_report.h"
 #include "auto_settings.h"
 #include "vk_dlss.h"
 #include "vk_fsr4.h"
@@ -36,8 +39,13 @@ static_assert(mkwvk::kQueueGraphics == VK_QUEUE_GRAPHICS_BIT && mkwvk::kQueueCom
 #include "vk_programs.h"
 #include "mesh_mode.h"
 #include "crash_markers.h"   // (mkwvk_close_asked: a close is not a crash)
+#include "vk_fps.h"
 #ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
 #include "inhale_env.h"
+#endif
+#include "switches.h"   // (the switches' table: what the run has set, said at the start)
+#ifndef _WIN32
+extern char** environ;
 #endif
 
 namespace vkx {
@@ -53,6 +61,10 @@ static PFN_vkGetInstanceProcAddr get_instance_proc;
 
 bool load_global() {
 #ifdef _WIN32   // (longshot: the loader from System32 only, not from the current folder or PATH)
+    // (longshot) The drivers are the loader's to find: it reads the ones in use from the display adapters. Nothing here
+    // sets VK_ICD_FILENAMES or VK_DRIVER_FILES, which make the loader take the named files and no other driver: DriverStore
+    // keeps the packages of drivers no longer in use, and one of those named listed no GPU at all (Inhale #821).
+    // pick_device chooses the GPU; RX_VK_DEVICE or the GPU row choose another
     HMODULE m = LoadLibraryExA("vulkan-1.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
 #else
     HMODULE m = LoadLibraryA("vulkan-1.dll");   // (linux: libvulkan.so.1, host/posix/win32_posix.c)
@@ -142,6 +154,51 @@ void logf_at(LogLevel level, const char* fmt, ...) {
     va_start(a, fmt);
     vlogf(level, fmt, a);
     va_end(a);
+}
+
+// (longshot, issue 1280) The renderer's C++ allocations at Windows' commit limit (RAM plus the page file full). operator new got
+// nothing from malloc and threw std::bad_alloc; nothing caught it (often nothing could: the unwind itself failed on its way up,
+// 0xc00000ff), and the game ended with exception 0x20474343, "An unexpected error", with no wait and no out-of-memory notice.
+// The host's own allocations wait there since issue 333 (host/mkw_glue.c hos_alloc_failed); this is the same for the renderer's.
+// new_refused is the renderer's new_handler (mkwvk_init): operator new calls it each time malloc refuses and tries again when it
+// returns. It returns after 50 ms, for up to 5 s, while the textures give commit back; then the host's out-of-memory line and
+// notice, and the game stops (MkwVkHost out_of_memory, version 28; an older host: thrown, as before). A refusal more than
+// kNewApartMs after this thread's last try is a new one, with a whole wait of its own. In a NewNothrow scope (vk_new.h) it
+// throws at once: that nothrow new's caller has a fallback for its null.
+// HOS_TEST_ALLOC_REFUSE=<text> (host/mkw_glue.c's test) whose text is in kNewWhat: at the 600th present one allocation too large
+// for any PC is asked for, to see the wait, the line, the notice and the stop in a run (new_refuse_test)
+static constexpr int kNewTries = 100;            // (100 x 50 ms: 5 s, as the host's hos_alloc_failed and commit_wait)
+static constexpr int kNewTryMs = 50;
+static constexpr int64_t kNewApartMs = 250;
+static constexpr char kNewWhat[] = "the renderer's C++ allocations";
+constinit thread_local int t_new_tries = 0;
+constinit thread_local int64_t t_new_last_ms = 0;
+static void new_sleep_ms(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+void new_refused() {
+    if (t_new_nothrow) throw std::bad_alloc();   // (libc++'s and libstdc++'s nothrow new: the caller's null)
+    if (t_new_tries && steady_ms() - t_new_last_ms > kNewApartMs) t_new_tries = 0;
+    if (!t_new_tries) {
+        static std::atomic<int> said{0};
+        if (said.fetch_add(1, std::memory_order_relaxed) < 8)
+            logf("vk: a C++ allocation refused (at the commit limit?): tried again for up to %d s", kNewTries * kNewTryMs / 1000);
+    }
+    if (t_new_tries < kNewTries) {
+        t_new_tries++;
+        new_sleep_ms(kNewTryMs);
+        t_new_last_ms = steady_ms();
+        return;   // (operator new asks malloc again)
+    }
+    t_new_tries = 0;
+    if (host && host->version >= 28 && host->out_of_memory) host->out_of_memory(kNewWhat);   // (does not return)
+    throw std::bad_alloc();
+}
+void new_refuse_test(int64_t presents) {   // (the replay's present, its count)
+    static const char* const e = getenv("HOS_TEST_ALLOC_REFUSE");
+    if (!e || !*e || presents != 600 || !std::strstr(kNewWhat, e)) return;
+    logf("vk: HOS_TEST_ALLOC_REFUSE: one C++ allocation of 1 PB, refused on any PC, to see what a player sees at the commit limit");
+    static void* volatile kept;   // (kept: a new and delete of nothing else may be left out by the compiler)
+    kept = ::operator new(size_t(1) << 50);
+    ::operator delete(kept);
 }
 
 namespace {
@@ -285,15 +342,20 @@ bool pick_device() {
 /// 0x7D55 in Kokiri Forest, Kakariko and on Death Mountain Trail), from that driver, 101.9175, on (Intel's Windows
 /// driverVersion is 101 << 14 | 9175); and the Arc B-series cards, Battlemage (PCI device 0xE2xx; run on a B580, 0xE20B,
 /// in Kokiri Forest: the loop lost the device in the sky's light sums, 499dbfd0, on entering it in every run), from the
-/// driver that was run, 101.9154, on. Intel's other GPUs on Windows (Iris Xe and UHD, Arc A-series, Lunar Lake), older
-/// drivers, AMD's RDNA 3 and later and Mesa's Intel driver report the feature too but were not tried: they keep the loop
-/// unless the switch asks, until runs on them say otherwise
+/// driver that was run, 101.9154, on; and the Xe3 iGPUs of Panther Lake (PCI device 0xB0xx) from 101.9150 on (Inhale
+/// issue 618: on an Arc B390, 0xB080, with 101.9150 in Kokiri Forest, the loop lost adds of the same light sums, the
+/// scene's exposure came out about 8x too high from the sky on, and a milky white haze covered the picture; the native add
+/// gave the picture a B580 shows, and the device was not lost in 40 minutes of play, where the loop lost it at 499dbfd0 as
+/// in issue 606). Intel's other GPUs on Windows (Iris Xe and UHD, Arc A-series, Lunar Lake), older drivers, AMD's RDNA 3
+/// and later and Mesa's Intel driver report the feature too but were not tried: they keep the loop unless the switch asks,
+/// until runs on them say otherwise
 static bool native_fadd_wanted(const char* env, VkDriverId driver, uint32_t device, uint32_t version) {
     if (env) return !env_value_off(env);
     if (driver == VK_DRIVER_ID_NVIDIA_PROPRIETARY) return true;
     if (driver != VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS) return false;
-    return ((device & 0xFF00u) == 0x7D00u && version >= (101u << 14 | 9175u)) ||
-           ((device & 0xFF00u) == 0xE200u && version >= (101u << 14 | 9154u));
+    return ((device & 0xFF00u) == 0x7D00u && version >= (101u << 14 | 9175u)) ||   // (Meteor Lake, Arrow Lake)
+           ((device & 0xFF00u) == 0xE200u && version >= (101u << 14 | 9154u)) ||   // (Battlemage)
+           ((device & 0xFF00u) == 0xB000u && version >= (101u << 14 | 9150u));     // (Panther Lake)
 }
 
 bool create_device() {
@@ -378,7 +440,7 @@ bool create_device() {
     // (longshot) the GPU's own float add on storage buffers: the game's RED/ATOM.ADD.F32 become one OpAtomicFAddEXT instead
     // of a compare-exchange loop, which gives up after CAS_LOOP_MAX_TRIES attempts and loses that add (eden
     // spirv_emit_context.cpp DefineStorageBuffers). By default with NVIDIA's driver, and Intel's Windows driver on the
-    // Meteor Lake and Arrow Lake iGPUs (native_fadd_wanted); RX_VK_NATIVE_FADD=1 asks for it on any GPU, =0 keeps the loop
+    // Meteor Lake, Arrow Lake and Panther Lake iGPUs and the Arc B-series (native_fadd_wanted); RX_VK_NATIVE_FADD=1 asks for it on any GPU, =0 keeps the loop
     // on every one, the extension not even enabled
     const char* const fadd_env = getenv("RX_VK_NATIVE_FADD");
     VkPhysicalDeviceDriverProperties fadd_driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
@@ -443,7 +505,9 @@ bool create_device() {
     // family (NVIDIA's has 16), else a queue of a compute-only family (RADV: one graphics queue), its family's next free one. A
     // device without either presents on the game's thread, as before
     const char* pt_env = getenv("RX_VK_PRESENT_THREAD");
-    const bool presenter_wanted = pt_env && atoi(pt_env) != 0;   // (off by default: no queue made for it)
+    // (hookshot) NVIDIA Optimus: enable dedicated presentation thread/queue by default on NVIDIA dGPUs (0x10DE)
+    // to decouple swapchain presentation over PCIe from the replay render loop.
+    const bool presenter_wanted = pt_env ? (atoi(pt_env) != 0) : (dev.props.vendorID == 0x10DE);
     uint32_t presenter_family = UINT32_MAX, presenter_index = 0;
     if (presenter_wanted) {   // (presenter_queue.h: never a queue another part of the renderer takes)
         std::vector<QueueFamilyInfo> qf(n);
@@ -468,9 +532,11 @@ bool create_device() {
     const bool want_present_wait = presenter_family != UINT32_MAX && has_extension(exts, VK_KHR_PRESENT_ID_EXTENSION_NAME) &&
                                    has_extension(exts, VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
     if (want_present_wait)
-        for (const char* name : {VK_KHR_PRESENT_ID_EXTENSION_NAME, VK_KHR_PRESENT_WAIT_EXTENSION_NAME}) {
+        for (const char* name : { VK_KHR_PRESENT_ID_EXTENSION_NAME, VK_KHR_PRESENT_WAIT_EXTENSION_NAME }) {
             bool listed = false;
-            for (const char* w : want) listed |= !strcmp(w, name);
+            for (const char* w : want) {
+                if (!strcmp(w, name)) { listed = true; break; }
+            }
             if (!listed) want.push_back(name);
         }
 
@@ -542,10 +608,10 @@ bool create_device() {
                                                      : "compare-exchange loop (no VK_EXT_shader_atomic_float)";
         if (fadd_env) logf("vk: float atomic add on storage buffers: %s, RX_VK_NATIVE_FADD=%s", how, fadd_env);
         else logf("vk: float atomic add on storage buffers: %s, %s", how,
-                  !fadd_wanted ? "by default only with NVIDIA's driver and Intel's Windows driver on Meteor Lake, Arrow Lake and Battlemage "
+                  !fadd_wanted ? "by default only with NVIDIA's driver and Intel's Windows driver on Meteor Lake, Arrow Lake, Panther Lake and Battlemage "
                                  "(RX_VK_NATIVE_FADD=1: native where the GPU has it)"
                   : fadd_driver.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY ? "NVIDIA's driver"
-                                                                            : "Intel's Windows driver, Meteor Lake, Arrow Lake or Battlemage");
+                                                                            : "Intel's Windows driver, Meteor Lake, Arrow Lake, Panther Lake or Battlemage");
     }
     // (bounds-checked buffer access: an out-of-range access dropped instead of faulting the device. On by default: the GPU
     // culling pass 53caac5f faulted the device while a save loaded, about one start in three, and the scene's lighting read garbage
@@ -1521,6 +1587,14 @@ void auto_profile() {
 
 int start(void* hwnd) {
     main_window = (HWND)hwnd;
+    {   // (which switches the run has set, and any RX_ name set that is none: switches.h)
+#ifdef _WIN32
+        const char* const* env = _environ;
+#else
+        const char* const* env = environ;
+#endif
+        switches::report(env, [](const char* line) { logf("%s", line); });
+    }
     auto_profile();   // (the Quality preset Auto (this PC): before the game first asks its mode, which reads the options)
     if (!hwnd) {   // (HOS_HEADLESS: no window; the frames are rendered all the same, RX_VK_SHOTS writes them out)
         dev.offscreen = true;
@@ -1579,6 +1653,8 @@ const char* describe() {
 MkwVkRenderer table;
 
 } // namespace
+/// (longshot) The shaders are being prepared (the start-up screen): the performance summary's "map" then (perf_report.cpp)
+bool shaders_preparing() { return prep_running.load(std::memory_order_relaxed); }
 } // namespace mkwvk
 
 // (longshot) The window is being closed (host/display.c, host/posix/display_sdl.c, before they end the process), or the game quit
@@ -1595,6 +1671,7 @@ __attribute__((visibility("default")))
 void mkwvk_close_asked(void) {
     using namespace mkwvk;
     programs_census_log("close");
+    perf_report_final(-1);    // (the performance summary's last: ExitProcess is _exit on Linux, so no atexit runs there)
     module_ids_flush();
     page_table_census_log("close");   // (the guest pools the page table cannot reach: how many came, vk_memory.cpp)
     fsr4_close();             // (AMD FSR 4's tuned layers: their background builds stopped first, what they made then saved below)
@@ -1608,6 +1685,8 @@ void mkwvk_close_asked(void) {
     dlss_fg_close();   // (NVIDIA DLSS Frame Generation through NGX: its feature let go before the process exits, vk_dlss.cpp)
 }
 
+static MkwVkHost host_storage;
+
 extern "C"
 #ifdef _WIN32
 __declspec(dllexport)
@@ -1617,11 +1696,16 @@ __attribute__((visibility("default")))
 const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
     using namespace mkwvk;
     if (!h) return nullptr;
-    if (h->version != MKWVK_API_VERSION) {
-        std::fprintf(stderr, "vk: host version mismatch: host has %u, expected %u\n", h->version, MKWVK_API_VERSION);
+    if (h->version < 14 || h->version > MKWVK_API_VERSION) {
+        std::fprintf(stderr, "vk: host version mismatch: host has %u, expected %u (or >= 14)\n", h->version, MKWVK_API_VERSION);
         return nullptr;
     }
-    host = h;
+    std::memset(&host_storage, 0, sizeof(host_storage));
+    const size_t copy_size = (h->version == 14) ? (offsetof(MkwVkHost, wide_menus) + sizeof(h->wide_menus))
+                                                : sizeof(MkwVkHost);
+    std::memcpy(&host_storage, h, std::min(sizeof(host_storage), copy_size));
+    host = &host_storage;
+    std::set_new_handler(new_refused);   // (issue 1280: a refused C++ allocation waits, then says out of memory)
     if (!load_global()) {
 #ifdef _WIN32
         logf("vk: load_global failed (Vulkan loader library or vkCreateInstance missing)");
@@ -1648,6 +1732,10 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
          dev.props.driverVersion, dev.mesh_shader ? "yes" : "no", dev.external_memory_host ? "yes" : "no",
          dev.graphics_pipeline_library ? "yes" : "no");
     logf("vk: driver: %s", driver_text().c_str());   // (the builders' Save my pipeline list reads it: nx2/pipeline_share.py)
+    // (the crash report's facts, as the bug report words them: host/hos_crash_dialog.h reads the last of each)
+    logf("report: gpu %s", device_report_text().c_str());
+    logf("report: cpu %s", mkwvk::bug_report::cpu_text().c_str());
+    logf("report: os %s", mkwvk::bug_report::os_text().c_str());
     if (!dev.mesh_shader && !dev.mesh_fallback && !env_on("RX_VK_NO_MESH_WARNING")) {
         // (the game draws its foliage, grass and many effects with mesh shaders: without them those draws are left out and the
         // picture is broken (an RX 580's "static"-like scenes, 2026-11-08). Said once, on its own thread, and the game goes on.)
@@ -1663,7 +1751,7 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
         }).detach();
 #endif
     }
-    table.version = MKWVK_API_VERSION;
+    table.version = h->version;
     table.start = start;
     table.resize = resize;
     table.describe = describe;

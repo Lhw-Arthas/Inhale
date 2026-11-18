@@ -14,7 +14,14 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 26
+#define MKWVK_API_VERSION 30
+enum { HOS_MONITOR_CURRENT = 1, HOS_MONITOR_PRIMARY = 2 };
+typedef struct MkwVkMonitor {
+    char id[512];             /* opaque persistent preference; never a runtime handle or list index */
+    char name[256];           /* UTF-8 label, may collide: the UI also shows dimensions */
+    int width, height;        /* desktop pixels, not DPI-scaled window coordinates */
+    int flags;                /* HOS_MONITOR_* */
+} MkwVkMonitor;
 enum { HOS_OPT_CHEAT_HEARTS = 32, HOS_OPT_CHEAT_FLIGHT, HOS_OPT_CHEAT_ACTION, HOS_OPT_CHEAT_CAMERA, HOS_OPT_CHEAT_SPEED };
 /* (longshot) the Gameplay tab's Text size (host/oot_text_size.c): 0 the game's, 1 110%, 2 125%, 3 150%, 4 175% */
 enum { HOS_OPT_TEXT_SIZE = 10 };
@@ -260,7 +267,27 @@ typedef struct MkwVkHost {
        Call every menu tick (enabled=0 releases only the test reference). Does not play or save capture.
        Result: 1 testing, 2 capture open, 4 default fallback, 8 fresh samples, 16 clipping, 32 mic Off. */
     int (*mic_test)(int enabled, int gain, int *levels);
-    /* Version 26 (inhale): the device's window origin is the lower left, NVN's default (no
+    /* (version 26, longshot) the performance summary (gpu/vk/perf_report.cpp), asked about once a second while the launcher's
+       Send performance statistics is ticked: the map Link is in and his age ("Kokiri Forest (child)", as the log's map: line;
+       "" before a save is loaded) into map, and the movies' totals so far (host/nn_video.c): [0] pictures shown, [1] skipped to
+       keep up with the sound, [2] shown late (over 50 ms after the one before), [3] decoding time in ns, [4] decoders that did
+       not start (another one took over). Returns the build's version (INHALE_VERSION) */
+    const char *(*perf_info)(char *map, int cap, int64_t movie[5]);
+    /* Version 27 (longshot): the frame trace's main-thread columns (RX_VK_FRAME_TRACE, gpu/vk/vk_replay.cpp): the game's main
+       thread's (sead::MainThread) time so far, in ns: [0] waiting for a virtual core, [1] blocked in a wait or sleep, both
+       counted while fps_timing is on, [2] its CPU time. 0 before the game names that thread */
+    int (*main_thread_times)(int64_t out[3]);
+    /* Version 28 (longshot, issue 1280): a C++ allocation of the renderer's refused for 5 s (its new_handler, gpu/vk/vk_main.cpp
+       new_refused, tried again meanwhile): the host's out-of-memory line and notice, waited for, then the game stops, as for the
+       host's own allocations (host/mkw_glue.c hos_alloc_gave_up). what names it in the log. Does not return */
+    void (*out_of_memory)(const char *what);
+    /* Version 29: named fullscreen output selection. Snapshot metadata is copied; empty ID means the
+       current window's screen. select queues work to the window thread, never moves it here.
+       The saved preference may be unavailable; flags describe the actual current/primary screen. */
+    int (*monitor_count)(void);
+    int (*monitor_info)(int index, struct MkwVkMonitor *out);
+    void (*monitor_select)(const char *id);
+    /* Version 30 (inhale): the device's window origin is the lower left, NVN's default (no
        nvnDeviceSetWindowOriginMode(UPPER_LEFT)): +y of clip space is the higher row of every target, and row 0 of the
        presented texture is the picture's bottom row. 0: the upper left, +y the lower row, row 0 the top. */
     int (*origin_lower_left)(void);

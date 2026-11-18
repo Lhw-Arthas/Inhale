@@ -698,3 +698,34 @@ The first stage was played in a window, with sound, from `work/game/inhale`.
   the Test row is the only way, and it is hidden.
 - Check: `tests/test_mic_rows_hidden.py` (the hiding stays), and the full suite. A menu built alone (the tests) still
   shows the rows, as it shows every row.
+
+### 2026-11-18: the first sync, to Longshot `v3.0.0-rc.7`
+
+- `scripts/sync_upstream.py --to v3.0.0-rc.7` (`544229a2`, 36 commits past the import's base): 204 files changed in
+  the imported paths, 191 applied (59 of them new), 13 not applied (12 not tracked here, and the stand-in). Five
+  files conflicted, in 8 places, each with one answer: `.gitignore` (both sides), `gpu/vk/vk_api.h` and
+  `host/rx_backend.c` (below), and the two checks that assert the interface's version.
+- The renderer's interface is version 30 here: Longshot went from 25 to 29 with six new host members, and this
+  fork's `origin_lower_left` (26 before the sync) now comes after them, in `MkwVkHost`, in `host/rx_backend.c`'s
+  table and in `tests/test_audio_output_devices.py`.
+- The rename rule was wrong in two places, found on a trial of this sync and fixed before it:
+  `scripts/fsr3_shaders.py` now holds shader text with functions named after Longshot, compiled into headers the rule
+  keeps (the file is kept whole), and the mark `(version 26, longshot)` on a member of the interface was renamed (it
+  stays). `tests/test_sync_rules.py` has both.
+- Longshot now sends things: the crash window's Send posts a crash report, and a launcher's tick sends performance
+  statistics, both to Longshot's own services, whose addresses are in `nx2/addresses.ini`. Every key is empty here,
+  which turns each use off (`nx2/make_game.py` writes no address into the game folder, `nx2/perf_report.py` has no
+  relay). `tests/test_perf_report.py` expects that.
+- The stand-in `nx2/oot_patches.py` needed nothing: Longshot's file gained 14 names, and nothing in `nx2/` uses one.
+- Checks: `tests/run_all.py` had 19 new failures after the sync. Longshot's own tree at the same revision, checked out
+  under `work/` and run on the same machine, fails 16 of them too (45 in all): checks whose source moved on without
+  them. Those are left out, with one script and three checks bound to things left out (`PROVENANCE.md` has the
+  lists). One was this fork's: `nx2/test_kirby_far.py` named the lift's call, which Longshot reworded; the merge of
+  `nx2/lift.py` itself was right. After that: 530 passed, 5 failed, 64 skipped, the five being the ones that fail
+  only in the sandbox the checks ran in (a run outside it, `work/runs/s7/tests.txt`, has 0 failed).
+- In the game: `work/boot.sh rc7 60 --lift` (the lift with the hot list, the build with the profiles, 0 files
+  failed, then 60 s headless without movies or sound): 3599 frames presented, 60.0 a second over the last 5 s, every
+  present interval between 15.5 and 17.8 ms (`work/runs/sync-rc7/rc7.txt`). No picture was looked at and nothing was
+  played: that is still to do by hand.
+- Not looked at: what Longshot's 36 commits change for this game beyond the checks and that run (its new settings
+  rows, the fullscreen monitor choice, the crash window).

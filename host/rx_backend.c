@@ -12,6 +12,9 @@
 #include "../gpu/vk/dlss_math.h"
 #include "control.h"
 #include "audio_output_devices.h"
+int hos_monitor_count(void);
+int hos_monitor_info(int index, MkwVkMonitor *out);
+void hos_monitor_select(const char *id);
 
 /* the stand-ins when there is no Vulkan back end (host/rx_nowgpu.c, host/posix/linux_stubs.c) */
 int wgr_start(void *hwnd);
@@ -64,6 +67,7 @@ int hos_mic_test(int enabled, int gain, int *levels);
 void hos_bind(int set, int button, int slot, int code);
 int hos_prompts_face(void);         /* prompts.c */
 int hos_prompts_live_parts(void);   /* prompts.c */
+const char *hos_perf_info(char *map, int cap, int64_t movie[5]);   /* hos_main.c: the performance summary's map and movies */
 #if defined(A64_WRITE_TRACK) && !defined(__EMSCRIPTEN__)
 void hos_mark_written(const void *p, size_t n);
 #endif
@@ -167,6 +171,8 @@ int hos_sdl_desktop_size(int *width, int *height);   /* hos_sdl.c */
 #endif
 /* (longshot) the main screen's size, as host/hos_main.c takes its shape (MkwVkHost.screen_size) */
 static int host_screen_size(int *width, int *height) {
+    int hos_monitor_screen_size(int *, int *);
+    if (hos_monitor_screen_size(width, height)) return 1;
 #ifdef _WIN32
     const int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
     if (w <= 0 || h <= 0) return 0;
@@ -215,6 +221,10 @@ extern _Thread_local int64_t hos_slept_ns[2];
 extern volatile int64_t hos_poll_slept_ns, hos_acquire_slept_ns;
 extern volatile int hos_fps_timing;
 static void host_fps_timing(int on) { __atomic_store_n(&hos_fps_timing, on != 0, __ATOMIC_RELAXED); }
+int hos_thread_times_of(const char *name, int64_t out[3]);   /* (hos_thread.c) */
+static int host_main_thread_times(int64_t out[3]) { return hos_thread_times_of("sead::MainThread", out); }
+/* (version 28, issue 1280) the renderer's C++ allocations that its new_handler gave up on: the size is not known there */
+static void host_out_of_memory(const char *what) { hos_alloc_gave_up(0, what); }
 static void host_slept_ns(int64_t out[2]) {
     out[0] = __atomic_load_n(&hos_poll_slept_ns, __ATOMIC_RELAXED);
     out[1] = hos_slept_ns[1] + __atomic_load_n(&hos_acquire_slept_ns, __ATOMIC_RELAXED);
@@ -275,7 +285,8 @@ static const MkwVkHost vk_host = {
     host_romfs_dir, host_wide_menus, host_slept_ns, host_fps_timing, hos_prompts_live_parts, host_screen_size,
     host_take_text, hos_options_file,
     hos_audio_output_count, hos_audio_output_info, hos_audio_output_select, hos_audio_output_state,
-    hos_mic_test,
+    hos_mic_test, hos_perf_info, host_main_thread_times, host_out_of_memory,
+    hos_monitor_count, hos_monitor_info, hos_monitor_select,
     nvn_origin_lower_left,
 };
 
@@ -393,11 +404,13 @@ int rx_start(void *hwnd) {
     if (r && r->start(hwnd)) {
         vk = r;
         hos_log("rx: renderer: Vulkan (%s)", dll);
+        hos_log("report: renderer Vulkan");   /* (the crash report's renderer: host/hos_crash_dialog.h) */
         flush_early();
         return 1;
     }
     if (r) hos_log("rx: the Vulkan back end could not start on the window: nothing is drawn");
     const int ok = wgr_start(hwnd);
+    if (ok) hos_log("report: renderer WebGPU (no usable Vulkan device)");
     flush_early();
     return ok;
 }
@@ -442,6 +455,7 @@ void rx_nvn_finish(void) { vk ? vk->nvn_finish() : wgr_nvn_finish(); }
 static volatile LONG presents;   /* (the frames shown, for the camera jitter below) */
 void rx_nvn_present(const nvn_tex *t, const int crop[4]) {
     InterlockedIncrement(&presents);
+    hos_slow_frame_present();   /* (HOS_SLOW_FRAMES: a late frame's samples written out, host/slow_frames.c) */
     vk ? vk->nvn_present(t, crop) : wgr_nvn_present(t, crop);
 }
 /* (longshot, nx2/oot_jitter.py) the temporal upscaler's camera jitter (NVIDIA DLSS, AMD FSR 4: gpu/vk/vk_temporal.cpp): this frame's sub-pixel offset of the scene's projection, in clip

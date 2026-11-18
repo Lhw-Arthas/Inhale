@@ -39,6 +39,7 @@
 #include "vk_texture.h"   // (the FPS counter's Dev level: texture_count, texture_bytes, texture_stats)
 #include "oot_cheat_items.h"
 #include "vk_progress.h"   // (StartupView, version_text: the start-up screen)
+#include "vk_imgui.h"   // (the renderer's side of the overlay: begin, fonts, logo, record)
 #include "vk_ui.h"
 #include "vk_menu_keys.h"   // (which gamepad buttons confirm and go back: those A and B are bound to)         // (how it looks: Dear ImGui, vk_imgui.h)
 #include "vk_dlss.h"
@@ -46,6 +47,7 @@
 #include "vk_bug_report.h"   // (the Gameplay tab's Bug report: what it writes, and how)
 #include "../../host/hos_wide_size.h"   // (the widescreen picture's size, as host/hos_main.c works it out)
 #include "../../host/audio_output_devices.h"
+#include "monitor_choice.h"
 #include "vk_fsr3.h"      // (the Upscaler row: whether AMD FSR 3.1 runs on this GPU)
 #include "vk_fsr3fi.h"    // (the Frame generation row: whether FSR 3.1 makes the frame)
 #include "vk_fsr4.h"
@@ -312,7 +314,7 @@ const char* dlss_preset_env() {
     return ur::preset_env(e) ? e : nullptr;
 }
 const char* tx_dlss_model(int v) {
-    static const char* const t[] = {"Transformer (K)", "Transformer 2 (M)", "Transformer 2 (L)", "NVIDIA default"};
+    static const char* const t[] = {"Transformer (K)", "Transformer 2 (M)", "Transformer 2 (L)", "NVIDIA default", "CNN (E)", "CNN (F)"};
     if (const char* e = dlss_preset_env()) {
         static char b[48];
         const unsigned p = ur::dlss_preset(v, e);
@@ -331,6 +333,8 @@ const char* hn_dlss_model(int v, int variant) {
         "NVIDIA's second-generation transformer, its pick for Performance: sharper, at a little more GPU time.",
         "The second-generation transformer as NVIDIA tuned it for Ultra Performance, the smallest Render resolutions.",
         "Lets DLSS's runtime pick for each mode: what it picks can change with a runtime update.",
+        "NVIDIA's lightweight CNN model: uses ~59 MB VRAM and runs faster on constrained RTX GPUs.",
+        "NVIDIA's lightweight CNN model tuned for DLAA and Ultra Performance (~59 MB VRAM).",
     };
     static const char* const unused = "Used by NVIDIA DLSS and DLAA: choose one in the Upscaler row.";
     static const char* const env = "Set for this run by RX_VK_DLSS_PRESET.";
@@ -748,11 +752,11 @@ const char* hn_resolution(int v, int variant) {
     return "A steady size: lower is faster, and softer.";
 }
 /// (longshot) Whether the Frame generation by row offers DLSS FG: where DLSS-G can run in this process as far as is known
-/// (vk_dlss.cpp dlss_fg_unavailable). Where it cannot, the row has Built-in FG alone (row_fixed) and its line says why
+/// (vk_dlss.cpp dlss_fg_unavailable). Where it cannot, the row has FSR 3.1 FG (0, the default, and 2 the same) and Built-in
+/// FG, and its line at FSR 3.1 FG says why not DLSS FG
 bool framegen_by_dlss_offered() { return dlss_fg_unavailable() == FG_SKIP_NONE; }
-/// Frame generation by with nothing to choose: DLSS FG cannot run (Built-in FG alone), or RX_VK_DLSS_FG=1 chooses DLSS FG
-/// for the run (vk_dlss.cpp dlss_fg_forced)
-bool framegen_by_fixed() { return !framegen_by_dlss_offered() || dlss_fg_forced(); }
+/// Frame generation by with nothing to choose: RX_VK_DLSS_FG=1 chooses DLSS FG for the run (vk_dlss.cpp dlss_fg_forced)
+bool framegen_by_fixed() { return dlss_fg_forced(); }
 /// A row with nothing else to choose here: shown without its arrows, Left and Right leave it (and the saved value) alone
 bool row_fixed(const int* value) {
     return (value == &opts.dlss && ur::upscaler_fixed(upscalers_available())) ||
@@ -847,6 +851,33 @@ const char* tx_gpu(int v) {
     return buf;
 }
 const char* tx_pad_layout(int v);
+std::vector<monitor_choice::Choice> fullscreen_monitors;
+int monitor_pick = 0;
+std::string monitor_want, monitor_saved_name;
+bool monitor_missing = false;
+bool can_monitors() { return host && host->monitor_count && host->monitor_info && host->monitor_select; }
+const char* tx_fullscreen_monitor(int value) {
+    static std::string text;
+    if (value <= 0) return "Auto (current monitor)";
+    if (monitor_missing && value == (int)fullscreen_monitors.size() + 1) {
+        text = (monitor_saved_name.empty() ? std::string(i18n::tr("Selected monitor")) : monitor_saved_name) +
+               i18n::tr(" (not connected)");
+        return text.c_str();
+    }
+    if ((size_t)(value - 1) >= fullscreen_monitors.size()) return "Auto (current monitor)";
+    const auto& choice = fullscreen_monitors[value - 1];
+    text = choice.name + " (" + std::to_string(choice.width) + "x" + std::to_string(choice.height) + ")";
+    int duplicates = 0;
+    for (const auto& c : fullscreen_monitors) if (c.name == choice.name) duplicates++;
+    if (duplicates > 1) text += " [" + std::to_string(value) + "]";
+    return text.c_str();
+}
+const char* hn_fullscreen_monitor(int, int variant) {
+    if (variant > 0) return nullptr;
+    if (variant < 0) return "Choose the screen used by Fullscreen, F11 and Alt+Enter. Auto uses the window's current monitor.";
+    if (monitor_missing) return "The selected monitor is unavailable. The current monitor is used temporarily; the saved choice is kept.";
+    return "While windowed, this chooses the next fullscreen screen. While fullscreen, it moves the game now. Leaving fullscreen restores the window.";
+}
 // The playback row stores an endpoint ID, never its position or possibly duplicated display name.
 // Menu state uses menu_mu, shared by menu_tick and the control bridge; the host mailbox has its own lock.
 struct OutputChoice { std::string id, name; };
@@ -1117,12 +1148,13 @@ const char* framegen_maker_name() {
     default: return nullptr;
     }
 }
-/// Frame generation by: the choice, DLSS FG (0) or Built-in FG (1); Built-in FG whatever is saved where DLSS FG cannot run,
-/// DLSS FG with RX_VK_DLSS_FG=1.
+/// Frame generation by: the choice, DLSS FG (0), Built-in FG (1) or FSR 3.1 FG (2); where DLSS FG cannot run, 0 is FSR 3.1
+/// FG (AMD FSR 3.1's frame interpolation, vk_fsr3fi.cpp asked); DLSS FG with RX_VK_DLSS_FG=1.
 /// Who makes the frames now (the game's own menus give DLSS-G nothing to make them from) is the row's line and the FPS
 /// counter's (framegen_maker_name), not the choice's name
 const char* tx_framegen_by(int v) {
-    return framegen_by_dlss_offered() && (v == 0 || dlss_fg_forced()) ? "DLSS FG" : "Built-in FG";
+    if (framegen_by_dlss_offered() && (v == 0 || dlss_fg_forced())) return "DLSS FG";
+    return v == 1 ? "Built-in FG" : "FSR 3.1 FG";
 }
 /// Why DLSS-G does not make the frames now (vk_dlss.h FgSkip, and the Auto multiplier's FG_SKIP_COUNT), the row's line after
 /// "Not DLSS FG now: ". most: its runtime's most made frames, for FG_SKIP_TOO_MANY
@@ -1158,6 +1190,7 @@ const char* hn_framegen_by(int v, int variant) {
     static const char* const t[] = {
         "NVIDIA DLSS Frame Generation (RTX 40 and newer), made from the Upscaler's depth and motion.",
         "The renderer's own: made from the finished picture alone.",
+        "AMD FSR 3.1 frame interpolation, made from the scene's depth and motion: any GPU.",
     };
     static const char* const paused = "DLSS FG paused: the game's own menus, movies and loading screens draw no 3D to make "
                                       "frames from, so only the game's own frames show.";
@@ -1182,7 +1215,7 @@ const char* hn_framegen_by(int v, int variant) {
     bool off = false;      // (DLSS FG cannot run: not offered)
     bool forced = false;   // (RX_VK_DLSS_FG=1 chooses)
     if (variant >= 0) {
-        if (variant == 0) return t[v == 0 ? 0 : 1];
+        if (variant == 0) return t[std::clamp(v, 0, 2)];
         if (variant < nows) why = variant;
         else if (variant == nows) return paused;
         else if (variant > forced_at && variant - forced_at <= kCannot) {
@@ -1193,12 +1226,14 @@ const char* hn_framegen_by(int v, int variant) {
         } else {
             return nullptr;
         }
-    } else if ((why = dlss_fg_unavailable()) != FG_SKIP_NONE) {
+    } else if (v == 1 && !dlss_fg_forced()) {
+        return t[1];   // (Built-in FG, chosen)
+    } else if ((why = dlss_fg_unavailable()) != FG_SKIP_NONE) {   // (FSR 3.1 FG makes them: why not DLSS FG)
         off = true, dlss = (int)dlss_why();
     } else if (dlss_fg_forced()) {
         forced = true;
     } else {
-        if (v != 0) return t[1];
+        if (v != 0) return t[v == 2 ? 2 : 1];
         const FgMaker m = opts.framegen >= 1 ? framegen_maker() : FgMaker::None;
         if (m == FgMaker::DlssPaused) return paused;
         if (m != FgMaker::BuiltIn && m != FgMaker::Fsr3) return t[0];
@@ -1211,7 +1246,7 @@ const char* hn_framegen_by(int v, int variant) {
     }
     const char* text = off && why == FG_SKIP_DEVICE && dlss_why_text(dlss) ? dlss_why_text(dlss)
                                                                           : framegen_skip_text(why, most);
-    if (!text) return t[v == 0 && !off ? 0 : 1];
+    if (!text) return t[off || v == 2 ? 2 : v == 1 ? 1 : 0];
     snprintf(out, sizeof b[0], off ? "DLSS FG cannot run: %s" : "Not DLSS FG now: %s", text);
     return out;
 }
@@ -1339,7 +1374,8 @@ const char* tx_intel_compiles(int v) { return v == 1 ? "Side by side" : v == 2 ?
 /// (the Intel shader compiles row's line: RX_VK_NO_INTEL_SERIAL holds it, as RX_VK_ASTC_RGBA8 the ASTC row)
 const char* hn_intel_compiles(int v, int variant) {
     if (variant <= 0 && getenv("RX_VK_NO_INTEL_SERIAL"))
-        return "Set by RX_VK_NO_INTEL_SERIAL (inhale_env.txt or the environment): remove that line to choose here.";
+        return "Set by RX_VK_NO_INTEL_SERIAL: the launcher's build settings (Intel shader compiles), inhale_env.txt or the "
+               "environment. Change it there to choose here.";
     static const char* const t[] = {"Side by side on the Arc B-series (driver 101.9154 or newer), where it was measured; one at "
                                     "a time on other Intel graphics.",
                                     "Shaders are built faster on a CPU with many cores, but Intel's driver can crash the game "
@@ -1493,7 +1529,7 @@ Row rows[] = {
     {TAB_GRAPHICS, "Frame generation", &opts.framegen, 0, 8, 1, tx_framegen,
      "Makes frames between the game's own, for smoother motion, at a little input delay. Fast motion or camera cuts can "
      "show artifacts.", hn_framegen, false, true},
-    {TAB_GRAPHICS, "Frame generation by", &opts.framegen_by, 0, 1, 1, tx_framegen_by,
+    {TAB_GRAPHICS, "Frame generation by", &opts.framegen_by, 0, 2, 1, tx_framegen_by,
      "Who makes the frames at 2x and up. NVIDIA DLSS Frame Generation needs a temporal Upscaler (DLSS, DLAA or FSR) for "
      "the scene's depth and motion. Changes at once.", hn_framegen_by, false, true},
     {TAB_GRAPHICS, "Game frame rate cap", &opts.fps_cap, -1, 6, 1, tx_fps_cap,
@@ -1511,6 +1547,8 @@ Row rows[] = {
     {TAB_GRAPHICS, "Screen", nullptr, 0, 0, 0, nullptr, nullptr, nullptr, false, true, -1, true},
     {TAB_GRAPHICS, "Fullscreen", &opts.fullscreen, 0, 1, 1, tx_onoff,
      "Fills the whole screen with the game, without the window's border. The same as F11.", nullptr, false, true},
+    {TAB_GRAPHICS, "Fullscreen monitor", &monitor_pick, 0, 0, 1, tx_fullscreen_monitor,
+     "Choose the screen used by Fullscreen, F11 and Alt+Enter. Auto uses the window's current monitor.", hn_fullscreen_monitor, false, true},
     {TAB_GRAPHICS, "V-Sync", &opts.vsync, 0, 2, 1, tx_vsync,
      "Whether a frame waits for the display's refresh before it is shown. Changes at once.", hn_vsync, false, true},
     {TAB_GRAPHICS, "Window scaling filter", &opts.upscale, 0, 2, 1, tx_filter,
@@ -2182,6 +2220,7 @@ bool env_holds(const int* value) {
 Out player_custom_output{0, 0};   // (the player's own Output resolution size when HOS_OUTPUT_RES names another of its own)
 std::string ini_path() { return options_path(); }   // (the user folder's when --user names one: vk_paths.h)
 const char* ini_key(const Row& r) {
+    if (r.value == &monitor_pick) return "fullscreen_monitor";
     if (r.value == &opts.output_res) return "output_res";   // (host/nn_applet.c reads it at the start)
     if (r.value == &opts.vsync) return "vsync";
     // (rows renamed since their values were first saved keep their keys: an options file from before still loads)
@@ -2242,6 +2281,38 @@ int detect_pad_layout() {
 // (longshot) the row's choice to the host: off, the default, or a microphone by its name (and its place in the host's list,
 // -1 while it is unplugged: of two with one name, the one chosen). Unplugged, the name is the kept one, cut: the host takes
 // a name that starts with it
+void refresh_monitors() {
+    const int old_count = (int)fullscreen_monitors.size(), old_pick = monitor_pick;
+    const bool old_missing = monitor_missing;
+    const std::string old_name = monitor_saved_name;
+    fullscreen_monitors.clear();
+    if (can_monitors()) {
+        const int count = std::min(64, std::max(0, host->monitor_count()));
+        for (int i = 0; i < count; i++) {
+            MkwVkMonitor monitor{};
+            if (!host->monitor_info(i, &monitor)) continue;
+            monitor.id[sizeof monitor.id - 1] = monitor.name[sizeof monitor.name - 1] = 0;
+            const std::string id = monitor_choice::id_key(monitor.id);
+            if (!id.empty()) fullscreen_monitors.push_back({id, output_name_key(monitor.name), monitor.width, monitor.height, monitor.flags});
+        }
+    }
+    monitor_pick = monitor_choice::pick(fullscreen_monitors, monitor_want);
+    monitor_missing = monitor_pick > (int)fullscreen_monitors.size();
+    if (monitor_pick > 0 && !monitor_missing) monitor_saved_name = fullscreen_monitors[monitor_pick - 1].name;
+    for (Row& r : rows) if (r.value == &monitor_pick) r.hi = (int)fullscreen_monitors.size() + (monitor_missing ? 1 : 0);
+    if (old_count != (int)fullscreen_monitors.size() || old_pick != monitor_pick ||
+        old_missing != monitor_missing || old_name != monitor_saved_name) menu_refresh = true;
+}
+void monitor_chosen() {
+    if (!can_monitors()) return;
+    if (monitor_pick <= 0) monitor_want.clear(), monitor_saved_name.clear();
+    else if ((size_t)(monitor_pick - 1) < fullscreen_monitors.size()) {
+        monitor_want = fullscreen_monitors[monitor_pick - 1].id;
+        monitor_saved_name = fullscreen_monitors[monitor_pick - 1].name;
+    }
+    host->monitor_select(monitor_want.c_str());
+    refresh_monitors();
+}
 void refresh_outputs() {
     output_devices.clear();
     if (can_outputs()) {
@@ -2337,6 +2408,8 @@ void save() {
             bool mine = key == "audio_output_device_id" || key == "audio_output_device_name" || key == "output_device" ||
                         key == "microphone_device" || key == "options_version" || key == "memory_budget" || key == "auto_for" ||
                         key == "auto_tuned" || key == "auto_output" || key == "auto_steps";
+            mine |= key == "fullscreen_monitor_id";
+            mine |= key == "fullscreen_monitor_name";
             // (and the Mesh shaders row's line, no longer read (gpu/vk/mesh_mode.h): dropped, not kept for nothing)
             mine |= key == "mesh_shaders";
             // (and the VRAM budget row's, removed: one rule by the card, texture_budget.h and mirror_budget.h)
@@ -2359,7 +2432,7 @@ void save() {
                 // ultrawide= is kept, unless the row was changed in the menu)
                 const int v = saved_value(r.value);
                 fprintf(f, "%s=%d\n", ini_key(r), env_holds(&opts.output_res) && v == aspect_started ? ultrawide_read : aspect_follows_host(v) ? 1 : 0);
-            } else if (r.value && r.value != &opts.game_lang && r.value != &output_pick) { // The device is saved by ID below.
+            } else if (r.value && r.value != &opts.game_lang && r.value != &output_pick && r.value != &monitor_pick) { // Device choices are saved by ID below.
                 fprintf(f, "%s=%d\n", ini_key(r), saved_value(r.value));
             }
         }
@@ -2367,6 +2440,10 @@ void save() {
         if (!output_want.empty()) {
             fprintf(f, "audio_output_device_id=%s\n", output_want.c_str());
             fprintf(f, "audio_output_device_name=%s\n", output_saved_name.c_str());
+        }
+        if (!monitor_want.empty()) {
+            fprintf(f, "fullscreen_monitor_id=%s\n", monitor_want.c_str());
+            fprintf(f, "fullscreen_monitor_name=%s\n", monitor_saved_name.c_str());
         }
         // (not a row: the preset Custom came from, whose mip trimming it keeps: opts.budget)
         fprintf(f, "memory_budget=%d\n", opts.budget);
@@ -2923,6 +3000,8 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
         v = step_output_choice(*r.value, dir);
         if (v == *r.value) return;
     }
+    // (longshot) Frame generation by where DLSS FG cannot run: FSR 3.1 FG (0; a 2 is the same) and Built-in FG (1)
+    if (r.value == &opts.framegen_by && !framegen_by_dlss_offered()) v = (v % 2 + 2) % 2;
     if (stops_at_ends(r)) v = std::min(std::max(v, r.lo), r.hi);   // (a scale: it stops at its ends)
     if (r.value == &opts.pad_layout) {
         if (v > 2) v = dir > 0 ? 0 : 2;
@@ -2948,6 +3027,7 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
     if (r.value == &opts.transition_autosave) sync_transition_autosave();
     if (r.value == &opts.mic && can_mic()) mic_chosen();   // (longshot)
     if (r.value == &output_pick) output_chosen();
+    if (r.value == &monitor_pick) monitor_chosen();
     // (longshot: the samplers made again, at once: their anisotropy, and the upscalers' LOD bias, vk_draw.cpp upscale_lod_bias)
     if (r.value == &opts.anisotropy || r.value == &opts.dlss || r.value == &opts.resolution || r.value == &opts.preset)
         samplers_changed();
@@ -3227,9 +3307,13 @@ bool fps_vram_over = false;                    // (the VRAM line in red: past wh
 /// The FPS counter's target frame time, ms: the Game frame rate cap row's (HOS_FPS_MAX over it, as host/nn_vi.c, which follows
 /// the row in play), or the display's refresh with V-Sync On and no frame generation when that is slower; 0 for none (Uncapped
 /// without V-Sync)
-double fps_target_ms() {
+/// The frame rate cap in effect: HOS_FPS_MAX's over the Game frame rate cap row's
+int fps_cap_now() {
     static const int env_max = getenv("HOS_FPS_MAX") ? std::max(1, atoi(getenv("HOS_FPS_MAX"))) : 0;
-    const int cap = fps_stats::cap_rate(opts.fps_cap, env_max);
+    return fps_stats::cap_rate(opts.fps_cap, env_max);
+}
+double fps_target_ms() {
+    const int cap = fps_cap_now();
     const bool fifo = menu_vsync() == 1 && opts.framegen == 0;
     return fps_stats::target_ms_for(cap, fifo, fifo ? (display_refresh_mhz() + 500) / 1000 : 0);
 }
@@ -5222,12 +5306,16 @@ void menu_init() {
             }
             if (!strcmp(line, "audio_output_device_id")) output_want = output_id_key(eq + 1);
             if (!strcmp(line, "audio_output_device_name")) output_saved_name = output_name_key(eq + 1);
+            if (!strcmp(line, "fullscreen_monitor_id")) monitor_want = monitor_choice::id_key(eq + 1);
+            if (!strcmp(line, "fullscreen_monitor_name")) monitor_saved_name = output_name_key(eq + 1);
         }
         fclose(f);
         // (the saved microphone by its name, not its place; the host told the row's choice. Off or the default: no list, no SDL
         // audio at the start)
         refresh_outputs();
         if (can_outputs()) host->audio_output_select(output_want.c_str());
+        refresh_monitors();
+        if (can_monitors()) host->monitor_select(monitor_want.c_str());
         if (!mic_want.empty()) refresh_mics();
         else {
             if (opts.mic >= 2) opts.mic = 1;
@@ -5431,6 +5519,8 @@ void menu_set_gpu_count(int count) {
 }
 
 bool menu_is_open() { return open_now.load(std::memory_order_relaxed); }
+double menu_target_ms() { return fps_target_ms(); }   // (the performance summary's: perf_report.cpp)
+int menu_fps_cap() { return fps_cap_now(); }          // (likewise: its fps_cap label)
 bool scene_tonemap_on() { return dev.hdr && opts.hdr == 2 && opts.hdr_tonemap == 1; }
 // (the tools off on the Debug tab: flight, the free camera and heart protection put away; -1, heart protection never set, is the
 // host's own HOS_OOT_PROTECT_HEARTS)
@@ -5906,10 +5996,18 @@ void game_lang_tick() {
 /// the list as given
 void outputs_follow_screen() {
     static int every = 0;
-    if (++every % 30 || getenv("HOS_DISPLAY_MODES")) return;
+    static std::string followed_monitor;
+    if (++every % 30) return;
+    const std::string previous_monitor = followed_monitor;
+    const int previous_pick = monitor_pick;
+    refresh_monitors();
+    const std::string current_monitor = monitor_choice::current_id(fullscreen_monitors);
+    if (previous_pick != monitor_pick || previous_monitor != current_monitor) menu_refresh = true;
+    if (getenv("HOS_DISPLAY_MODES")) return;
     uint32_t sw = 0, sh = 0;
-    if (!screen_size(&sw, &sh) || (sw == outputs_screen.w && sh == outputs_screen.h)) return;
+    if (!screen_size(&sw, &sh) || (sw == outputs_screen.w && sh == outputs_screen.h && previous_monitor == current_monitor)) return;
     outputs_screen = {sw, sh};
+    followed_monitor = current_monitor;
     const int slot = [] {
         for (const Row& r : rows)
             if (r.value == &opts.ultrawide) return restart_slot_of(r);
@@ -6163,6 +6261,7 @@ void menu_tick() {
         if (open_now.load()) dlss_probe(), dlss_fg_probe(), fsr4_probe(), xess_probe();
         if (open_now.load()) refresh_mics();   // (the microphones as they are now)
         if (open_now.load()) refresh_outputs();
+        if (open_now.load()) refresh_monitors();
     }
     if (open_now.load() && debug_warning) {
         if (press[3] || press[4]) debug_warning_choice = 1 - debug_warning_choice, changed = true;

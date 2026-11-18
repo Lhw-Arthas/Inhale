@@ -71,7 +71,7 @@ class InstallTests(unittest.TestCase):
 
     def test_lift_calls_it_for_the_standalone_build(self):
         lift = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lift.py"), encoding="utf-8").read()
-        self.assertLess(lift.index("kirby_far.install("), lift.index("L.discover("))
+        self.assertLess(lift.index("kirby_far.install("), lift.index("discover.discover(L, "))
 
 
 if __name__ == "__main__":

@@ -10,8 +10,8 @@
 
    - hos_wide_ui_parent: the parent f_8154cab0 multiplies by (0 for none), on the thread that is making the transform
    - hos_wide_ui_placed: the transform just stored. A layout's root pane is noted (its kind, by its layout's name), and
-     so is every pane of the HUD's trees and of the loading fade's (its parent, and its place on the canvas as the game made
-     it, without the moves): a pane made from one noted in such a tree. A menu's other panes are not (the plan never looks
+     so is every pane of the HUD's trees, the loading fade's and the held layouts' (its parent, and its place on the canvas
+     as the game made it, without the moves): a pane made from one noted in such a tree. A menu's other panes are not (the plan never looks
      at them). If the plan moves a pane, its translation is moved, and its children follow, since theirs are made from it.
      A menu's root is made smaller here on a narrower screen
    - hos_wide_ui_size: a pane's size as drawn (f_8154ac30): a pane the plan widens is drawn the screen's width
@@ -164,16 +164,21 @@ static Node *node_take(uint64_t key) {
 /* ---- names: the layouts and panes the ultrawide UI romfs mod's rules.py and menu.py treat by hand ---- */
 
 enum { LK_PLAIN, LK_WORLD, LK_WHOLE, LK_HELD };   /* (a layout placed by code from the world; on a screen kept whole; held) */
-enum { RULE_NONE, RULE_KEEP, RULE_KEEP_LOOK, RULE_WIDEN, RULE_LEFT, RULE_RIGHT, RULE_SLIDE, RULE_KEEP_ORIGIN };
-       /* (RULE_SLIDE: a pane the game slides in from beside its parent, planned where it comes to rest) */
+enum { RULE_NONE, RULE_KEEP, RULE_KEEP_LOOK, RULE_WIDEN, RULE_LEFT, RULE_RIGHT, RULE_SLIDE, RULE_KEEP_ORIGIN, RULE_HELD_RIGHT };
+       /* (RULE_SLIDE: a pane the game slides in from beside its parent, planned where it comes to rest. RULE_HELD_RIGHT: a
+          held layout's group at its canvas's right edge, moved in to the screen's right side where the HUD's canvas is
+          wider than the screen (ui_ex < 0: 16:10 and narrower), so it keeps 16:9's distance from it; on a wider screen held
+          beside its box with the rest) */
 
 static const char *const WORLD_LAYOUTS[] = {"PlayerStatus3D_00", "Pointer_00", "BalloonMessage_00"};
 /* (layouts of screens nx2/oot_wide.py keeps whole (KEEP_VTABLES): their canvas already spans the screen, so nothing in
    them moves or widens. The item wheel's background picture widened to 5160 units mapped its capture over 3840 / 5160
    of the screen, black at the sides) */
 static const char *const WHOLE_LAYOUTS[] = {"ShortCutBG_00", "EventFade_00"};
-/* (held where the game puts them, at the HUD's size: never moved, never made smaller. The text box's choices, which sit over
-   Talk_00's box: fitted as a menu's on a narrower screen they came out at another scale than the box) */
+/* (held where the game puts them, at the HUD's size: never made smaller, and moved only by name (RULE_HELD_RIGHT). The text
+   box and its choices: fitted as a menu's on a narrower screen the choices came out at another scale than the box. The
+   choices' column (N_BtnNum_00) reaches the 16:9 canvas's right edge: left there on a 16:10 screen, where the canvas at
+   the HUD's size is wider than the screen, the boxes' right ends and their longer texts were off it (Inhale #1050)) */
 static const char *const HELD_LAYOUTS[] = {"MessageDialog_00"};
 /* (the HUD's root layouts: the hearts, magic, rupees and buttons; the place's name; the minimap (the pause menu's map page is
    the same layout: drawn as a menu's while it shows, as_menu); the text box and its button guide ("Hide", "Conversation
@@ -201,6 +206,8 @@ static const PaneRule RULES[] = {
     {"Location_00", "P_DecoFrameRT_00", RULE_WIDEN}, {"Location_00", "P_DecoFrameRTSh_00", RULE_WIDEN},
     {"Location_00", "P_DecoFrameLB_00", RULE_WIDEN}, {"Location_00", "P_DecoFrameLBSh_00", RULE_WIDEN},
     {"Location_00", "P_DecoFrameRB_00", RULE_WIDEN}, {"Location_00", "P_DecoFrameRBSh_00", RULE_WIDEN},
+    /* (the text box's choices: their column, at the canvas's right edge) */
+    {"MessageDialog_00", "N_BtnNum_00", RULE_HELD_RIGHT},
 };
 
 /* A guest string is s (64 characters at most) */
@@ -501,6 +508,10 @@ static void plan(void) {
             for (int a = parent_of[i], d = 0; a >= 0 && d < 64 && !moved; a = parent_of[a], d++) moved = plan_new[a] != 0.0f;
             if (!moved) push(i, n->rule == RULE_LEFT ? -1 : 1);
         }
+        /* (a held layout's group at the canvas's right edge: in to the screen's side only where that is inside the canvas) */
+        if (ui_ex < 0.0f)
+            FOR_USED(i)
+                if (nodes[i].key && nodes[i].layout && nodes[i].lkind == LK_HELD && nodes[i].rule == RULE_HELD_RIGHT) push(i, 1);
         /* (the loading fade: its pane across the whole canvas, drawn over the whole picture. Kept whole (Full width), the
            game's projection already stretches it over the picture: left as it is) */
         FOR_USED(i) {
@@ -653,7 +664,8 @@ void hos_wide_ui_placed(Ctx *c, uint64_t pane) {
     const uint32_t oy = ((flags >> 11) & 0x7f) / 3 % 3;   /* (0 top, 1 centre, 2 bottom) */
     const uint64_t layout = recomp_load64(c, pane + PANE_LAYOUT);
     if (n->layout != layout) classify(n, pane, layout);
-    n->tree = (uint8_t)(n->lkind == LK_PLAIN && (parent || n->hud || n->fade));
+    /* (a held layout's panes too, for its groups moved by name; the plan walks none of them) */
+    n->tree = (uint8_t)((n->lkind == LK_PLAIN && (parent || n->hud || n->fade)) || n->lkind == LK_HELD);
     n->parent = parent, n->layout = layout, n->type = (flags >> 22) & 0xf, n->ox = x, n->from = pn ? pn->ox : NAN;
     n->x0 = x - (ox == 1 ? w * 0.5f : ox == 2 ? w : 0.0f), n->x1 = n->x0 + w;
     n->oy = y, n->y1 = y + (oy == 1 ? h * 0.5f : oy == 2 ? h : 0.0f), n->y0 = n->y1 - h;

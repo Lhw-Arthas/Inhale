@@ -10,7 +10,8 @@ sides through the rename (`scripts/rename_full.py`), applies it with `git apply 
 docstring has the details. It commits nothing. This is the order of the work around it.
 
 Sync every day or two. Longshot makes about 80 commits a day, and the conflicts grow faster than the window: measured
-on 2026-11-17, one day back was 6 conflicted files with 13 places, three days 14 files with 45.
+on 2026-11-17, one day back was 6 conflicted files with 13 places, three days 14 files with 45. The first sync, 36
+commits to `v3.0.0-rc.7`, had 5 files with 8 places.
 
 ## 1. Before
 
@@ -32,7 +33,12 @@ When it says nothing was applied, nothing changed and the base stays: read git's
 take Longshot's change and put this fork's lines back on it. The usual places:
 
 - **`gpu/vk/vk_api.h`, `MKWVK_API_VERSION`**: conflicts each time Longshot bumps it, since the number differs here.
-  Take Longshot's number plus one.
+  Take Longshot's number plus one. Longshot appends members to `MkwVkHost` where this fork appended its own: take
+  Longshot's members first, then this fork's, with its comment's version changed to the new number, and keep the
+  same order in the table of `host/rx_backend.c` and in the names of `tests/test_audio_output_devices.py`. That
+  check and `tests/test_microphone_test_gain.py` assert the version and conflict with it: take Longshot's lines.
+- **`nx2/addresses.ini`**: the addresses of Longshot's own services (crash reports, performance statistics). Every
+  key stays empty here, which turns each use off; a key Longshot adds arrives filled, so empty it.
 - **`gpu/vk/menu_i18n.h`** has nothing of this fork's and merges clean: this fork's rows are in
   `gpu/vk/menu_i18n_inhale.h`. Keep it so; never settle anything by writing a row of this fork's there.
   `python -I -B tests/test_menu_i18n_inhale.py` says what a sync moved under them: a retired text that Longshot
@@ -59,14 +65,20 @@ for the signature only; none of its text is copied.
 - `python -I scripts/rename_full.py` ends with `0 places in 0 files, 0 files renamed`. Anything else is a name that
   arrived outside the rule: look at it, then `--write`, or fix the rule (and `tests/test_sync_rules.py`).
 - `python -I scripts/check_third_party.py`.
-- `python -I -B tests/run_all.py`. Compare the failures with the run before the sync: a new one is the sync's.
+- `python -I -B tests/run_all.py`. Compare the failures with the run before the sync: a new one is the sync's. To
+  tell Longshot's own failures from this tree's, run Longshot's suite at the same revision in a checkout under
+  `work/` (`git clone -s --no-checkout ../Longshot work/up`, `git -C work/up read-tree -u --reset <rev>`, then
+  `tests/run_all.py` there): a check that fails in both is Longshot's (step 6), one that fails only here is this
+  fork's to repair. A check of this fork that names Longshot's text (`nx2/test_kirby_far.py` names the lift's call)
+  breaks when Longshot rewords it: repair the check.
 - With the game's files at hand, the lift and a build (`README.md`): the checks run no game.
 
 ## 6. Sort out what arrived
 
 A file new in Longshot is applied whatever it is. About one in five belongs to something this fork left out
 (`PROVENANCE.md`, *What was left out*): scripts of Longshot's releases, packaging and team workflow, tests bound to
-those or to the text of Longshot's `nx2/oot_patches.py`, and tests that fail in this tree for that reason.
+those or to the text of Longshot's `nx2/oot_patches.py`, and tests that fail in Longshot's own tree at that
+revision, new ones and ones that passed before alike (Longshot's source moves on without some of its checks).
 `git status --short` shows the new files as `A`. For each that belongs to a kind left out: `git rm -f` it and add it
 to that kind's list in `PROVENANCE.md` (the lists are sorted, and each names its count). Longshot's later changes to
 it are then skipped as "not tracked here".
