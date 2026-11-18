@@ -1,58 +1,106 @@
-# Inhale: Kirby and the Forgotten Land on PC
+# Inhale
 
-Inhale is a work-in-progress PC port of *Kirby and the Forgotten Land, Nintendo Switch 2 Edition + Star-Crossed
-World* by static recompilation. Python tools translate the game's AArch64 code to C, clang compiles that C, a native
-runtime written in C stands in for the console's system and its NVN2 graphics API, and a Vulkan back end replays the
-graphics calls. There is no CPU or GPU emulation.
+**Kirby and the Forgotten Land running natively on Windows and Linux, without emulation.**
 
-It is a fork of [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot), which does the same for another game
-(`PROVENANCE.md`, `CREDITS.md`). Most of the code is still Longshot's; its name was changed through the tree by a
-script (`scripts/rename_full.py`).
+[Download](https://github.com/mario-ttide/Inhale/releases/latest) | [Status](#project-status) |
+[Install and play](#install-and-play) | [What you need](#what-you-need) | [Build from source](#build-from-source) |
+[How it works](#how-it-works) | [Licence](#licence)
 
-**Status: early.** Played by hand through the first world's stages, its boss and several special stages, at full
-speed; nothing past them has been played. With frame generation on, the game sometimes hangs for a few seconds. The stages of the work and what each has reached are in [docs/design.md](docs/design.md).
+Inhale turns your own copy of *Kirby and the Forgotten Land, Nintendo Switch 2 Edition + Star-Crossed World* into a
+Windows or Linux program. The game's code is translated and compiled **on your PC, from your own copy of the game**;
+the graphics are redrawn with Vulkan. It is a work in progress.
 
-## Play (no command line)
+> [!IMPORTANT]
+> This repository **does not contain the game, keys or a ready-made program**, and it does not explain how to get
+> them. You need your own copy. Everything the build makes (the game folder, its program and caches, your saves)
+> comes from your game and stays on your PC. Never share those files, and don't ask for them in the issues.
 
-Download one file from the [Releases](https://github.com/mario-ttide/Inhale/releases) page: the newest `v*`
-release, or `nightly` for the latest commit. Each carries its own compiler and every other build tool, works offline,
-and holds nothing of the game.
+## Project status
 
-- **Linux:** `Inhale-x86_64.AppImage`. Make it executable (`chmod +x`, or the file's properties), then double-click
-  it. It needs FUSE 2 (`libfuse2`); without it, start it as `./Inhale-x86_64.AppImage --appimage-extract-and-run`.
-- **Windows:** `Inhale-Setup-x64.exe`. It installs for your user alone (no administrator rights) and adds
-  *Inhale Builder* to the Start menu and the desktop. The files are not signed: Windows SmartScreen says "Windows
-  protected your PC"; choose *More info*, then *Run anyway*. Check the file against the release's `SHA256SUMS` first
-  if you like (`Get-FileHash Inhale-Setup-x64.exe` in PowerShell).
+Early. One player has played it by hand on Linux; the Windows installer has been tested on one PC.
 
-Then, in Inhale Builder:
+| What | Status |
+|---|---|
+| Opening, title screen, the first world's stages and its boss, several special stages | ✅ Played through, at 60 fps |
+| Later worlds | ❓ Not played yet |
+| Sound, music, movies, keyboard and saves | ✅ Work |
+| Controllers | ❓ Few reports yet |
+| Frame generation | ⚠️ **Auto** works. A fixed **2x** and up can freeze the game for a few seconds now and then (seen on Linux with an AMD card) |
+| Linux | ✅ The AppImage, tested on CachyOS with an AMD Radeon RX 7900 XTX (Mesa). It also starts in clean Ubuntu 22.04 and Fedora |
+| Windows | ✅ The installer, tested on Windows 11 with an NVIDIA RTX 2080 SUPER, built from the extracted folders. The `.nup` route there is still to be tried |
+| Intel cards | ❓ Not tried |
+| Cards without mesh shaders (such as NVIDIA GTX 10 and AMD RX 5000) | ⚠️ Should run through a slower compute path (upstream's). Not tried with this game |
 
-1. **Your game:** choose your `.nup` file, or a folder that holds the extracted `exefs/` and `aoc/` (see below). It
-   is checked to be the right game and version.
-2. **Where:** the game folder (default `~/Games/Inhale`, or `%USERPROFILE%\Games\Inhale`), about 12 GB.
-3. **Build:** it compiles the whole game on your PC, which takes a while (the window shows the time left). It can be
-   stopped; what it compiled is kept for the next build.
-4. **Play.** *Create shortcut* adds the game to the applications menu (Linux) or the desktop (Windows).
+## Install and play
 
-After you update Inhale Builder, *Update an existing game folder* builds your folder again with the new version.
+### [Download for Windows](https://github.com/mario-ttide/Inhale/releases/latest/download/Inhale-Setup-x64.exe)
 
-To play you need a GPU and driver with Vulkan 1.3 and mesh shaders. `Inhale-x86_64.AppImage --cli <arguments>` runs
-`nx2/make_game.py` with the bundled tools, for the command line.
+### [Download for Linux (AppImage)](https://github.com/mario-ttide/Inhale/releases/latest/download/Inhale-x86_64.AppImage)
 
-## You supply the game
+Older versions and the `nightly` build of the newest code are on the [Releases](https://github.com/mario-ttide/Inhale/releases) page.
+Each download brings its own compiler and every other tool it needs, works without an internet connection, and holds
+nothing of the game.
 
-Inhale contains no game code, no game data and no keys, and nothing made from them. To build anything you need your
-own copy of the game's files, as one of:
+### On Windows
 
-- the game's `.nup` package, or
-- the extracted folders: `exefs/` (the code title) and `aoc/<title id>/romfs/` (the data title).
+1. Run `Inhale-Setup-x64.exe`. It installs for you only (no administrator rights) and adds **Inhale Builder** to the
+   Start menu and the desktop. The files are not signed yet, so SmartScreen says "Windows protected your PC": choose
+   **More info**, then **Run anyway**. To check the file first, compare `Get-FileHash Inhale-Setup-x64.exe` (in
+   PowerShell) with the release's `SHA256SUMS`.
+2. Start **Inhale Builder** and build the game (below).
 
-This repository does not tell you how to get them, and its issue tracker is not the place to ask. Never commit or
-post them, or anything made from them (`CONTRIBUTING.md`).
+### On Linux
+
+1. Let the AppImage run as a program: in your file manager, open its **Properties** and turn on "Allow executing
+   file as program" (the wording differs between desktops), or run `chmod +x Inhale-x86_64.AppImage`.
+2. Double-click it. If nothing happens, your system may lack FUSE 2 (`libfuse2`): start it from a terminal as
+   `./Inhale-x86_64.AppImage --appimage-extract-and-run`.
+
+**Faster GPU memory on AMD and Intel (`/dev/udmabuf`).** The game is fastest with access to the kernel's `udmabuf`
+device; without it, it warns at start and can be much slower on AMD. Check with `ls -l /dev/udmabuf` (if it is
+missing: `sudo modprobe udmabuf`). On a desktop, give it to the logged-in user with a file
+`/etc/udev/rules.d/70-inhale-udmabuf.rules` that holds `SUBSYSTEM=="misc", KERNEL=="udmabuf", TAG+="uaccess"`, then
+run `sudo udevadm control --reload-rules` and `sudo udevadm trigger --action=add /sys/class/misc/udmabuf`. Never run
+the game as root. On NVIDIA's own driver the warning can be ignored.
+
+### Build the game
+
+In Inhale Builder:
+
+1. **Your game:** choose your `.nup` file, or a folder that holds the extracted `exefs/` and `aoc/` folders. It is
+   checked to be the right game and version.
+2. **Where:** the game folder (`~/Games/Inhale` or `%USERPROFILE%\Games\Inhale` by default), about 12 GB.
+3. **Build:** the whole game is compiled on your PC, which takes a few minutes on a desktop with 12 to 16 cores and
+   longer on a smaller one; the window shows the time left. You can stop it: what was compiled is kept for next time.
+4. **Play.** **Create shortcut** adds the game to the applications menu (Linux) or the desktop (Windows).
+
+The **Insert** key opens Inhale's own menu in the game (graphics, frame generation, controls). After you update
+Inhale Builder, choose **Update an existing game folder** to build your folder again with the new version.
 
 ## What you need
 
-- Linux, x86-64. (Windows: use the installer above; building from a checkout there is Longshot's route, less tried.)
+**Your copy of the game:** *Kirby and the Forgotten Land, Nintendo Switch 2 Edition + Star-Crossed World*, as one
+`.nup` file, or as the extracted folders: `exefs/` (program `04004d300c5ae001`, v65536) and `aoc/<title id>/romfs/`
+(the data, `01004d300c5af001`). The builder checks the version; other versions are not supported.
+
+| Component | What you need |
+|---|---|
+| **Operating system** | 64-bit Windows 10 or 11 (tested on 11), or 64-bit Linux with glibc 2.35 or newer (Ubuntu 22.04 and later, Fedora, Arch, SteamOS) |
+| **Graphics card** | Vulkan 1.3 with an up-to-date driver (on Linux: Mesa or NVIDIA's own). Mesh shaders are not needed |
+| **Storage** | About 12 GB for the game folder, plus room for the build's own files |
+| **Internet** | Not needed: the download brings everything |
+
+No minimum processor or memory has been measured yet. Tested on a 12-core Ryzen 9 7900X with 64 GB, and on a 16-core
+Windows PC with 26 GB.
+
+## Build from source
+
+For development, or to build without the packages. `Inhale-x86_64.AppImage --cli <arguments>` runs
+`nx2/make_game.py` with the AppImage's own tools, for the command line, over SSH or from a script.
+
+### What you need to build
+
+- Linux, x86-64. (Windows: use the installer; building from a checkout there is Longshot's route, less tried.)
 - clang and lld, pkg-config, Python 3.12 or newer, git.
 - FFmpeg's development files (libavcodec, libavutil, libswscale, libswresample) and dav1d's.
 - The Vulkan, SPIR-V and Vulkan Memory Allocator headers. Distributions ship the first two; VMA is often not packaged:
@@ -60,8 +108,8 @@ post them, or anything made from them (`CONTRIBUTING.md`).
   newer) in `/usr/local/include`, or point `INHALE_VMA_HEADERS` at its folder. When a distribution's Vulkan or SPIR-V
   headers are too old, set `INHALE_VULKAN_HEADERS` and `INHALE_SPIRV_HEADERS` to newer ones (the commits the checks
   use are in `.github/workflows/ci.yml`).
-- To play: a GPU and driver with Vulkan 1.3 and mesh shaders, the Vulkan loader, and SDL 3 (or SDL 2), which the game
-  loads at run time.
+- To play: a GPU and driver with Vulkan 1.3 (mesh shaders not needed), the Vulkan loader, and SDL 3 (or SDL 2),
+  which the game loads at run time.
 - For the checks: spirv-tools (`spirv-val`) and glslang 16.6.0.
 - About 12 GB of disk for the extracted game data, plus the build's own files under `work/`.
 
@@ -72,7 +120,7 @@ pacman -S --needed clang lld pkgconf python git ffmpeg dav1d vulkan-headers spir
     spirv-tools glslang
 ```
 
-## Set up
+### Set up
 
 ```
 python -m venv .venv
@@ -88,7 +136,7 @@ mkdir -p work && printf '%s\n' "/path/to/your/package.nup" > work/nup.txt
 NUP="$(cat work/nup.txt)"
 ```
 
-## One command: a game folder
+### One command: a game folder
 
 ```
 $PY nx2/make_game.py --nup "$NUP" --out ~/Games/Inhale
@@ -102,7 +150,7 @@ opens the port's own menu.
 
 The rest of this page is the same work step by step, for development.
 
-## Check the tools and the package
+### Check the tools and the package
 
 ```
 $PY -B tests/run_all.py                    # the game-free checks
@@ -112,7 +160,7 @@ $PY nx2/nup.py "$NUP" --extract work/dump  # code to work/dump/exefs, data to wo
 $PY nx2/dump.py --dump work/dump --set     # what the code is: platform, modules, build id
 ```
 
-## Translate, build, run
+### Translate, build, run
 
 ```
 $PY nx2/lift.py                            # translate everything and report coverage
@@ -125,7 +173,7 @@ work/sa/build/inhale work/sa/image/image.bin --romfs work/dump/romfs --aoc work/
 
 `docs/design.md` says how far each of these gets today and which switches help when one stops.
 
-## Following Longshot
+### Following Longshot
 
 `scripts/sync_upstream.py` applies Longshot's changes since the commit recorded in `PROVENANCE.md`. It puts both
 sides of Longshot's diff through the rule of `scripts/rename_full.py` first, so the changes arrive under this fork's
@@ -135,6 +183,16 @@ names; run `scripts/rename_full.py` after a sync to see that nothing is left to 
 Longshot, has Claude Code do the sync in a clone under `work/sync/`, and moves `main` and pushes it only when the
 checks pass and, where the game's files are at hand, the game still starts. Its docstring has the order and what a
 stopped night leaves.
+
+## How it works
+
+Python tools translate the game's AArch64 code to C, clang compiles that C, a native runtime written in C stands in
+for the console's system and its NVN2 graphics API, and a Vulkan back end replays the graphics calls. There is no CPU
+or GPU emulation. The stages of the work and what each has reached are in [docs/design.md](docs/design.md).
+
+Inhale is a fork of [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot), which does the same for another game
+(`PROVENANCE.md`, `CREDITS.md`). Most of the code is still Longshot's; its name was changed through the tree by a
+script (`scripts/rename_full.py`).
 
 ## Licence
 
