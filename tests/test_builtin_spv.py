@@ -72,7 +72,7 @@ def run(exe, shader_dir, cxx):
 
 
 def check_lookup(cxx):
-    with tempfile.TemporaryDirectory(prefix="longshot builtin spv-") as tmp:   # (a space in the folder's name)
+    with tempfile.TemporaryDirectory(prefix="inhale builtin spv-") as tmp:   # (a space in the folder's name)
         tmp = Path(tmp)
         exe = build(cxx, tmp)
         shaders = tmp / "my shaders"
@@ -134,13 +134,13 @@ def check_every_use():
 
 
 def check_not_from_a_shared_file():
-    """longshot_env.txt is passed between players: a folder of shader code is not taken from it (its _DIR name)"""
+    """inhale_env.txt is passed between players: a folder of shader code is not taken from it (its _DIR name)"""
     main = (ROOT / "host" / "hos_main.c").read_text(encoding="utf-8")
     rule = main[main.index("static int env_line_allowed("):]
     rule = rule[:rule.index("\n}\n")]
     if '!strcmp(name + nl - 4, "_DIR")' not in rule or "if (names_file) return 0;" not in rule:
-        raise SystemExit("env_line_allowed: a _DIR switch (RX_VK_SHADER_DIR) can be set from longshot_env.txt")
-    print("ok   RX_VK_SHADER_DIR is not taken from longshot_env.txt")
+        raise SystemExit("env_line_allowed: a _DIR switch (RX_VK_SHADER_DIR) can be set from inhale_env.txt")
+    print("ok   RX_VK_SHADER_DIR is not taken from inhale_env.txt")
 
 
 def main():

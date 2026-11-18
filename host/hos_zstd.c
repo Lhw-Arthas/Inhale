@@ -45,8 +45,8 @@
      - the whole-buffer decode's output room past the content (callers give exactly the content's size): what is left
        there, and on an error how much of the output was written. */
 #include "hos.h"
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 #define ZSTD_STATIC_LINKING_ONLY
 #include "zstd.h"

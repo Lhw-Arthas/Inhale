@@ -27,7 +27,7 @@
 // vk_replay.cpp) is tagged with the frame of its first command buffer, read when the batch starts: one that spans two game
 // frames counts as the first's, and one begun before the frame's sleep returned goes untagged. An approximation that only
 // batching makes, and batching is on by default only with RADV, which has no Reflex. RX_VK_REFLEX_SUBMIT_IDS=0 (or false,
-// off, no: longshot_env.h's rule) leaves every submit untagged, for comparisons.
+// off, no: inhale_env.h's rule) leaves every submit untagged, for comparisons.
 //
 // RX_VK_REFLEX_LOG=1: every 300 frames with Reflex on, the driver's own timings (vkGetLatencyTimingsNV) averaged in the log:
 // simulation start to present end, and to the GPU's end of rendering.
@@ -39,7 +39,7 @@
 #include <cstring>
 #include <mutex>
 
-#include "longshot_env.h"
+#include "inhale_env.h"
 #include "vk_menu.h"
 #include "vk_work.h"   // (last: RX_VK_RECORDER=defer drains before the latency-sleep wait; =thread does not need to, the driver signals it)
 

@@ -1,4 +1,4 @@
-"""Compile the lifted game (work/gen, from `lift.py --write`) into work/build/longshot_game.dll.
+"""Compile the lifted game (work/gen, from `lift.py --write`) into work/build/inhale_game.dll.
 
 The flags are a64-kit's for lifted code (its build.py, cmd_native): -O1, LoopRotate's header copies capped (most of
 the compile time in goto-dense giant functions otherwise), capture tracking past LLVM's 100 uses (the context
@@ -6,23 +6,23 @@ parameter is A64_NOESC), one section per function. The guest model is the 64-bit
 vendored rt/, with the loop-header interrupt polls on (A64_POLLING, nx2/poll.py). Incremental: an object is rebuilt
 only when its source or the flags changed.
 
-longshot_game.dll = the lifted chunks + a64-kit's tables and runtime + nx2/rt/eden_shim.c (the emulator ABI, mkw_host.h)
+inhale_game.dll = the lifted chunks + a64-kit's tables and runtime + nx2/rt/eden_shim.c (the emulator ABI, mkw_host.h)
 + mkw_info.c (the image base and main's build id, generated here from work/image/image.json). Linking it is also the
 check that the whole lifted game closes over itself: any unresolved symbol fails the link.
 
 Heavy: 44 chunks of ~25 MB, ~100-200 s and ~2-3.5 GB each at -O1. The PC is shared with games: run it when the
 machine is idle, and keep --jobs low otherwise.
 
---standalone builds work/sa/build/longshot.exe instead: the standalone lift (work/sa/gen, `lift.py --standalone --write`)
+--standalone builds work/sa/build/inhale.exe instead: the standalone lift (work/sa/gen, `lift.py --standalone --write`)
 + the native runtime in host/ (TOTKPort's hos/, adapted). Objects are cached by their key in work/objcache, shared by
 both builds: the two lifts share their chunk boundaries, so every chunk without a hooked function is the same source
 and is not compiled twice.
 
 Usage:  python -I nx2/build.py [--jobs 1] [--dll] [--standalone]
-  --dll: link longshot_game.dll (nx2/test_dll.py runs functions from it)
+  --dll: link inhale_game.dll (nx2/test_dll.py runs functions from it)
   --dry-run: the start-up with no lift, up to the compile; fails if a file the compile reads (the lift's aside) is missing
 
-  LONGSHOT_TIMES=<build_times.json>: make_game.py's record of the earlier builds. With it, this run says which files it
+  INHALE_TIMES=<build_times.json>: make_game.py's record of the earlier builds. With it, this run says which files it
   really rebuilds and how long each took before (@@plan, @@file, @@eta), which the builder windows show as a countdown.
 """
 import argparse
@@ -59,23 +59,23 @@ OPUS = os.path.join(kit.HERE, "..", "third_party", "opus")
 ZSTD = os.path.normpath(os.path.join(kit.HERE, "..", "third_party", "zstd", "lib"))
 ZSTD_HOST = ("prompts.c", "hos_zstd.c")   # (the host files that use it: a mod's size table; the game's stream decode)
 OBJ_CACHE = os.path.join(kit.WORK, "objcache")
-# (LONGSHOT_OBJ_STORE: one store of objects for every work folder, nx2/object_store.py. Its folder for this work folder's compiler
+# (INHALE_OBJ_STORE: one store of objects for every work folder, nx2/object_store.py. Its folder for this work folder's compiler
 # and headers, or None)
 OBJ_STORE = object_store.folder(kit.WORK)
 # (longshot) work/hot_order.txt: the functions that run, hottest first (sampled), packed together by the linker; RX_NO_ORDER=1: off
 PGO = os.environ.get("RX_PGO", "")
 
 
-# (linux) Linux builds: an ELF executable and longshot_vk.so, the Win32 calls of host/ and gpu/vk on POSIX
-# (host/posix: its windows.h is found first), the window and sound on SDL2. LONGSHOT_SYSROOT=<dir>: compile and link
+# (linux) Linux builds: an ELF executable and inhale_vk.so, the Win32 calls of host/ and gpu/vk on POSIX
+# (host/posix: its windows.h is found first), the window and sound on SDL2. INHALE_SYSROOT=<dir>: compile and link
 # against that root (the AppImage's: glibc 2.35, so the game runs on older systems than the one that built it). The Vulkan back
 # end is compiled by every build, the AppImage's player builds too, from the sources the AppImage carries (no prebuilt one since
 # 2026-11-14: one way to build it, with this PC's CPU and the committed play profile)
 LINUX = not toolchain.windows()   # (longshot: RX_TARGET=windows on Linux builds the Windows game, with llvm-mingw)
 POSIX = os.path.join(kit.HERE, "..", "host", "posix")
-SYSROOT = os.environ.get("LONGSHOT_SYSROOT", "")
-EXE = "longshot" if LINUX else "longshot.exe"
-VK_LIB = "longshot_vk.so" if LINUX else "longshot_vk.dll"
+SYSROOT = os.environ.get("INHALE_SYSROOT", "")
+EXE = "inhale" if LINUX else "inhale.exe"
+VK_LIB = "inhale_vk.so" if LINUX else "inhale_vk.dll"
 
 
 def check_vk_symbols(so):
@@ -357,7 +357,7 @@ def image_span(path):
     an ELF's PT_LOAD segments from the lowest address to the highest end. None when the file is neither.
 
     The game's code reaches its data (.data, the GOT, .refptr) RIP-relative, a signed 32-bit offset. lld does not range-check
-    those fixups on x86-64 COFF: a lifted build compiled at -O0 linked a 2,262 MB longshot.exe with no error, and its first
+    those fixups on x86-64 COFF: a lifted build compiled at -O0 linked a 2,262 MB inhale.exe with no error, and its first
     instruction that read a64_dirty read 4 GB below it (bold/cover, 2026-11-13). So the build checks the size itself.
     On ELF this is only a second check: lld does range-check x86-64 PC-relative fixups there and fails the link itself."""
     import struct
@@ -421,9 +421,9 @@ FFMPEG = None   # (found in the CPM caches below, once cpm_dirs is defined)
 
 def exe_resources():
     """(Windows) the .res with the exe's icon (and the name Windows shows for it) to link: the game's own, which the builder made
-    from its .nup (work/longshot_game.res, nx2/game_title.py), else a developer's picture (work/longshot.res, nx2/make_icon.py),
+    from its .nup (work/inhale_game.res, nx2/game_title.py), else a developer's picture (work/inhale.res, nx2/make_icon.py),
     else none. Only one: both are icon 1"""
-    for name in ("longshot_game.res", "longshot.res"):
+    for name in ("inhale_game.res", "inhale.res"):
         if os.path.exists(os.path.join(kit.WORK, name)):
             return [os.path.join(kit.WORK, name)]
     return []
@@ -517,35 +517,35 @@ def renderer_deps(blob, roots, obj):
 
 
 def ngx_library(sdk, linux):
-    """NVIDIA's NGX library in a LONGSHOT_NGX_SDK folder (scripts/ngx_sdk.py's layout), for this build's platform: libnvsdk_ngx.a
+    """NVIDIA's NGX library in a INHALE_NGX_SDK folder (scripts/ngx_sdk.py's layout), for this build's platform: libnvsdk_ngx.a
     on Linux, nvsdk_ngx_s.lib on Windows (the static one, built against Microsoft's static runtime: gpu/vk/vk_ngx_msvc_rt.cpp)"""
     return os.path.join(sdk, "lib", "libnvsdk_ngx.a" if linux else "nvsdk_ngx_s.lib")
 
 
 def ngx_sdk(sdk, linux):
-    """LONGSHOT_NGX_SDK as the build takes it: the folder when it has this platform's library, else "" (and why, said)"""
+    """INHALE_NGX_SDK as the build takes it: the folder when it has this platform's library, else "" (and why, said)"""
     if sdk and not os.path.isfile(ngx_library(sdk, linux)):
-        print("build: LONGSHOT_NGX_SDK=%s has no lib/%s (scripts/ngx_sdk.py --platform %s fetches it): built without NVIDIA "
+        print("build: INHALE_NGX_SDK=%s has no lib/%s (scripts/ngx_sdk.py --platform %s fetches it): built without NVIDIA "
               "DLSS" % (sdk, os.path.basename(ngx_library(sdk, linux)), "linux" if linux else "windows"), flush=True)
         return ""
     return sdk
 
 
-# LONGSHOT_NGX_SDK=<folder>: the Vulkan back end with NVIDIA DLSS Super Resolution, from NVIDIA's NGX SDK fetched into that
+# INHALE_NGX_SDK=<folder>: the Vulkan back end with NVIDIA DLSS Super Resolution, from NVIDIA's NGX SDK fetched into that
 # folder by scripts/ngx_sdk.py (its include/ and this platform's lib/; never committed, NVIDIA's license). Off without it.
-NGX_SDK = ngx_sdk(os.environ.get("LONGSHOT_NGX_SDK", ""), LINUX)
+NGX_SDK = ngx_sdk(os.environ.get("INHALE_NGX_SDK", ""), LINUX)
 # (llvm-mingw: what NVIDIA's library asks of Microsoft's runtime, linked in with it. Not compiled otherwise)
 NGX_MSVC_RT = "vk_ngx_msvc_rt.cpp"
-# LONGSHOT_FSR=1: the Vulkan back end with AMD FSR 4 (gpu/vk/vk_fsr4.cpp), from AMD's FSR API headers (third_party/fidelityfx,
+# INHALE_FSR=1: the Vulkan back end with AMD FSR 4 (gpu/vk/vk_fsr4.cpp), from AMD's FSR API headers (third_party/fidelityfx,
 # MIT). AMD's signed DLLs are not part of the build: the user's, loaded at run time. Off without it (make_game.py --fsr sets
 # it; the camera jitter it needs is in every build: nx2/oot_jitter.py). A Linux build with it compiles the back end from the
 # headers the AppImage carries (FSR_HEADERS, which make_game.py's Linux check looks for before the game is read)
-FSR = os.environ.get("LONGSHOT_FSR", "") == "1"
+FSR = os.environ.get("INHALE_FSR", "") == "1"
 FSR_HEADERS = os.path.join(kit.HERE, "..", "third_party", "fidelityfx")
 
 
 def ngx_link(sdk, mingw):
-    """What longshot_vk.dll's link adds for NVIDIA DLSS on Windows: NVIDIA's library and the registry calls it makes; with
+    """What inhale_vk.dll's link adds for NVIDIA DLSS on Windows: NVIDIA's library and the registry calls it makes; with
     llvm-mingw, not Microsoft's C++ runtime it names (libcpmt: vk_ngx_msvc_rt.cpp has what it needs of it, and the other
     libraries of Microsoft's are toolchain.native_link's /nodefaultlib already). Nothing without the SDK"""
     if not sdk:
@@ -554,7 +554,7 @@ def ngx_link(sdk, mingw):
 
 
 def vk_sources():
-    """The Vulkan back end (longshot_vk.dll, gpu/vk/vk_api.h): Eden's shader recompiler with its SPIR-V back end
+    """The Vulkan back end (inhale_vk.dll, gpu/vk/vk_api.h): Eden's shader recompiler with its SPIR-V back end
     (gpu/vk/eden), sirit with Eden's mesh shader patch (gpu/vk/sirit) and the back end itself (gpu/vk/*.cpp)"""
     vk = os.path.join(GPU, "vk")
     out = []
@@ -626,9 +626,9 @@ def header_package(cpm_name, probe, env=None, work=None):
     return None
 
 
-VK_HEADERS = (("Vulkan", "vulkanheaders", "vulkan/vulkan.h", "LONGSHOT_VULKAN_HEADERS"),
-              ("SPIR-V", "spirv-headers", "spirv/unified1/spirv.h", "LONGSHOT_SPIRV_HEADERS"),
-              ("VMA", "vulkanmemoryallocator", "vk_mem_alloc.h", "LONGSHOT_VMA_HEADERS"))
+VK_HEADERS = (("Vulkan", "vulkanheaders", "vulkan/vulkan.h", "INHALE_VULKAN_HEADERS"),
+              ("SPIR-V", "spirv-headers", "spirv/unified1/spirv.h", "INHALE_SPIRV_HEADERS"),
+              ("VMA", "vulkanmemoryallocator", "vk_mem_alloc.h", "INHALE_VMA_HEADERS"))
 
 
 def vulkan_headers(work=None):
@@ -662,14 +662,14 @@ class ProcessMemory(ctypes.Structure):   # (Windows' PROCESS_MEMORY_COUNTERS, fo
 # and the compile countdown's guess of how many the free memory holds. About the median chunk's peak)
 COMPILER_MB = 1500
 
-# LONGSHOT_SPLIT_GIANTS (nx2/split_giants.py): the lifted functions of split_giants.MIN_KB or more are compiled as pieces cut at
+# INHALE_SPLIT_GIANTS (nx2/split_giants.py): the lifted functions of split_giants.MIN_KB or more are compiled as pieces cut at
 # their labels, with a dispatch loop under the function's own name (compile_one compiles that copy; the lifted files stay as the
 # lift wrote them, so its patches, cuts and lists never see the pieces). On by default at split_giants.PIECE_KB (8): a whole
 # first build's compile 1,347 -> 1,057 s on a Ryzen 5 5600. "0": off; a number: the pieces' size in KB
 def split_giants_flags():
     """The flag the lifted chunks and the hot pieces carry when their giants are split (split_giants.FLAG: the piece size and
     the splitter's own hash, so a change of either builds them again); [] when off"""
-    raw = os.environ.get("LONGSHOT_SPLIT_GIANTS", "").strip()
+    raw = os.environ.get("INHALE_SPLIT_GIANTS", "").strip()
     if raw == "0":
         return []
     import split_giants
@@ -801,8 +801,8 @@ def mem_need(src):
 
 
 def mem_limit_mb():
-    """LONGSHOT_MEM_LIMIT_GB (the builder's Build memory choice) in MB; None: the memory free decides"""
-    raw = os.environ.get("LONGSHOT_MEM_LIMIT_GB")
+    """INHALE_MEM_LIMIT_GB (the builder's Build memory choice) in MB; None: the memory free decides"""
+    raw = os.environ.get("INHALE_MEM_LIMIT_GB")
     if not raw:
         return None
     try:
@@ -810,9 +810,9 @@ def mem_limit_mb():
     except ValueError:
         gb = 0.0
     if not (gb > 0 and math.isfinite(gb)):
-        print("LONGSHOT_MEM_LIMIT_GB=%s is not a finite number above 0: the memory free decides" % raw, flush=True)
+        print("INHALE_MEM_LIMIT_GB=%s is not a finite number above 0: the memory free decides" % raw, flush=True)
         return None
-    print("build: the compilers may take %g GB together, whatever is free (LONGSHOT_MEM_LIMIT_GB)" % gb, flush=True)
+    print("build: the compilers may take %g GB together, whatever is free (INHALE_MEM_LIMIT_GB)" % gb, flush=True)
     return gb * 1024
 
 
@@ -820,17 +820,17 @@ class MemoryGate:
     """(issue 418) Compilers started by the memory there is, not only by --jobs: one per CPU thread ran PCs out of memory (the kernel
     stopped a compiler, or the whole build), and a count low enough for the biggest files and the PC's other programs left most of
     the threads idle. A compile starts when the memory free, less what the compilers running may still take on top of what they
-    hold now (mem_need), keeps its own need and LONGSHOT_MEM_RESERVE_GB (default 1.5) free. The floor is make_game's before this:
+    hold now (mem_need), keeps its own need and INHALE_MEM_RESERVE_GB (default 1.5) free. The floor is make_game's before this:
     on Windows up to 4 (half the threads on smaller CPUs) always run, as Windows pages rather than fails (issues 502, 503, 511: 1-2
     compilers on 16 GB PCs took hours); on Linux one (issue 531: Linux stops a compiler that does not fit, and it is compiled again
     alone). The free memory is read again as compiles start and end, so a game or browser opened during the build makes later
-    compiles wait. With LONGSHOT_MEM_LIMIT_GB the player chooses instead: a compile starts when the needs of those running and its
+    compiles wait. With INHALE_MEM_LIMIT_GB the player chooses instead: a compile starts when the needs of those running and its
     own fit in that, whatever is free, above the same floor"""
 
     def __init__(self):
         self.cv = threading.Condition()
         self.running = {}   # (per-compile lease: [need, Popen or None]; one source can have several objects)
-        self.reserve = float(os.environ.get("LONGSHOT_MEM_RESERVE_GB") or 1.5) * 1024
+        self.reserve = float(os.environ.get("INHALE_MEM_RESERVE_GB") or 1.5) * 1024
         self.limit = mem_limit_mb()
         self.floor = max(1, min(4, (os.cpu_count() or 2) // 2)) if os.name == "nt" else 1
 
@@ -893,16 +893,16 @@ def dav1d_windows():
 
 
 def ffmpeg_linux(missing=None):
-    """(linux) FFmpeg's compile and link flags: LONGSHOT_FFMPEG=<prefix> with static libraries (the AppImage's, with
+    """(linux) FFmpeg's compile and link flags: INHALE_FFMPEG=<prefix> with static libraries (the AppImage's, with
     dav1d for OoT's AV1 movies), else the system's through pkg-config; None without either.
     missing, when supplied, collects the prerequisites absent from the selected route."""
-    pre = os.environ.get("LONGSHOT_FFMPEG")
+    pre = os.environ.get("INHALE_FFMPEG")
     if pre and os.path.exists(os.path.join(pre, "lib", "libavcodec.a")):
         libs = [os.path.join(pre, "lib", "lib%s.a" % l) for l in FFMPEG_LIBS]
         if missing is not None:
             for path in libs + [os.path.join(pre, "include", "lib" + l, l + ".h") for l in FFMPEG_LIBS]:
                 if not os.path.isfile(path):
-                    missing.append("FFmpeg: %s (LONGSHOT_FFMPEG's selected static prefix)" % path)
+                    missing.append("FFmpeg: %s (INHALE_FFMPEG's selected static prefix)" % path)
         libs += [os.path.join(pre, "lib", "libdav1d.a")] if os.path.exists(os.path.join(pre, "lib", "libdav1d.a")) else []
         return ["-I" + os.path.join(pre, "include")], libs + ["-lm", "-lpthread"]
     names = ["lib" + l for l in FFMPEG_LIBS]
@@ -921,8 +921,8 @@ def ffmpeg_linux(missing=None):
                 except OSError:
                     absent = ["pkg-config", *names]
                     break
-            missing.append("FFmpeg: %s (LONGSHOT_FFMPEG with lib/libavcodec.a first, else pkg-config --cflags/--libs "
-                           "for %s; install the development libraries or set LONGSHOT_FFMPEG). %s" %
+            missing.append("FFmpeg: %s (INHALE_FFMPEG with lib/libavcodec.a first, else pkg-config --cflags/--libs "
+                           "for %s; install the development libraries or set INHALE_FFMPEG). %s" %
                            (", ".join(absent or names), " ".join(names), str(e)))
         return None
 
@@ -976,7 +976,7 @@ CPU = ["-march=" + MARCH, "-ffp-contract=off"]
 # (issue 182) A CPU with x86-64-v3's features gets the game built for itself, -march=native: what it has beyond v3 (AVX-512 and
 # the rest), and tuned for it (native tunes as well, the Steam Deck's Zen 2 included: no tuning flag of our own). RX_MARCH=x86-64-v3
 # builds as before. native names no CPU, and the object keys are made from the flags, so the CPU clang resolves it to goes into
-# the flags too (-DLONGSHOT_NATIVE_CPU=<cpu>_<tune>_<features>): another CPU (a new one, the disk in another PC) compiles again
+# the flags too (-DINHALE_NATIVE_CPU=<cpu>_<tune>_<features>): another CPU (a new one, the disk in another PC) compiles again
 # instead of linking objects made for instructions it may lack. If clang can't say, the default stays x86-64-v3, and an
 # RX_MARCH=native stops the build.
 _CLANG = toolchain.find("clang")
@@ -991,7 +991,7 @@ if MARCH == "native" and not _native:
         sys.exit("build: clang does not say what -march=native is on this PC: set RX_MARCH to a CPU level")
 if _native:
     print("build: the game is built for this PC's CPU (%s)" % _native, flush=True)
-    CPU += ["-DLONGSHOT_NATIVE_CPU=" + _native]
+    CPU += ["-DINHALE_NATIVE_CPU=" + _native]
 # The third-party code (nx2/third_party_objects.py SOURCES: Eden's recompiler, sirit, Dear ImGui, zstd, libopus) is built for
 # x86-64-v3 on every CPU that has it, not -march=native: the release ships it compiled for that level, so a player's build
 # links it instead of compiling it (its keys name no CPU). A CPU below v3, or an RX_MARCH, builds it as the rest
@@ -1014,7 +1014,7 @@ def flags(gen, rt64, opt, polls):
 # -O1's inliner barely inlines lifted code (the same call counts); the few helpers it did inline are always_inline in the
 # lifter's headers (a64_lift.py VFPX_HEADER). A chunk with a function of LONGSHOT_LIGHT_PASSES_KB (1024) KB of C or more keeps
 # every pass: without the module passes a giant function's later passes blow up (3.25-4.7 GB, 8x the time). The size is
-# the lifted function's: a chunk whose functions LONGSHOT_SPLIT_GIANTS cuts (256 KB or more) compiles its pieces light too
+# the lifted function's: a chunk whose functions INHALE_SPLIT_GIANTS cuts (256 KB or more) compiles its pieces light too
 # (measured on the game's 50 such chunks: -22% compile, the same symbols, +3.2% code). The hot pieces (code_hot*) keep
 # theirs (-O2 and the profile). The flags are part of each object's key (object_key), so a light object and a full one are never taken for each other.
 # opt-bisect-verbose=false: without it the option prints a line for every pass on every function
@@ -1460,7 +1460,7 @@ def compile_one(job):
         open(stamp, "w").write(key)
         return src, 0.0, None
     c_src = src
-    if any(f.startswith("-DLONGSHOT_SPLIT_GIANTS=") for f in fl):   # (LONGSHOT_SPLIT_GIANTS: a copy with the giants cut, if any)
+    if any(f.startswith("-DINHALE_SPLIT_GIANTS=") for f in fl):   # (INHALE_SPLIT_GIANTS: a copy with the giants cut, if any)
         import split_giants
         c_src = split_giants.compile_copy(src, obj, fl)
     lease = GATE.enter(c_src) if GATE else None
@@ -1521,7 +1521,7 @@ def main():
     tp_stamp = third_party_objects.stamp(cc, toolchain.find("clang++"), target(), THIRD_PARTY_CPU, vulkan_headers())
     tp_deps = b"third-party " + tp_stamp.encode()
     fl = flags(gen, rt64, OPT, True) + (["-DA64_POLL_CTX"] if a.dll else [])   # (the shim's poll takes the context: rtgen.py)
-    # (which Longshot this is, for the log's first line and the Insert menu: given to those two files only, so a new
+    # (which Inhale this is, for the log's first line and the Insert menu: given to those two files only, so a new
     # release name rebuilds them and nothing else)
     stamp_def = version.define()
     print("version: %s" % version.describe(), flush=True)
@@ -1578,7 +1578,7 @@ def main():
         # (the profile's contents in the flags the object key hashes: its path alone stays the same across releases, so an update with a
         # new profile kept the hot code built from the old one)
         with open(PGO, "rb") as f:
-            hot_fl = hot_fl + ["-fprofile-instr-use=" + PGO, "-DLONGSHOT_PROFILE_SHA1=" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
+            hot_fl = hot_fl + ["-fprofile-instr-use=" + PGO, "-DINHALE_PROFILE_SHA1=" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
     split_fl = fl + split_giants_flags()   # (the lifted chunks; the hot pieces carry their own split in hot_fl)
     bar_kb = light_passes_kb()
     if bar_kb is not None and not light_flags_work(cc):
@@ -1622,7 +1622,7 @@ def main():
     host_blob = deps + tree_headers(HOST) + tree_headers(GPU, skip=("eden", "sirit", "third_party"))
     host_extras = ffmpeg_version_key()
     dav1d = dav1d_windows() if host_srcs else None
-    dav1d_fl = ["-DLONGSHOT_DAV1D", "-I" + os.path.join(dav1d, "include")] if dav1d else []
+    dav1d_fl = ["-DINHALE_DAV1D", "-I" + os.path.join(dav1d, "include")] if dav1d else []
     if dav1d:
         host_extras += open(os.path.join(dav1d, "include", "dav1d", "version.h"), "rb").read()
         print("AV1 movies: dav1d (%s)" % dav1d, flush=True)
@@ -1654,15 +1654,15 @@ def main():
         jobs += zstd_jobs(cc, target() + THIRD_PARTY_CPU + ["-O2", "-g0", "-DNDEBUG", "-Wno-everything", "-DZSTD_DISABLE_ASM",
                                                             "-DZSTD_LEGACY_SUPPORT=0", "-DZSTD_MULTITHREAD=0"], obj_dir, "zstd_",
                           tp_deps)
-    # the Vulkan back end, a DLL of its own (the only renderer): CPM cache, LONGSHOT_*_HEADERS, or system includes
+    # the Vulkan back end, a DLL of its own (the only renderer): CPM cache, INHALE_*_HEADERS, or system includes
     vk_jobs = []
     vk_headers, spirv_headers, vma_headers = vulkan_headers()
     build_vk = a.standalone and vk_headers and spirv_headers and vma_headers
     if a.standalone and not build_vk:
         # (was silent: the exe linked, the renderer then fell through to a stub, black window)
         missing = [n for n, p in (("Vulkan", vk_headers), ("SPIR-V", spirv_headers), ("VMA", vma_headers)) if not p]
-        print("no headers for %s (missing %s). Set RX_CPM to a CPM cache, or LONGSHOT_VULKAN_HEADERS / "
-              "LONGSHOT_SPIRV_HEADERS / LONGSHOT_VMA_HEADERS (package root or its include/ folder), or install "
+        print("no headers for %s (missing %s). Set RX_CPM to a CPM cache, or INHALE_VULKAN_HEADERS / "
+              "INHALE_SPIRV_HEADERS / INHALE_VMA_HEADERS (package root or its include/ folder), or install "
               "distro packages vulkan-headers + spirv-headers + vulkan-memory-allocator."
               % (VK_LIB, ", ".join(missing)), flush=True)
         return 1
@@ -1671,22 +1671,22 @@ def main():
     if build_vk:
         cxx = toolchain.need(toolchain.find("clang++"))
         vk = os.path.join(GPU, "vk")
-        # (longshot) the start-up screen's logo, assets/longshot.png as RGBA bytes in a header of the build's own (nx2/logo_rgba.py);
+        # (longshot) the start-up screen's logo, assets/inhale.png as RGBA bytes in a header of the build's own (nx2/logo_rgba.py);
         # its bytes are part of vk_imgui.cpp's dependencies. The AppImage carries third_party/fonts and the back end's sources for
         # it: a player's build there once stopped at the fonts (FileNotFoundError: LibertinusSans-Regular.ttf, 2026-11-10)
-        logo_text = logo_rgba.write(os.path.join(gen_dir, "longshot_logo.h")).encode()
+        logo_text = logo_rgba.write(os.path.join(gen_dir, "inhale_logo.h")).encode()
         # (the overlays' bundled fonts, third_party/fonts/libertinus, as a C++ file of the build's own: nx2/ui_fonts.py)
         fonts_cpp = os.path.join(gen_dir, "ui_fonts.cpp")
         ui_fonts.write(fonts_cpp)
         # (what the shader caches are good for: what translates shaders, not the whole DLL, so a build that changes something else
         # keeps them: nx2/translator_files.py names it, for scripts/dev_packs.py and the bake tools too)
-        shader_stamp = "-DLONGSHOT_SHADER_STAMP=0x%sull" % translator_files.stamp(vk)
+        shader_stamp = "-DINHALE_SHADER_STAMP=0x%sull" % translator_files.stamp(vk)
         vflags = target() + CPU + (["-fPIC", "-I" + POSIX, "-D_GNU_SOURCE"] if LINUX else []) + [   # (longshot: the replay is the frame's limit now)
             # (what the code takes for granted, which newer C++ libraries bring in by themselves and older ones do not: issue 48)
             "-include", "algorithm", "-include", "cstdio", "-include", "cstdlib", "-include", "cstring", "-include", "functional",
             "-include", "string", "-include", "vector",
             "-std=c++20", "-O2", "-g0", "-DNDEBUG", "-Wno-everything", "-DVK_NO_PROTOTYPES", "-DMKWVK_BUILDING",
-            *(["-DLONGSHOT_RELEASE"] if os.environ.get("RX_RELEASE") == "1" else []),   # (the shaders precompiled before the game)
+            *(["-DINHALE_RELEASE"] if os.environ.get("RX_RELEASE") == "1" else []),   # (the shaders precompiled before the game)
             # (Eden's recompiler before suyu's root: suyu has its own shader_recompiler/ headers, and a Shader::Info
             # of the other layout in some objects is what crashed the descriptor walk. MKWVK_INCLUDES changes the
             # object keys, which leave the include folders out, when this order changes)
@@ -1700,16 +1700,16 @@ def main():
             "-I" + os.path.join(kit.ROOT, "third_party", "zbic")]
         # (the third-party parts' flags: the same, at THIRD_PARTY_CPU, and without the release's define, which none of them
         # reads, so a set made for players fits a developer's build too)
-        tp_vflags = target() + THIRD_PARTY_CPU + [f for f in vflags[len(target()) + len(CPU):] if f != "-DLONGSHOT_RELEASE"]
+        tp_vflags = target() + THIRD_PARTY_CPU + [f for f in vflags[len(target()) + len(CPU):] if f != "-DINHALE_RELEASE"]
         # (NVIDIA DLSS, a local build's option: scripts/ngx_sdk.py. Only vk_dlss.cpp sees NVIDIA's headers; without them
         # it is the stubs that say DLSS is not there)
-        ngx_flags = ["-DLONGSHOT_NGX", "-I" + os.path.join(NGX_SDK, "include")] if NGX_SDK else []
+        ngx_flags = ["-DINHALE_NGX", "-I" + os.path.join(NGX_SDK, "include")] if NGX_SDK else []
         ngx_deps = tree_headers(os.path.join(NGX_SDK, "include")) if NGX_SDK else b""
         if NGX_SDK:
             print("the Vulkan back end: with NVIDIA DLSS (NVIDIA's NGX SDK in %s)" % NGX_SDK, flush=True)
         # (AMD FSR 4, a build's option too: only vk_fsr4.cpp sees AMD's headers; without them it is the stubs that say FSR is
         # not there)
-        fsr_flags = ["-DLONGSHOT_FSR", "-I" + os.path.join(kit.HERE, "..", "third_party", "fidelityfx")] if FSR else []
+        fsr_flags = ["-DINHALE_FSR", "-I" + os.path.join(kit.HERE, "..", "third_party", "fidelityfx")] if FSR else []
         if FSR:
             print("the Vulkan back end: with AMD FSR 4 (AMD's FSR API headers, third_party/fidelityfx)", flush=True)
         # (longshot) Intel XeSS Super Resolution (vk_xess.cpp), from Intel's MIT XeSS API headers (third_party/xess/inc): in every
@@ -1717,7 +1717,7 @@ def main():
         # nothing without it. Only vk_xess.cpp sees Intel's headers. Not on Linux, where Intel ships no XeSS library: there it is
         # the stubs that say XeSS is Windows only
         xess_headers = os.path.join(kit.HERE, "..", "third_party", "xess", "inc")
-        xess_flags = [] if LINUX else ["-DLONGSHOT_XESS", "-I" + xess_headers]
+        xess_flags = [] if LINUX else ["-DINHALE_XESS", "-I" + xess_headers]
         xess_deps = b"" if LINUX else tree_headers(os.path.join(xess_headers, "xess"))
         # (Eden's recompiler and sirit see only their own headers: a change to the back end's vk_*.h does not
         # rebuild their ~500 files; the back end itself depends on everything, suyu's texture decoders included)
@@ -1759,7 +1759,7 @@ def main():
         elif vk_pgo:
             with open(vk_pgo, "rb") as f:
                 vk_pgo_flags = ["-fprofile-instr-use=" + vk_pgo,
-                                "-DLONGSHOT_VK_PROFILE_SHA1=" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
+                                "-DINHALE_VK_PROFILE_SHA1=" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
             print("the Vulkan back end: built with the profile %s" % vk_pgo, flush=True)
         for src in vk_sources():
             name = os.path.relpath(src, vk).replace(os.sep, "_")[:-4]
@@ -1835,14 +1835,14 @@ def main():
             held, len(tp_jobs), tp_folder, copied,
             "" if held or made is None or made == tp_stamp else
             ": made with another compiler or other headers, compiled here instead"), flush=True)
-    # (the builder's compile timer: LONGSHOT_TIMES is make_game.py's record of the earlier builds on this PC. With it,
+    # (the builder's compile timer: INHALE_TIMES is make_game.py's record of the earlier builds on this PC. With it,
     # this run says which files it really rebuilds and how long each took before, and the builder shows the rest of the
     # compile as a countdown that follows this PC's own measurements. Run by hand, it prints none of these lines.)
     global GATE
-    GATE = None if os.environ.get("LONGSHOT_MEM_GATE") == "0" else MemoryGate()
+    GATE = None if os.environ.get("INHALE_MEM_GATE") == "0" else MemoryGate()
     eta_jobs = GATE.expected(a.jobs) if GATE else a.jobs   # (the countdown with the compilers the memory holds, not --jobs)
     write_compdb(out, jobs, gen)
-    counted, expected, pending = os.environ.get("LONGSHOT_TIMES"), {}, []
+    counted, expected, pending = os.environ.get("INHALE_TIMES"), {}, []
     if OBJ_STORE:   # (the objects this build needs that another work folder built: in the folder's cache before the plan counts them)
         object_store.share(OBJ_CACHE, OBJ_STORE)   # (the folder's own first, those of a build that stopped before it shared them too)
         for _, src, obj, fl, deps in jobs:
@@ -1921,7 +1921,7 @@ def main():
     rsp = os.path.join(out, "objs.rsp")
     open(rsp, "w", encoding="utf-8").write("\n".join('"%s"' % o.replace("\\", "/") for o in objs))
     if a.standalone and not vk_only and LINUX:
-        exe = os.path.join(out, EXE)   # (+ longshot.map: crash offsets -> f_<guest address>)
+        exe = os.path.join(out, EXE)   # (+ inhale.map: crash offsets -> f_<guest address>)
         t = time.time()
         # (--export-dynamic-symbol: the window's state, which the Vulkan back end's own Win32 calls read by name)
         r = run_link([cc] + target() + ["-fuse-ld=lld", "-o", exe] + linker("-Map=" + exe + ".map") +
@@ -1938,18 +1938,18 @@ def main():
             print(too_big)
             return 1
         print("linked %s: %d MB (%.0fs)" % (exe, os.path.getsize(exe) >> 20, time.time() - t))
-        sdl = os.environ.get("LONGSHOT_SDL2", "")   # (libSDL2-2.0.so.0 beside it, when the AppImage brings one)
+        sdl = os.environ.get("INHALE_SDL2", "")   # (libSDL2-2.0.so.0 beside it, when the AppImage brings one)
         if sdl and os.path.exists(sdl):
             import shutil
             shutil.copyfile(sdl, os.path.join(out, "libSDL2-2.0.so.0"))
     elif a.standalone and not vk_only:
-        exe = os.path.join(out, "longshot.exe")   # (+ longshot.map: crash offsets -> f_<guest address>)
+        exe = os.path.join(out, "inhale.exe")   # (+ inhale.map: crash offsets -> f_<guest address>)
         t = time.time()
         r = run_link([cc] + toolchain.native_target() + toolchain.native_link() +
                            ["-o", exe] + linker("/map:" + exe[:-4] + ".map") + [toolchain.link_opt("/stack:8388608"), "@" + rsp] + HOT_ORDER() + HOST_LIBS +
                            ([toolchain.link_opt("/nodefaultlib:clang_rt.profile.lib")] if PGO == "gen" else []) +
                            exe_resources() +   # (the exe's icon and name: nx2/game_title.py, nx2/make_icon.py)
-                           [win_manifest.write(os.path.join(out, "longshot_manifest.res"))] +   # (UTF-8 paths: nx2/win_manifest.py)
+                           [win_manifest.write(os.path.join(out, "inhale_manifest.res"))] +   # (UTF-8 paths: nx2/win_manifest.py)
                            ([toolchain.link_opt("/subsystem:windows"), toolchain.link_opt("/entry:mainCRTStartup")] if os.environ.get("RX_RELEASE") == "1" else []) +   # (no console window)
                            ([os.path.join(FFMPEG, "lib", l + ".lib") for l in ("avcodec", "swscale", "swresample", "avutil")] +
                             ["-lbcrypt", "-lmfplat", "-lmfuuid", "-lstrmiids", "-lole32"] if FFMPEG else []) +
@@ -1985,7 +1985,7 @@ def main():
         if os.path.exists(sdl3) and (not os.path.exists(sdl3_dst) or os.path.getsize(sdl3_dst) != os.path.getsize(sdl3)):
             import shutil
             shutil.copyfile(sdl3, sdl3_dst)
-    if vk_jobs:   # (longshot_vk.dll beside the exe: loaded by host/rx_backend.c)
+    if vk_jobs:   # (inhale_vk.dll beside the exe: loaded by host/rx_backend.c)
         vdll = os.path.join(out, VK_LIB)
         vrsp = os.path.join(out, "vk_objs.rsp")
         open(vrsp, "w", encoding="utf-8").write("\n".join('"%s"' % j[2].replace("\\", "/") for j in vk_jobs))
@@ -2009,7 +2009,7 @@ def main():
             return 1
         print("linked %s: %d MB (%.0fs)" % (vdll, os.path.getsize(vdll) >> 20, time.time() - t))
     if a.dll:
-        dll = os.path.join(out, "longshot_game.dll")   # (+ longshot_game.map: crash offsets -> f_<guest address>)
+        dll = os.path.join(out, "inhale_game.dll")   # (+ inhale_game.map: crash offsets -> f_<guest address>)
         t = time.time()
         r = subprocess.run([cc] + toolchain.native_target() + toolchain.native_link() +
                            ["-shared", "-o", dll] + linker("/map:" + dll[:-4] + ".map") + ["@" + rsp],

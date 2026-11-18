@@ -60,7 +60,7 @@ class DepfileTests(unittest.TestCase):
 
 class RendererDepsTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="longshot depfiles ")   # (a space in the path, as on Windows)
+        self.temporary = tempfile.TemporaryDirectory(prefix="inhale depfiles ")   # (a space in the path, as on Windows)
         self.addCleanup(self.temporary.cleanup)
         d = Path(self.temporary.name)
         self.vk, self.other, self.obj_dir = d / "gpu" / "vk", d / "elsewhere", d / "obj"

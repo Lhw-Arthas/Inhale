@@ -1,6 +1,6 @@
 """Offline profile of a thread sampled with HOS_SAMPLE + HOS_SAMPLE_FILE (host/mkw_glue.c, mkw-recomp work/prof.py): each line is a stack of
-module+offset frames, leaf first. Frames in longshot_vk.dll / longshot.exe are named from the linker maps beside them;
-on Linux, frames in longshot_vk.so / longshot from the binaries' own symbols (nm). RX_MAPS=<folder>: another build's
+module+offset frames, leaf first. Frames in inhale_vk.dll / inhale.exe are named from the linker maps beside them;
+on Linux, frames in inhale_vk.so / inhale from the binaries' own symbols (nm). RX_MAPS=<folder>: another build's
 maps or binaries (on Linux, the game folder).
 
     python -I scripts/prof.py work/runs/<run>/stacks.txt [top] [skip] [only]
@@ -28,12 +28,12 @@ def load_map(path, base):
     return [a for a, _ in syms], [n for _, n in syms]
 
 
-# The modules whose frames are Longshot's own code (the game and the runtime, the renderer): Windows, then Linux
-GAME_MODS = ("longshot.exe", "longshot")
-VK_MODS = ("longshot_vk.dll", "longshot_vk.so")
+# The modules whose frames are Inhale's own code (the game and the runtime, the renderer): Windows, then Linux
+GAME_MODS = ("inhale.exe", "inhale")
+VK_MODS = ("inhale_vk.dll", "inhale_vk.so")
 RUN_MODS = GAME_MODS + VK_MODS
-# A sample whose leaf is outside Longshot is a wait only when a wait is on its stack: libc's memcpy and the driver's own
-# vkCmd* work are CPU time of the thread. These names (as the samples are named: Longshot's frames, leaf first) wait.
+# A sample whose leaf is outside Inhale is a wait only when a wait is on its stack: libc's memcpy and the driver's own
+# vkCmd* work are CPU time of the thread. These names (as the samples are named: Inhale's frames, leaf first) wait.
 WAIT_FRAMES = ("SleepConditionVariableSRW", "WaitForSingleObject", "hos_cv_sleep", "condition_variable::wait",
                "hos_sleep_ns", "sleep_ns", "hos_thread_wait", "vc_acquire", "present_out", "vkWaitForFences",
                "vkWaitSemaphores", "wait_value", "vk_timeline_wait", "recording_wait", ":Sleep", ":SleepEx",
@@ -41,13 +41,13 @@ WAIT_FRAMES = ("SleepConditionVariableSRW", "WaitForSingleObject", "hos_cv_sleep
 
 
 def waiting(leaf_module, names):
-    """whether a sample (its leaf's module, its frames named) waits: outside Longshot, under a wait"""
+    """whether a sample (its leaf's module, its frames named) waits: outside Inhale, under a wait"""
     if leaf_module in RUN_MODS:
         return False
     for n in names:
-        if n.startswith(("longshot:", "longshot_vk:", "longshot.exe:", "longshot_vk.dll:")):
+        if n.startswith(("inhale:", "inhale_vk:", "inhale.exe:", "inhale_vk.dll:")):
             return n.endswith(WAIT_FRAMES)
-    return True   # (no frame of Longshot's at all: a thread blocked outside it)
+    return True   # (no frame of Inhale's at all: a thread blocked outside it)
 
 
 def load_elf(path):
@@ -72,11 +72,11 @@ def load_symbols(folder=None):
     Windows build, the binaries of the Linux one"""
     folder = folder or os.environ.get("RX_MAPS", BUILD)
     maps = {}
-    for mod in ("longshot_vk.dll", "longshot.exe"):
+    for mod in ("inhale_vk.dll", "inhale.exe"):
         mp = os.path.join(folder, mod[:-4] + ".map")
         if os.path.exists(mp):
             maps[mod] = load_map(mp, 0x180000000 if mod.endswith(".dll") else 0x140000000)
-    for mod in ("longshot_vk.so", "longshot"):
+    for mod in ("inhale_vk.so", "inhale"):
         b = os.path.join(folder, mod)
         if os.path.isfile(b):
             try:
@@ -87,7 +87,7 @@ def load_symbols(folder=None):
 
 
 def module_name(mod):
-    """longshot_vk / longshot, whichever system the sample came from"""
+    """inhale_vk / inhale, whichever system the sample came from"""
     return mod.split(".")[0]
 
 

@@ -11,7 +11,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <wchar.h>
-const char *hos_options_file(void) { return "./longshot_options.ini"; }
+const char *hos_options_file(void) { return "./inhale_options.ini"; }
 static unsigned synthetic_count = 80;
 static int reordered;
 static UINT WINAPI fake_count(void) { return synthetic_count; }
@@ -40,7 +40,7 @@ static HRESULT WINAPI fake_create(REFCLSID clsid, LPUNKNOWN outer, DWORD context
 #include "../host/audio_output_devices.c"
 
 int main(void) {
-    FILE *settings = fopen("longshot_options.ini", "w"); assert(settings);
+    FILE *settings = fopen("inhale_options.ini", "w"); assert(settings);
     fputs("audio_output=2\nmicrophone=1\naudio_output_device_id=endpoint-23\n", settings); fclose(settings);
     char id[HOS_OUTPUT_ID_CAP] = {0}, name[HOS_OUTPUT_NAME_CAP]; unsigned generation = 0;
     hos_audio_output_preference(id, sizeof id, &generation);

@@ -1,4 +1,4 @@
-// (longshot) Threaded rendering, the Insert menu's row (vk_menu.cpp, threaded_rendering= in longshot_options.ini): Auto, On or
+// (longshot) Threaded rendering, the Insert menu's row (vk_menu.cpp, threaded_rendering= in inhale_options.ini): Auto, On or
 // Off, as one rule every reader shares: the menu (menu_threaded_rendering resolves it once, at the start), the replay
 // (vk_replay.cpp render_thread_mode), the recorder (vk_recorder.h mode_from_env), the host's present poll (HOS_OPT_RENDER_THREAD,
 // host/nvn_native.c) and the checks (tests/test_threaded_rendering.py compiles this file alone).

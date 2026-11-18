@@ -8,8 +8,8 @@ compare.
         [--dests 13,1,2,3,0,7,9,11 | all] [--dwell 40] [--laps 1] [--settle 20] [--interval 2]
         [--env NAME=VALUE ...] [--exe FILE] [--wrapper '["admission", "command"]']
 
-It uses `scripts/longshot_ctl.py` (docs/control.md): `launch --profile test` (headless, a copy of the save, the game
-folder's own options), A pressed until the save is loaded, the OoT debug teleport to each destination (`longshot_ctl.py
+It uses `scripts/inhale_ctl.py` (docs/control.md): `launch --profile test` (headless, a copy of the save, the game
+folder's own options), A pressed until the save is loaded, the OoT debug teleport to each destination (`inhale_ctl.py
 teleport` lists them; `all` takes every one) with a walk and camera swings for DWELL seconds in each, and a clean quit.
 A first start prepares shaders before the first frame: give it `--launch-timeout`, or run the game once first.
 
@@ -39,7 +39,7 @@ COLUMNS = ["t", "wall", "pid", "rss", "anon", "shmem", "file", "vmswap", "swap_a
 
 
 def load_ctl(path=None):
-    spec = importlib.util.spec_from_file_location("longshot_ctl", path or HERE / "longshot_ctl.py")
+    spec = importlib.util.spec_from_file_location("inhale_ctl", path or HERE / "inhale_ctl.py")
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m
@@ -127,7 +127,7 @@ WALK = [("L", 0, 1, 150), ("R", 0.6, 0, 60), ("L", 0.7, 0.7, 120), ("R", -0.6, 0
 
 
 class Tour:
-    """The tour itself, against a control bridge `b` (longshot_ctl.Bridge or anything with its request()) and the
+    """The tour itself, against a control bridge `b` (inhale_ctl.Bridge or anything with its request()) and the
     client module `ctl` (for Failed and check)"""
 
     def __init__(self, ctl, b, mark, clock=time.time, sleep=time.sleep):

@@ -1,9 +1,9 @@
-/* The player's settings, longshot_options.ini (options_path.h): in the user folder the game is given, the saves' (host/hos_main.c),
-   not beside the game. The launcher starts every build with the same one (--user: %APPDATA%\Longshot on Windows, a portable
+/* The player's settings, inhale_options.ini (options_path.h): in the user folder the game is given, the saves' (host/hos_main.c),
+   not beside the game. The launcher starts every build with the same one (--user: %APPDATA%\Inhale on Windows, a portable
    launcher's own folder), so an update, a new build or another channel keeps the Insert menu's choices and the controls; a
    build in its own folder kept its own before, and an update into a new folder started from the defaults. Where it is:
    - HOS_OPTIONS_FILE=<path>: that file (a scripted or test run brings its own and leaves the player's as it is, as HOS_ENV_FILE
-     does for longshot_env.txt);
+     does for inhale_env.txt);
    - --user <folder>: in that folder. A relative folder is made whole against the folder the game will run in (the game folder
      when it is started with nothing: hos_main.c goes there), so the crash window's helper, started before that, reads the same
      file;
@@ -28,7 +28,7 @@
 
 void hos_log(const char *fmt, ...);   /* (hos.h; declared here so a test builds this file alone) */
 
-static const char options_name[] = "longshot_options.ini";
+static const char options_name[] = "inhale_options.ini";
 static char file[MAX_PATH];
 static int chosen;
 

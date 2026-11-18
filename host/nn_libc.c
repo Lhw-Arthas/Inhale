@@ -1,8 +1,8 @@
 #include "hos.h"
 #include <stdlib.h>
 #include <string.h>
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 
 static int guest_libc(void) {

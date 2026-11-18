@@ -6,7 +6,7 @@ Exits 1 when anything failed.
     python -I -B tests/run_all.py [--jobs N] [--timeout SECONDS] [--strict] [--no-skip] [--shard K/N]
                                   [--list] [--junit FILE] [--exact] [name ...]
     python -I -B tests/run_all.py --changed [BASE]   (only the checks that read files changed since BASE: main on the
-                                                     remote that points at Longshot, else origin/main)
+                                                     remote that points at Inhale, else origin/main)
 
 A name picks the checks whose path contains it (--exact: only a check whose path is exactly the name; with names given
 and none matching, nothing runs and it exits 2). --strict: a check that needs a tool this PC lacks (a compiler, the
@@ -97,9 +97,9 @@ def header_dir(env, cpm_name, probe):
 
 
 def dav1d_prefix():
-    """A dav1d to build against (its include/dav1d/dav1d.h, and lib/libdav1d.a or the system's -ldav1d): LONGSHOT_DAV1D, else
+    """A dav1d to build against (its include/dav1d/dav1d.h, and lib/libdav1d.a or the system's -ldav1d): INHALE_DAV1D, else
     the CPM cache's (scripts/windows/dav1d.sh), the Linux dependencies' (scripts/linux/deps.sh), the system's"""
-    roots = [os.environ.get("LONGSHOT_DAV1D")]
+    roots = [os.environ.get("INHALE_DAV1D")]
     for cpm in (os.environ.get("RX_CPM"), os.path.join(ROOT, "build-linux", "deps", "cpm")):
         d = os.path.join(cpm or "", "dav1d")
         if cpm and os.path.isdir(d) and os.listdir(d):
@@ -114,8 +114,8 @@ def dav1d_prefix():
 def find_tools():
     return {
         "dav1d": None if WINDOWS else dav1d_prefix(),
-        "spirv_headers": header_dir("LONGSHOT_SPIRV_HEADERS", "spirv-headers", os.path.join("spirv", "unified1", "spirv.h")),
-        "vulkan_headers": header_dir("LONGSHOT_VULKAN_HEADERS", "vulkanheaders", os.path.join("vulkan", "vulkan.h")),
+        "spirv_headers": header_dir("INHALE_SPIRV_HEADERS", "spirv-headers", os.path.join("spirv", "unified1", "spirv.h")),
+        "vulkan_headers": header_dir("INHALE_VULKAN_HEADERS", "vulkanheaders", os.path.join("vulkan", "vulkan.h")),
         "spirv_val": which("spirv-val"),
         "glslang": which("glslangValidator", "glslang"),
         "dotnet": which("dotnet"),
@@ -344,16 +344,16 @@ class Result:
 # (--changed, the dev-loop proposal's D1) the checks that read what changed: most tests name the files they cut code from or run,
 # by path or by name, so a test whose text names a changed file is picked. A change to this runner, or to a shared .py of tests/
 # that is not a test, picks every check. Before a pull request the whole run is still the one that counts (docs/workflow.md)
-LONGSHOT_REMOTE = "git.magicbean.dev/magicbeandev/longshot"   # (scripts/forge.py's HOST and REPO, as add_remote matches them)
+INHALE_REMOTE = "git.magicbean.dev/magicbeandev/longshot"   # (scripts/forge.py's HOST and REPO, as add_remote matches them)
 
 
 def default_base():
-    """--changed's base when none is named: main on the remote that points at Longshot (scripts/forge.py adds one as forge
+    """--changed's base when none is named: main on the remote that points at Inhale (scripts/forge.py adds one as forge
     unless one already does: CONTRIBUTING.md's git rebase forge/main), else origin/main"""
     r = subprocess.run(["git", "-C", ROOT, "remote", "-v"], capture_output=True, text=True)
     for line in (r.stdout if r.returncode == 0 else "").splitlines():
         parts = line.split()
-        if len(parts) >= 2 and LONGSHOT_REMOTE in parts[1].lower().replace(".git", ""):
+        if len(parts) >= 2 and INHALE_REMOTE in parts[1].lower().replace(".git", ""):
             return parts[0] + "/main"
     return "origin/main"
 
@@ -470,7 +470,7 @@ def main():
                    help="a name must be a check's whole path, and with names given and none matching, run nothing")
     p.add_argument("--changed", nargs="?", const="", metavar="BASE",
                    help="only the checks that read a file changed since BASE's merge base (default main on the remote that "
-                        "points at Longshot, forge/main as forge.py adds it, else origin/main), or an untracked one")
+                        "points at Inhale, forge/main as forge.py adds it, else origin/main), or an untracked one")
     a = p.parse_args()
     if a.write_times and (a.names or a.shard):
         p.error("--write-times needs a full run: no names, no --shard")

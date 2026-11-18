@@ -4,7 +4,7 @@
    this they go to Media Foundation (host/mf_av1.c): the synchronous decoder of Microsoft's AV1 Video Extension, its software
    one, whatever the GPU, and a Store download where it is missing (issue 380). Movies stutter and fall behind their sound
    there (issue 2316, an RTX 4060; a GTX 1050). dav1d is what Linux decodes them with (through FFmpeg). Built in when the build
-   finds dav1d in the CPM cache (LONGSHOT_DAV1D: nx2/build.py, scripts/windows/dav1d.sh); without it, Media Foundation as before.
+   finds dav1d in the CPM cache (INHALE_DAV1D: nx2/build.py, scripts/windows/dav1d.sh); without it, Media Foundation as before.
 
    The same interface as mf_av1.c: dav1d_av1_decode takes one temporal unit (or NULL at the end, which drains) and calls back
    once per picture with NV12, which nn_video.c keeps as it is (no RGBA unless the game reads one).
@@ -20,7 +20,7 @@
 #else
 #include <unistd.h>
 #endif
-#include "../gpu/vk/compat/longshot_env.h"   /* (env_on, env_int: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"   /* (env_on, env_int: the switches' one rule) */
 
 void hos_log(const char *fmt, ...);
 

@@ -1,7 +1,7 @@
 // (longshot) The steps of a start that a crash in the driver would repeat at every start, each with a file beside the notes that
-// says it began and has not ended: the stage libraries' (longshot_prepared.bin.warming), the predicted pipelines'
-// (longshot_pipelines.bin.predicting), the warm into the pipeline cache's (longshot_pipelines.bin.built.warming) and the
-// precompile's (longshot_pipelines.bin.running), vk_draw.cpp. The next start reads it and, after one or two starts that ended
+// says it began and has not ended: the stage libraries' (inhale_prepared.bin.warming), the predicted pipelines'
+// (inhale_pipelines.bin.predicting), the warm into the pipeline cache's (inhale_pipelines.bin.built.warming) and the
+// precompile's (inhale_pipelines.bin.running), vk_draw.cpp. The next start reads it and, after one or two starts that ended
 // inside, goes on without that step. Only a crash (or a kill) may count. A close does not: the window's close, the Insert
 // menu's Quit and Restart now and the control socket's quit all end the process at once (ExitProcess: no destructor runs, no
 // thread is joined), so the step's file was left as if the start had crashed there, and two quits in the precompile dropped

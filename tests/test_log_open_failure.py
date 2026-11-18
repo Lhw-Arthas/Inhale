@@ -1,4 +1,4 @@
-"""A game started from its icon writes its log to logs/longshot_log.txt (host/hos_main.c, game_main): stderr is opened
+"""A game started from its icon writes its log to logs/inhale_log.txt (host/hos_main.c, game_main): stderr is opened
 again on that file. When the file cannot be opened (a logs/ folder left by a run as root, a read-only game folder),
 the game keeps the stderr it was started with: the C library's freopen closes stderr when its open fails, and the
 next file the game opened (the guest memory's memfd) then took its descriptor, 2.
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
     char log[MAX_PATH];
     snprintf(log, sizeof log, "%s", game_exe);
     *strrchr(log, '/') = 0;
-    strcat(log, "/logs/longshot_log.txt");
+    strcat(log, "/logs/inhale_log.txt");
     const int null = open("/dev/null", O_WRONLY);   /* (stderr as a desktop launcher leaves it) */
     why = "set up";
     CHECK(null >= 0 && dup2(null, 2) == 2 && close(null) == 0);
@@ -107,7 +107,7 @@ def main():
                 (game / "logs").mkdir()
             else:
                 (game / "logs").write_text("a file where the logs folder would be\n", encoding="utf-8")
-            r = subprocess.run([str(exe), str(game / "longshot"), case], stdout=subprocess.PIPE, text=True)
+            r = subprocess.run([str(exe), str(game / "inhale"), case], stdout=subprocess.PIPE, text=True)
             print(r.stdout.strip())
             failed |= r.returncode != 0
         raise SystemExit(1 if failed else 0)

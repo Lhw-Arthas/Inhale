@@ -80,7 +80,7 @@ def main():
         tmp = Path(tmp)
         cpp, exe = tmp / "t.cpp", tmp / "t.exe"
         cpp.write_text(FIXTURE.replace("@@DECISION@@", decision.replace("getenv(", "fake_getenv(")), encoding="utf-8")
-        r = subprocess.run([args.cxx, "-std=c++20", "-include", str(VK / "compat" / "longshot_env.h"), "-Wall",
+        r = subprocess.run([args.cxx, "-std=c++20", "-include", str(VK / "compat" / "inhale_env.h"), "-Wall",
                             "-Wextra", "-Werror", str(cpp), "-o", str(exe)], capture_output=True, text=True, timeout=120)
         if r.returncode:
             print(r.stdout + r.stderr)

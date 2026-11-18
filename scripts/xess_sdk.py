@@ -1,7 +1,7 @@
 """Intel's XeSS Super Resolution library for Windows (libxess.dll 2.0.2.68, signed by Intel), for Intel XeSS in the Upscaler
 row (gpu/vk/vk_xess.cpp).
 
-Intel's files are not part of Longshot and are not committed: they are Intel's, under the Intel Simplified Software License
+Intel's files are not part of Inhale and are not committed: they are Intel's, under the Intel Simplified Software License
 (the SDK's LICENSE.txt, fetched beside them as LICENSE-INTEL-XESS-SDK.txt, with the notices of the third-party programs in
 the library as THIRD-PARTY-INTEL-XESS-SDK.txt). This fetches them from Intel's XeSS SDK repository at one pinned commit, the
 one third_party/xess's headers come from (third_party/xess/PROVENANCE.md), each file checked against its SHA-256, into
@@ -44,7 +44,7 @@ DLL = "libxess.dll"
 
 NOTICE = """\
 Intel XeSS: this downloads Intel's XeSS Super Resolution library for Windows (libxess.dll 2.0.2.68, 78 MB) from
-github.com/intel/xess. Intel's files are Intel's, not Longshot's, signed by Intel and under the Intel Simplified Software
+github.com/intel/xess. Intel's files are Intel's, not Inhale's, signed by Intel and under the Intel Simplified Software
 License (saved as LICENSE-INTEL-XESS-SDK.txt beside them):
   """ + LICENSE_URL
 

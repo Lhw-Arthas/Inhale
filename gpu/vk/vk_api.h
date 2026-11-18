@@ -1,4 +1,4 @@
-/* The Vulkan back end (longshot_vk.dll, longshot_vk.so on Linux) and the game executable: what each gives the other.
+/* The Vulkan back end (inhale_vk.dll, inhale_vk.so on Linux) and the game executable: what each gives the other.
 
    The executable records the game's NVN command buffers (host/nvn_native.c) and calls a renderer through the rx_*
    functions (gpu/render/rx_nvn.h). host/rx_backend.c loads it, the only renderer, hands it the host functions below
@@ -83,7 +83,7 @@ enum { HOS_OPT_MOUSE_INVERT_X = 61 };
    member. 62 to 70, 80, 88 and 90 are taken by open pull requests.) */
 enum { HOS_OPT_HUD_LAYOUT = 71 };
 
-/* (longshot) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of longshot_options.ini):
+/* (longshot) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of inhale_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position (the bottom face button first:
    A on an Xbox pad, cross on a DualSense). Keep the saved position values when adding inputs. */
 enum { HOS_SW_A, HOS_SW_B, HOS_SW_X, HOS_SW_Y, HOS_SW_LS, HOS_SW_RS, HOS_SW_L, HOS_SW_R, HOS_SW_ZL, HOS_SW_ZR,
@@ -126,7 +126,7 @@ typedef struct MkwVkPointer {
 } MkwVkPointer;
 
 /* (longshot) one of the Insert menu's settings, for the control bridge (MkwVkRenderer setting): key is its line in
-   longshot_options.ini, name the row's, text how the menu shows the value */
+   inhale_options.ini, name the row's, text how the menu shows the value */
 typedef struct MkwVkSetting {
     char key[32], name[48], text[64], tab[16];
     int value, lo, hi, step;
@@ -240,7 +240,7 @@ typedef struct MkwVkHost {
        max, in order (characters and HOS_TEXT_KEY editing keys, repeats included; Ctrl+V and Shift+Insert paste): the count.
        host/display.c (WM_CHAR, WM_KEYDOWN) and host/posix/display_sdl.c (SDL's text input and key events) put them in */
     int (*take_text)(int focus, uint32_t *out, int max);
-    /* (version 23, longshot) the player's settings file, longshot_options.ini in the user folder (host/options_path.c): the
+    /* (version 23, longshot) the player's settings file, inhale_options.ini in the user folder (host/options_path.c): the
        Insert menu's (gpu/vk/vk_menu.cpp ini_path) and the switches its rows read before it loads. "" when none could be chosen:
        every row at its default, and nothing saved */
     const char *(*options_path)(void);
@@ -321,12 +321,12 @@ typedef struct MkwVkRenderer {
        (too many waiting) */
     int (*shot)(const char *path, int64_t after, void (*done)(void *ctx, int64_t present, int ok), void *ctx);
     /* the Insert menu's settings rows (shown on this PC; not the headings or the debug tools): the index-th, to list them (0:
-       past the last; an index is no name, rows come and go), and the one whose longshot_options.ini key is key set to value
+       past the last; an index is no name, rows come and go), and the one whose inhale_options.ini key is key set to value
        as the menu's Left and Right set it, kept in the options file, out the row after it (1 set, 0 no such row, -1 nothing
        to choose on this PC, -2 no step of a list row reaches value here, left as it was) */
     int (*setting)(int index, MkwVkSetting *out);
     int (*setting_set)(const char *key, int value, MkwVkSetting *out);
-    /* (version 21, longshot: 20 is the host's screen_size, which main added while this was 20 on its branch) the game gave a program its shaders (nvnProgramSetShaders, nvnProgramInitializeFromBuilder), on the
+    /* (version 21, inhale: 20 is the host's screen_size, which main added while this was 20 on its branch) the game gave a program its shaders (nvnProgramSetShaders, nvnProgramInitializeFromBuilder), on the
        game's thread, before any draw uses it: what the back end kept ready for it can be loaded now (gpu/vk/vk_programs.cpp).
        Its stages' code and control sections are in the game's memory at this call */
     void (*nvn_program_created)(const nvn_prog *p);

@@ -35,7 +35,7 @@ bool screen_size(uint32_t*, uint32_t*) { return false; }
 bool host_screen_size(uint32_t*, uint32_t*) { return false; }
 
 using DWORD = unsigned long;
-static const char *hos_options_file() { return "./longshot_options.ini"; }   // (host/options_path.c: the user folder's)
+static const char *hos_options_file() { return "./inhale_options.ini"; }   // (host/options_path.c: the user folder's)
 static char logged[256];
 static void hos_log(const char *format, ...) {
     va_list args;
@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
     for (int v = 0; v <= 3; v++) assert(hn_audio_output(v, -1) && hn_audio_output(v, 0) && !hn_audio_output(v, 1));
     if (strcmp(saved, "-")) {   /* (the lines as the menu's save writes them: the row's key, around others) */
         const Row row = {1, argv[1], &opts.audio_output};
-        FILE *f = fopen("longshot_options.ini", "w");
+        FILE *f = fopen("inhale_options.ini", "w");
         assert(f);
         fprintf(f, "output_res=1\nmicrophone=1\noptions_version=3\n");
         if (strcmp(saved, "missing")) fprintf(f, "%s=%s\n", ini_key(row), saved);
@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
 }
 """
 
-# (saved audio_output or "-" for no longshot_options.ini, HOS_AUDIO_CHANNELS or None, the default output's channels,
+# (saved audio_output or "-" for no inhale_options.ini, HOS_AUDIO_CHANNELS or None, the default output's channels,
 #  the speakers the game is told, whether the device was asked, what the log says)
 CASES = (
     ("-", None, 6, 6, 1, "the selected/default output has 6 channels"),
@@ -143,7 +143,7 @@ def main():
         source.write_text(FIXTURE.replace("HOST", host).replace("MENU", menu_part), encoding="utf-8")
         subprocess.run([args.cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I" + str(ROOT), str(source), "-o", str(exe)], check=True)
         for saved, env_channels, device, want, asked, log in CASES:
-            ini = work / "longshot_options.ini"
+            ini = work / "inhale_options.ini"
             if ini.exists():
                 ini.unlink()
             env = os.environ.copy()

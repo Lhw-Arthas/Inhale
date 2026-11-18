@@ -24,7 +24,7 @@ class CompilerFailureTests(unittest.TestCase):
                      and any(isinstance(t, ast.Name) and t.id in ('DEPFILE_DEPS', 'DEPFILE_PENDING') for t in node.targets)]
         self.assertEqual(len(constants), 2)
         functions[:0] = constants
-        with tempfile.TemporaryDirectory(prefix='longshot-compiler-failure-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='inhale-compiler-failure-') as temporary:
             folder = Path(temporary)
             compiler = folder / 'compiler.py'
             compiler.write_text('''import os, signal, sys

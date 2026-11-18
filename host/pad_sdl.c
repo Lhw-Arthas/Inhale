@@ -24,8 +24,8 @@
 #include "hos_motion.h"
 #include "steam_pads.h"
 #include "../gpu/vk/vk_api.h"   /* (HOS_PAD_*) */
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 
 void hos_host_thread_register_self(const char *name);   /* hos_prof.c */

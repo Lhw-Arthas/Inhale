@@ -1,10 +1,10 @@
-"""scripts/longshot_ctl.py, the control bridge's client, against a tiny fake game: a Python stand-in for the executable
+"""scripts/inhale_ctl.py, the control bridge's client, against a tiny fake game: a Python stand-in for the executable
 that serves the bridge's protocol on $HOS_CONTROL (docs/control.md) and writes down each request. The commands' requests
 and plain output, --json, exit codes (an error reply, a timeout, no game), watch, launch (which starts the stand-in as a
-game folder's longshot and waits for its socket), the mem commands, and complete OoT status/watch snapshots.
+game folder's inhale and waits for its socket), the mem commands, and complete OoT status/watch snapshots.
 Linux uses a Unix socket; Windows uses the named pipe.
 
-python -I -B tests/test_longshot_ctl.py [--source-root OTHER_CHECKOUT]
+python -I -B tests/test_inhale_ctl.py [--source-root OTHER_CHECKOUT]
 """
 import argparse
 import calendar
@@ -20,11 +20,11 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CTL = Path(os.environ.get("LONGSHOT_CTL_SOURCE", ROOT / "scripts" / "longshot_ctl.py"))
+CTL = Path(os.environ.get("INHALE_CTL_SOURCE", ROOT / "scripts" / "inhale_ctl.py"))
 
 
 def client_module():
-    spec = importlib.util.spec_from_file_location("longshot_ctl", CTL)
+    spec = importlib.util.spec_from_file_location("inhale_ctl", CTL)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m
@@ -266,7 +266,7 @@ class GamePaths(unittest.TestCase):
         m = client_module()
         with tempfile.TemporaryDirectory() as tmp:
             game = Path(tmp)
-            name = "longshot.exe" if WINDOWS else "longshot"
+            name = "inhale.exe" if WINDOWS else "inhale"
             (game / name).touch()
             self.assertEqual(m.game_exe(tmp), str(game / name))
             (game / "bin").mkdir()
@@ -284,14 +284,14 @@ class SourceSelection(unittest.TestCase):
             selected = root / "selected.py"
             selected.write_text("raise RuntimeError('selected environment client')\n", encoding="utf-8")
             (root / "scripts").mkdir()
-            (root / "scripts" / "longshot_ctl.py").write_text(
+            (root / "scripts" / "inhale_ctl.py").write_text(
                 "raise RuntimeError('selected checkout client')\n", encoding="utf-8")
             for args, marker in (([], "selected environment client"),
                                  (["--source-root", str(root)], "selected checkout client")):
                 with self.subTest(args=args):
                     result = subprocess.run([sys.executable, "-I", "-B", str(Path(__file__).resolve()),
                                              *args, "GamePaths"], capture_output=True, text=True, timeout=20,
-                                            env=dict(os.environ, LONGSHOT_CTL_SOURCE=str(selected)))
+                                            env=dict(os.environ, INHALE_CTL_SOURCE=str(selected)))
                     self.assertEqual(result.returncode, 1)
                     self.assertIn("RuntimeError: " + marker, result.stderr)
 
@@ -964,7 +964,7 @@ class RepoSaves(unittest.TestCase):
     def test_copy(self):
         before = self.tree(self.saves)
         dest = self.m.copy_repo_save("kokiri-start", str(self.root / "data"), repo=str(self.repo))
-        self.assertEqual(dest, str(self.root / "data" / "longshot" / "save" / self.m.SAVE_USER))
+        self.assertEqual(dest, str(self.root / "data" / "inhale" / "save" / self.m.SAVE_USER))
         self.assertEqual(self.tree(dest), [(os.path.join("slot_00", "caption.sav"), b"caption kokiri-start"),
                                            (os.path.join("slot_00", "progress.sav"), b"progress kokiri-start")])
         self.assertEqual(self.tree(self.saves), before)   # (only read)
@@ -993,7 +993,7 @@ class RepoSaves(unittest.TestCase):
         cases = [
             ("extra in slot", lambda: (save / "slot_00" / "x.bin").write_bytes(b"x"), "not expected: x.bin"),
             ("second slot", lambda: shutil.copytree(save / "slot_00", save / "slot_01"), "not expected: slot_01"),
-            ("settings", lambda: (save / "longshot_options.ini").write_text("x"), "not expected: longshot_options.ini"),
+            ("settings", lambda: (save / "inhale_options.ini").write_text("x"), "not expected: inhale_options.ini"),
             ("account in slot", lambda: (save / "slot_00" / "account.sav").write_bytes(b"x"), "not expected: account.sav"),
             ("option in save", lambda: (save / "option.sav").write_bytes(b"x"), "not expected: option.sav"),
             ("old profile", old_profile, "_profile is not shipped any more"),
@@ -1040,7 +1040,7 @@ class RepoSaves(unittest.TestCase):
         self.assertIn("no game at", r.stderr)
 
 
-class LongshotCtl(unittest.TestCase):
+class InhaleCtl(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix="ctl-", dir=None if WINDOWS or not os.path.isdir("/tmp") else "/tmp")
@@ -1053,12 +1053,12 @@ class LongshotCtl(unittest.TestCase):
             f.write(b"\x04\x03\x02\x01" + bytes(1392) + b"\xff\xd8\xff\xd9")
         os.environ["FAKE_SAVES"] = cls.saves
         if WINDOWS:
-            # (launch starts a game folder's longshot.exe, which a script cannot stand in for: the stand-in is started
+            # (launch starts a game folder's inhale.exe, which a script cannot stand in for: the stand-in is started
             # here, on a pipe of its own; launch is tested on Linux)
             fake = os.path.join(cls.dir, "fake.py")
             with open(fake, "w") as f:
                 f.write(FAKE)
-            cls.sock = "longshot-control-test-%d" % os.getpid()
+            cls.sock = "inhale-control-test-%d" % os.getpid()
             cls.proc = subprocess.Popen([sys.executable, "-I", fake], env=dict(os.environ, HOS_CONTROL=cls.sock))
             cls.info = {"pid": cls.proc.pid}
             for _ in range(200):   # (until it answers)
@@ -1068,7 +1068,7 @@ class LongshotCtl(unittest.TestCase):
         else:
             cls.game = os.path.join(cls.dir, "game")
             os.mkdir(cls.game)
-            exe = os.path.join(cls.game, "longshot")
+            exe = os.path.join(cls.game, "inhale")
             with open(exe, "w") as f:
                 f.write("#!%s -I\n%s" % (sys.executable, FAKE))
             os.chmod(exe, 0o755)
@@ -1096,7 +1096,7 @@ class LongshotCtl(unittest.TestCase):
             reqs = [json.loads(line) for line in f]
         return [r for r in reqs if r["cmd"] == cmd][-1]
 
-    @unittest.skipIf(WINDOWS, "launch starts a game folder's longshot.exe")
+    @unittest.skipIf(WINDOWS, "launch starts a game folder's inhale.exe")
     def test_launch(self):
         self.assertLess(len(os.fsencode(self.sock)), 108)
         self.assertEqual(os.stat(os.path.dirname(self.sock)).st_mode & 0o777, 0o700)
@@ -1161,7 +1161,7 @@ class LongshotCtl(unittest.TestCase):
         # relaunch ended in a traceback instead of trying again)
         sys.path.insert(0, str(CTL.parent))
         try:
-            import longshot_ctl
+            import inhale_ctl
         finally:
             sys.path.pop(0)
         tries = []
@@ -1185,12 +1185,12 @@ class LongshotCtl(unittest.TestCase):
                     raise OSError(22, "Invalid argument")
                 return {"ok": True, "uptime": 0.0}
 
-        real = longshot_ctl.Bridge
-        longshot_ctl.Bridge = Again
+        real = inhale_ctl.Bridge
+        inhale_ctl.Bridge = Again
         try:
-            st = longshot_ctl.relaunch(Old(), 10)
+            st = inhale_ctl.relaunch(Old(), 10)
         finally:
-            longshot_ctl.Bridge = real
+            inhale_ctl.Bridge = real
         self.assertTrue(st["ok"])
         self.assertEqual(tries, ["status", "status"])
 
@@ -1416,7 +1416,7 @@ class LongshotCtl(unittest.TestCase):
                 f.write(n)
         before = sorted((dp, fn, os.stat(os.path.join(dp, fn)).st_mtime_ns) for dp, _, fns in os.walk(src) for fn in fns)
         dest = m.copy_save(src, os.path.join(self.dir, "d-all"))
-        self.assertTrue(dest.endswith(os.path.join("longshot", "save", m.SAVE_USER)))
+        self.assertTrue(dest.endswith(os.path.join("inhale", "save", m.SAVE_USER)))
         self.assertEqual(sorted(os.listdir(dest)), ["account.sav", "option.sav", "slot_00", "slot_03"])
         for slot in ("03", "slot_03", "3"):
             dest = m.copy_save(src, os.path.join(self.dir, "d-" + slot), slot)
@@ -1457,7 +1457,7 @@ class LongshotCtl(unittest.TestCase):
             r = ctl("--json", "launch", self.game, "--run", run, "--headless", "--save", src, "--slot", "03",
                     "--timeout", "20", check=0)
             info = json.loads(r.stdout)
-            got = os.path.join(run, "data", "longshot", "save", m.SAVE_USER)
+            got = os.path.join(run, "data", "inhale", "save", m.SAVE_USER)
             self.assertEqual(sorted(os.listdir(got)), ["account.sav", "option.sav", "slot_03"])
             with open(self.log) as f:
                 starts = [json.loads(line) for line in f if '"_start"' in line]
@@ -1507,5 +1507,5 @@ if __name__ == "__main__":
     parser.add_argument("--source-root", type=Path)
     options, remaining = parser.parse_known_args()
     if options.source_root is not None:
-        CTL = options.source_root.resolve() / "scripts" / "longshot_ctl.py"
+        CTL = options.source_root.resolve() / "scripts" / "inhale_ctl.py"
     unittest.main(argv=[sys.argv[0]] + remaining)

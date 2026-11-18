@@ -5,7 +5,7 @@ and the lifter's header helpers that need no inliner to be inlined.
      - switch unset: an ordinary chunk (small functions) and one with a function split_giants cuts (300 KB: its pieces too)
        get LIGHT_FLAGS after the lifted chunks' flags; a giant (1024 KB or more), a hot piece (code_hot*) and a file outside
        gen get the flags they get with the switch off;
-     - LONGSHOT_SPLIT_GIANTS=0: the same chunks light; LONGSHOT_LIGHT_PASSES_KB lowers the bar;
+     - INHALE_SPLIT_GIANTS=0: the same chunks light; LONGSHOT_LIGHT_PASSES_KB lowers the bar;
      - LONGSHOT_LIGHT_PASSES=0: every source gets the flags it got before the switch existed (hot_fl, split_fl, fl);
      - the light flags are in the object key (object_key), so an object store never hands a light object to a full build or
        the other way round; a kept lifted file (not on disk) takes the flags its list recorded;
@@ -34,7 +34,7 @@ import a64_lift  # noqa: E402
 import fastfp  # noqa: E402
 
 PREAMBLE = '#include "a64.h"\nvoid f_90000000(Ctx *A64_NOESC);\n'
-SWITCHES = ("LONGSHOT_LIGHT_PASSES", "LONGSHOT_LIGHT_PASSES_KB", "LONGSHOT_SPLIT_GIANTS")
+SWITCHES = ("LONGSHOT_LIGHT_PASSES", "LONGSHOT_LIGHT_PASSES_KB", "INHALE_SPLIT_GIANTS")
 V_HELPERS = ("a64_v_ult", "a64_v_abs", "a64_v_big", "a64_v_zero", "a64_v_nonfin", "a64_v_subn", "a64_v_ovf")
 
 
@@ -74,7 +74,7 @@ def build_checks():
     check({"inline", "function-attrs", "ipsccp", "globalopt"} <= set(disabled), "the light flags turn off the module passes")
     check(light[-1] == "-opt-bisect-verbose=false", "the light flags keep -opt-disable quiet")
 
-    with tempfile.TemporaryDirectory(prefix="longshot-light-") as d:
+    with tempfile.TemporaryDirectory(prefix="inhale-light-") as d:
         gen, rt = os.path.join(d, "gen"), os.path.join(d, "rt")
         os.makedirs(gen)
         os.makedirs(rt)
@@ -96,7 +96,7 @@ def build_checks():
         srcs += [other, plain]
 
         got, fl, split_fl, hot_fl, bar = flags_of({}, srcs, gen)
-        check(split_fl != fl, "the giants are split by default (LONGSHOT_SPLIT_GIANTS unset)")
+        check(split_fl != fl, "the giants are split by default (INHALE_SPLIT_GIANTS unset)")
         check(bar == 1024, "switch unset: on, under 1024 KB (%r)" % bar)
         check(got["code_000.c"] == split_fl + light, "switch unset: an ordinary lifted chunk compiles light (%r)" % got["code_000.c"])
         check(got["code_001.c"] == split_fl + light, "a chunk with a function split_giants cuts compiles light, its pieces too")
@@ -104,12 +104,12 @@ def build_checks():
         check(got["code_hot_0.c"] == hot_fl, "a hot piece keeps its flags")
         check(got["code_runtime.c"] == fl and got["hos_main.c"] == fl, "a file outside gen keeps its flags")
 
-        got, fl, split_fl, hot_fl, bar = flags_of({"LONGSHOT_SPLIT_GIANTS": "0"}, srcs, gen)
-        check(split_fl == fl and bar == 1024, "LONGSHOT_SPLIT_GIANTS=0: the bar is LONGSHOT_LIGHT_PASSES_KB's 1024 (%r)" % bar)
+        got, fl, split_fl, hot_fl, bar = flags_of({"INHALE_SPLIT_GIANTS": "0"}, srcs, gen)
+        check(split_fl == fl and bar == 1024, "INHALE_SPLIT_GIANTS=0: the bar is LONGSHOT_LIGHT_PASSES_KB's 1024 (%r)" % bar)
         check(got["code_000.c"] == fl + light and got["code_001.c"] == fl + light,
               "giants not split: a chunk whose functions are under 1024 KB compiles light")
         check(got["code_002.c"] == fl and got["code_hot_0.c"] == hot_fl, "giants not split: the giant and the hot piece keep theirs")
-        got, fl, *_ = flags_of({"LONGSHOT_SPLIT_GIANTS": "0", "LONGSHOT_LIGHT_PASSES_KB": "200"}, srcs, gen)
+        got, fl, *_ = flags_of({"INHALE_SPLIT_GIANTS": "0", "LONGSHOT_LIGHT_PASSES_KB": "200"}, srcs, gen)
         check(got["code_000.c"] == fl + light and got["code_001.c"] == fl, "LONGSHOT_LIGHT_PASSES_KB=200 keeps the 300 KB function's chunk full")
 
         for off in ("0", "off"):

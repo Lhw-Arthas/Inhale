@@ -43,7 +43,7 @@ size_t run(size_t n, unsigned threads, Work&& work, Stop&& stop, Tick&& tick) {
 }
 
 
-/// Whether a warm may leave the marker that says every noted pipeline is in the pipeline cache (longshot_pipelines.bin.built),
+/// Whether a warm may leave the marker that says every noted pipeline is in the pipeline cache (inhale_pipelines.bin.built),
 /// after which a start loads at create calls and builds nothing itself. Only a warm that got to its end, and only in a process
 /// that plays: on NVIDIA the cache a --prepare-shaders process writes does not answer the asks of the play process that
 /// follows (0 of 32 of a sample; 3,720 of 3,880 pipelines "in no cache" in the first session, compiled in play with draws left

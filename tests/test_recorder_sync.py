@@ -50,8 +50,8 @@ import subprocess
 import sys
 import tempfile
 
-# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/longshot_env.h)
-ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "longshot_env.h")
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/inhale_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "inhale_env.h")
 
 RUN_ALL_ARGS = ["--cxx", "{cxx}", "--headers", "{vulkan_headers}"]
 

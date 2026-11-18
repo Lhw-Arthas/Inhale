@@ -2,7 +2,7 @@
    with Microsoft's compiler and name a few things of its C runtime that the MinGW one does not have: the stack-buffer
    check (/GS), the float marker and the range-check report. Here they are, as the MSVC runtime defines them. The MSVC build
    compiles nothing of this file. NVIDIA's NGX library (nvsdk_ngx_s.lib, a build with NVIDIA DLSS) asks for the same: this file
-   is linked into longshot_vk.dll too then, with gpu/vk/vk_ngx_msvc_rt.cpp for its C++ parts. */
+   is linked into inhale_vk.dll too then, with gpu/vk/vk_ngx_msvc_rt.cpp for its C++ parts. */
 #if defined(__MINGW32__)
 #include <windows.h>
 #include <stdint.h>

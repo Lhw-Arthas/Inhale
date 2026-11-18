@@ -18,7 +18,7 @@ def main():
         env = dict(os.environ)
         env["PATH"] = d                   # (no clang on PATH)
         env["EMSDK"] = d                  # (an emsdk folder that holds none)
-        env["LONGSHOT_MSVC"] = "1"        # (the Visual Studio route: no tools/llvm-mingw either)
+        env["INHALE_MSVC"] = "1"        # (the Visual Studio route: no tools/llvm-mingw either)
         env.pop("LONGSHOT_MINGW", None)
         r = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "nx2" / "make_game.py"), "--check", "--nup",
                             str(ROOT / "no-such-game.nup"), "--work", str(Path(d) / "work")],

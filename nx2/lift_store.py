@@ -1,4 +1,4 @@
-"""Translations kept for every work folder on this PC (LONGSHOT_LIFT_STORE=<folder>; off when unset, empty or 0).
+"""Translations kept for every work folder on this PC (INHALE_LIFT_STORE=<folder>; off when unset, empty or 0).
 
 The lift (nx2/lift.py and split_hot.py, make_game.py translate) writes the same C for the same game, translator, hot list,
 chunk boundaries, kept hot pieces, settings and Python, whatever the work folder: make_game.py lift_key covers all of that,
@@ -11,13 +11,13 @@ lifted the game itself. A work folder whose share key finds a snapshot takes it 
 Every file is copied, never hard-linked: the later steps write in the lifted C's folder. On a file system with copy-on-write
 (btrfs, XFS: Linux's FICLONE) the copy is a clone and shares the blocks. A snapshot is complete or absent: it is written under
 a temporary name with its list of files and sizes last, then renamed in, and a restore checks every file against that list
-first. The newest LONGSHOT_LIFT_STORE_KEEP (3) are kept, by last use; one used in the last hour is never taken.
+first. The newest INHALE_LIFT_STORE_KEEP (3) are kept, by last use; one used in the last hour is never taken.
 """
 import os
 import shutil
 import time
 
-STORE_ENV = "LONGSHOT_LIFT_STORE"
+STORE_ENV = "INHALE_LIFT_STORE"
 DIRS = (("sa", "gen"), ("sa", "image"))
 FILES = (("image", "chunks.txt"), ("image", "hot_pieces.txt"))
 SKIP = (".lift_key", "lifted_objects.txt", "lifted_objects.txt.new")   # (make_game.py LIFT_KEY and build.py's KEPT_LIST: not the lift's)
@@ -174,7 +174,7 @@ def prune(store, keep=None, now=None):
         return 0
     if keep is None:
         try:
-            keep = max(1, int(os.environ.get("LONGSHOT_LIFT_STORE_KEEP", "") or KEEP))
+            keep = max(1, int(os.environ.get("INHALE_LIFT_STORE_KEEP", "") or KEEP))
         except ValueError:
             keep = KEEP
     now = time.time() if now is None else now

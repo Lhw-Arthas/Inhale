@@ -1,5 +1,5 @@
 """Two switches left over from past measurements are gone, their default kept for everyone: RX_SOFT_WRITE_WATCH (=0 built
-with Windows' write watch instead of the soft one, rt/a64.h A64_MARK) and LONGSHOT_OCCLUSION_OFF (=1 made the game skip
+with Windows' write watch instead of the soft one, rt/a64.h A64_MARK) and INHALE_OCCLUSION_OFF (=1 made the game skip
 its occlusion queries, nx2/oot_occlusion.py). Nothing reads either any more: the soft write watch is always built in, the
 guest window is never write-watched, and the game makes its occlusion queries."""
 import os
@@ -28,7 +28,7 @@ class SwitchesRemoved(unittest.TestCase):
     def test_neither_switch_is_read(self):
         for path in sources():
             text = path.read_text(encoding="utf-8", errors="replace")
-            for switch in ("RX_SOFT_WRITE_WATCH", "LONGSHOT_OCCLUSION_OFF", "hos_occlusion_off"):
+            for switch in ("RX_SOFT_WRITE_WATCH", "INHALE_OCCLUSION_OFF", "hos_occlusion_off"):
                 self.assertNotIn(switch, text, "%s: %s" % (path.relative_to(ROOT), switch))
 
     def test_the_defaults_stay(self):

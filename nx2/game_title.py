@@ -1,6 +1,6 @@
 """The game's own name and icon, read from its .nup, for what the build makes of them: the window's title and icon, and on
 Windows the exe's icon and the name Windows shows for it (Task Manager, the taskbar, its Properties). Without them the game
-was "Longshot" with no icon.
+was "Inhale" with no icon.
 
     python -I nx2/game_title.py <file.nup>          the name and the icon's size, nothing written
 
@@ -8,8 +8,8 @@ A .nup title's metadata (nx2/nup.py, at +0x20 of its record) is a list of record
 1 the NPDM, 3 the icon (a JPEG), 4 the version ("1.1.1"), 5 the name, 8 a short name (seen on Ocarina of Time 1.1.1).
 
 What is read is kept in the game folder, so an update (built from the folder, with no .nup) makes them again, and the game
-reads the title from there: longshot_title.txt (its first line, the window's title: host/hos_paths.h hos_game_title) and
-.longshot_icon.jpg (the icon as the game has it). Both are the player's own game's and stay in the folder.
+reads the title from there: inhale_title.txt (its first line, the window's title: host/hos_paths.h hos_game_title) and
+.inhale_icon.jpg (the icon as the game has it). Both are the player's own game's and stay in the folder.
 """
 import os
 import struct
@@ -18,10 +18,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # (python -I leaves the script folder off)
 import nup as _nup  # noqa: E402
 
-TITLE_FILE = "longshot_title.txt"
-ICON_FILE = ".longshot_icon.jpg"
-RES_FILE = "longshot_game.res"   # (in the work folder: linked into the exe instead of a developer's longshot.res, nx2/build.py)
-SUFFIX = " (Longshot)"
+TITLE_FILE = "inhale_title.txt"
+ICON_FILE = ".inhale_icon.jpg"
+RES_FILE = "inhale_game.res"   # (in the work folder: linked into the exe instead of a developer's inhale.res, nx2/build.py)
+SUFFIX = " (Inhale)"
 ICON, NAME = 3, 5
 # (the names in a .nup are fit for a file name: its dumper drops what Windows refuses in one, so the colon of the name the game
 # itself shows is gone. These are the names as the games write them, by title id)
@@ -121,7 +121,7 @@ def picture(icon):
 
 def write_res(out, path):
     """(Windows) the exe's icon and the name Windows shows for it, at path; True when written. Removed when the folder has
-    neither, so a developer's own longshot.res (nx2/make_icon.py) is linked instead"""
+    neither, so a developer's own inhale.res (nx2/make_icon.py) is linked instead"""
     import make_icon
     title, icon = kept(out)
     im = picture(icon)
@@ -129,8 +129,8 @@ def write_res(out, path):
         if os.path.exists(path):
             os.remove(path)
         return False
-    strings = {"FileDescription": title, "ProductName": title, "InternalName": "longshot",
-               "OriginalFilename": "longshot.exe"} if title else None
+    strings = {"FileDescription": title, "ProductName": title, "InternalName": "inhale",
+               "OriginalFilename": "inhale.exe"} if title else None
     write_if_changed(path, make_icon.res_of(make_icon.images_of(im) if im is not None else (), strings))
     return True
 

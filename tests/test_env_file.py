@@ -1,7 +1,7 @@
-"""HOS_ENV_FILE names the switches file a run reads instead of longshot_env.txt beside the game.
+"""HOS_ENV_FILE names the switches file a run reads instead of inhale_env.txt beside the game.
 
-A scripted or A/B test run brings its own switches this way, and the player's longshot_env.txt is neither read nor
-changed. Unset or empty, the game reads longshot_env.txt as before. A named file that does not exist sets nothing: the
+A scripted or A/B test run brings its own switches this way, and the player's inhale_env.txt is neither read nor
+changed. Unset or empty, the game reads inhale_env.txt as before. A named file that does not exist sets nothing: the
 run does not fall back to the player's switches. A switch already in the environment the game was started with goes over
 the file's line for it. HOS_CONTROL_PEER_SID, which lets another account into the control bridge's pipe, is refused from
 the player's file and still read from the environment.
@@ -24,26 +24,26 @@ def main():
     p.add_argument("--cc", default="gcc")
     a = p.parse_args()
     main_c = (ROOT / "host" / "hos_main.c").read_text(encoding="utf-8")
-    fn = block(main_c, "static int env_line_allowed(") + "\n" + block(main_c, "static void load_longshot_env(void) {")
+    fn = block(main_c, "static int env_line_allowed(") + "\n" + block(main_c, "static void load_inhale_env(void) {")
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         game = tmp / "game"
         game.mkdir()
         # (the player's file sets the game's switches only: not the system's variables, HOS_ENV_FILE or paths)
-        (game / "longshot_env.txt").write_text(
+        (game / "inhale_env.txt").write_text(
             "HOS_T_BESIDE=1\nHOS_T_SHARED=beside\nVK_ADD_LAYER_PATH=/x\nLD_PRELOAD=/x.so\nPATH=C:\\x\nSDL_DYNAMIC_API=/x.so\n"
             "HOS_ENV_FILE=other.txt\nHOS_SAMPLE_FILE=/home/x/.bashrc\nRX_VK_DUMP_DIR=C:\\Users\\x\nRX_VK_SKIP_CODE=2c56,ab\n"
             "RX_VK_DLSS_DIR=/opt/ngx\nHOS_T_HOME=~\nSDL_VULKAN_LIBRARY=x.dll\nSDL_VIDEO_EGL_DRIVER=x.so\n"
-            "SDL_AUDIODRIVER=pulseaudio\nHOS_T_UP=..\nHOS_SAMPLE_FILE=longshot_vk.dll\nRX_VK_FRAME_LOG=x.txt\n"
+            "SDL_AUDIODRIVER=pulseaudio\nHOS_T_UP=..\nHOS_SAMPLE_FILE=inhale_vk.dll\nRX_VK_FRAME_LOG=x.txt\n"
             "RX_VK_DUMP_DIR=dumps\nHOS_PRESENT_TRACE=t.txt\nRX_VK_DLSS_DIR=\\\\server\\share\n"
-            "HOS_AUDIO_DUMP=image.bin\nRX_VK_HANG_DUMP=longshot_options.ini\nRX_VK_SHOTS=user\n"
+            "HOS_AUDIO_DUMP=image.bin\nRX_VK_HANG_DUMP=inhale_options.ini\nRX_VK_SHOTS=user\n"
             "HOS_INPUT_SCRIPT=1:A,2:A\nRX_VK_MENU_SCRIPT=1:INS\nHOS_CONTROL_PEER_SID=S-1-5-21-1-2-3-1001\n", encoding="utf-8")
         (tmp / "test_env.txt").write_text("# a test run's own switches\nHOS_T_OTHER=1\nHOS_T_SHARED=other\n"
                                           "VK_T_LAYER=/y\n", encoding="utf-8")
         (tmp / "precedence.txt").write_text("HOS_T_LAUNCH=file\nHOS_T_TWICE=first\nHOS_T_FRESH=1\nHOS_T_TWICE=second\n",
                                             encoding="utf-8")
-        exe = str(game / "longshot").replace("\\", "\\\\")
+        exe = str(game / "inhale").replace("\\", "\\\\")
         fixture = r'''#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,7 +72,7 @@ static void clear(void) { unsetenv("HOS_T_BESIDE"); unsetenv("HOS_T_OTHER"); uns
 int main(int argc, char **argv) {
     (void)argc;
     unsetenv("HOS_ENV_FILE");                      /* out of the box: the file beside the game */
-    load_longshot_env();
+    load_inhale_env();
     CHECK(is("HOS_T_BESIDE", "1") && is("HOS_T_SHARED", "beside") && is("HOS_T_OTHER", NULL));
     CHECK(is("VK_ADD_LAYER_PATH", NULL) && is("SDL_DYNAMIC_API", NULL) && is("HOS_ENV_FILE", NULL));
     CHECK(is("HOS_SAMPLE_FILE", NULL) && is("RX_VK_DUMP_DIR", NULL) && is("HOS_T_HOME", NULL));
@@ -88,17 +88,17 @@ int main(int argc, char **argv) {
 
     clear();
     setenv("HOS_ENV_FILE", "", 1);                 /* empty: as if unset */
-    load_longshot_env();
+    load_inhale_env();
     CHECK(is("HOS_T_BESIDE", "1") && is("HOS_T_OTHER", NULL));
 
     clear();
     setenv("HOS_ENV_FILE", argv[1], 1);            /* a test run's own file, and only that one */
-    load_longshot_env();
+    load_inhale_env();
     CHECK(is("HOS_T_OTHER", "1") && is("HOS_T_SHARED", "other") && is("HOS_T_BESIDE", NULL) && is("VK_T_LAYER", "/y"));
 
     clear();
     setenv("HOS_ENV_FILE", argv[2], 1);            /* a file that is not there: nothing, not the player's switches */
-    load_longshot_env();
+    load_inhale_env();
     CHECK(is("HOS_T_BESIDE", NULL) && is("HOS_T_OTHER", NULL) && is("HOS_T_SHARED", NULL));
 
     /* the environment the game was started with goes first: a switch set for one launch beats the file's line; the file's
@@ -106,18 +106,18 @@ int main(int argc, char **argv) {
     clear();
     setenv("HOS_T_LAUNCH", "launch", 1);
     setenv("HOS_ENV_FILE", argv[3], 1);
-    load_longshot_env();
+    load_inhale_env();
     CHECK(is("HOS_T_LAUNCH", "launch") && is("HOS_T_TWICE", "second") && is("HOS_T_FRESH", "1"));
-    load_longshot_env();                           /* (read again in the same run: the same) */
+    load_inhale_env();                           /* (read again in the same run: the same) */
     CHECK(is("HOS_T_LAUNCH", "launch") && is("HOS_T_TWICE", "second") && is("HOS_T_FRESH", "1"));
     /* HOS_CONTROL_PEER_SID from the environment the game was started with (the Test Farm's agent sets it there): kept,
        whatever the player's file says */
     clear();
     unsetenv("HOS_ENV_FILE");
     setenv("HOS_CONTROL_PEER_SID", "S-1-5-21-7-8-9-1002", 1);
-    load_longshot_env();
+    load_inhale_env();
     CHECK(is("HOS_CONTROL_PEER_SID", "S-1-5-21-7-8-9-1002") && is("HOS_T_BESIDE", "1"));
-    printf("PASS: HOS_ENV_FILE replaces longshot_env.txt; unset or empty reads it as before; the player's file sets only the game's switches, never HOS_CONTROL_PEER_SID; the environment goes over the file\n");
+    printf("PASS: HOS_ENV_FILE replaces inhale_env.txt; unset or empty reads it as before; the player's file sets only the game's switches, never HOS_CONTROL_PEER_SID; the environment goes over the file\n");
     return 0;
 }
 '''
@@ -126,10 +126,10 @@ int main(int argc, char **argv) {
         out = tmp / "fixture"
         subprocess.run([a.cc, "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Werror", str(src), "-o", str(out)],
                        check=True)
-        before = (game / "longshot_env.txt").read_text(encoding="utf-8")
+        before = (game / "inhale_env.txt").read_text(encoding="utf-8")
         subprocess.run([str(out), str(tmp / "test_env.txt"), str(tmp / "missing.txt"), str(tmp / "precedence.txt")], check=True)
-        if (game / "longshot_env.txt").read_text(encoding="utf-8") != before:
-            raise SystemExit("the player's longshot_env.txt was changed")
+        if (game / "inhale_env.txt").read_text(encoding="utf-8") != before:
+            raise SystemExit("the player's inhale_env.txt was changed")
 
 
 if __name__ == "__main__":

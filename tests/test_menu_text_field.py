@@ -1,5 +1,5 @@
 """The Insert menu's text fields: a row whose value is typed (the first one is Custom output size, the Output resolution's
-size of the player's own, which before could only be set in longshot_options.ini).
+size of the player's own, which before could only be set in inhale_options.ini).
 
 The menu's own functions are cut out of gpu/vk/vk_menu.cpp by their text and driven with key and text events as the host
 gives them (MkwVkHost.take_text): typing, the caret's keys, Backspace and Delete, the length limit, printable ASCII with

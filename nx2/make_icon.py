@@ -100,10 +100,10 @@ def main():
     src = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "work")
     images = images_of(Image.open(src))
-    with open(os.path.join(out, "longshot.ico"), "wb") as f:
+    with open(os.path.join(out, "inhale.ico"), "wb") as f:
         f.write(ico_of(images))
     res = res_of(images)
-    with open(os.path.join(out, "longshot.res"), "wb") as f:
+    with open(os.path.join(out, "inhale.res"), "wb") as f:
         f.write(res)
     print("make_icon: %d sizes, %d KB" % (len(images), len(res) >> 10))
 

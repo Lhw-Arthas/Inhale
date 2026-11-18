@@ -17,7 +17,7 @@ from pathlib import Path
 RUN_ALL_ARGS = ["--cc", "gcc"]
 
 ROOT = Path(__file__).resolve().parents[1]
-ENV_ON_H = str(ROOT / "gpu" / "vk" / "compat" / "longshot_env.h")
+ENV_ON_H = str(ROOT / "gpu" / "vk" / "compat" / "inhale_env.h")
 
 
 def block(text, marker):
@@ -145,7 +145,7 @@ def main():
         block(hid, "static void pads_read("),
         "static void game_pads(uint64_t *buttons, int32_t stick[4]) " + pads,
         MAIN))
-    with tempfile.TemporaryDirectory(prefix="longshot-pads-after-menu-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="inhale-pads-after-menu-") as tmp:
         src = Path(tmp) / "t.c"
         src.write_text(code, encoding="utf-8")
         exe = Path(tmp) / "t.exe"

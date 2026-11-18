@@ -1,7 +1,7 @@
 """A Debug row read before the menu loads (gpu/vk/vk_draw.cpp menu_env_on): Descriptor reuse on by default from options_version 4.
 
 The real menu_env_on and desc_reuse_level from gpu/vk/vk_draw.cpp are compiled over a stub game path (the fixture's
-folder); each case writes a longshot_options.ini (or none) and checks the level the game takes for descriptor reuse
+folder); each case writes a inhale_options.ini (or none) and checks the level the game takes for descriptor reuse
 (2 the row's On, on by default since options_version 4: an older file wrote its 0 as the off default it then was; 1 its
 Off; 0 never) and sampler_cache (off by default, no version rule):
 
@@ -32,9 +32,9 @@ FIXTURE = r"""
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include "longshot_env.h"
+#include "inhale_env.h"
 using DWORD = unsigned long;
-static std::string options_path() { return "./longshot_options.ini"; }   // (vk_paths.h: the user folder's)
+static std::string options_path() { return "./inhale_options.ini"; }   // (vk_paths.h: the user folder's)
 static void logf(const char*, ...) {}
 BODY
 LEVEL
@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
 }
 """
 
-# (longshot_options.ini's text or None for no file, RX_VK_DESC_REUSE or None, descriptor reuse level, sampler cache)
+# (inhale_options.ini's text or None for no file, RX_VK_DESC_REUSE or None, descriptor reuse level, sampler cache)
 CASES = (
     (None, None, 2, 0),
     ("output_res=1\noptions_version=4\n", None, 2, 0),
@@ -95,7 +95,7 @@ def main():
         subprocess.run([args.cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-D_CRT_SECURE_NO_WARNINGS",
                         "-I", str(ROOT / "gpu/vk/compat"), str(source), "-o", str(exe)], check=True)
         for text, env_value, reuse, sampler in CASES:
-            ini = work / "longshot_options.ini"
+            ini = work / "inhale_options.ini"
             if ini.exists():
                 ini.unlink()
             if text is not None:

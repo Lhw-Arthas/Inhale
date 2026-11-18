@@ -22,7 +22,7 @@ struct VendorFacts {
 
 struct VendorFixes {
     // Out-of-bounds texel fetches answered with zero in the shader (emit_spirv_image.cpp EmitImageFetch). Vulkan leaves such a
-    // fetch undefined without robustImageAccess, which Longshot does not turn on; NVIDIA's GPUs (the Switch 2's among them)
+    // fetch undefined without robustImageAccess, which Inhale does not turn on; NVIDIA's GPUs (the Switch 2's among them)
     // return zero (measured on an RTX 3090: every texture type, past each edge, the last level and the last sample). The ground fog's shader reads depth at points projected off screen near the edges, and on AMD (RX 9070) those
     // pixels took the other branch: a pale stepped box at the left, right and top edges. Every GPU but NVIDIA's. RX_VK_FETCH_BOUNDS
     bool fetch_bounds = false;

@@ -92,7 +92,7 @@ bool program_cache_complete_unshared(Program& p, FILE* in);   // (program_cache_
 std::string program_cache_path();
 
 // (vk_shader.cpp's, for the cache)
-uint64_t translator_stamp();   // (the translator and what it is told: LONGSHOT_SHADER_STAMP, the GPU, the environment)
+uint64_t translator_stamp();   // (the translator and what it is told: INHALE_SHADER_STAMP, the GPU, the environment)
 // (program: whose module it is, kept out after a fault in the driver (driver_faults.h); 0: the program vk_shader.cpp translates.
 // busy: on Windows Intel the compiler's gate is only tried (IntelDriverGate): while another thread holds it, *busy is set and
 // no module is made)

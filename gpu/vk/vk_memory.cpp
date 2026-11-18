@@ -56,8 +56,8 @@
 #include "shaders/wb_diff_comp_spv.h"
 #include "shaders/late_fix_comp_spv.h"
 #include "vram_pressure.h"
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 #include "vk_draw.h"   // (extern_guarded_shader_module, extern_guarded_compute)
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
@@ -3620,7 +3620,7 @@ std::vector<WriteBack> writebacks;
 // has left is given back (sparse_release) once the GPU is past the work that may have reached it. Needs sparse residency
 // for buffers with strict non-resident access (reads 0, writes dropped), which nothing of the game's reaches. On by
 // default (the maintainer's call; measured on an RTX 4070 SUPER with 6 and 8 GB allowances and an RTX 3060 Ti 8 GB);
-// RX_VK_MIRROR_SPARSE=0 (or off, false, no: longshot_env.h's rule): whole mirrors, as before. Off on its own, and logged,
+// RX_VK_MIRROR_SPARSE=0 (or off, false, no: inhale_env.h's rule): whole mirrors, as before. Off on its own, and logged,
 // where the device lacks strict sparse residency for buffers ----
 bool mirror_sparse_on() {
     static const bool on = [] {
@@ -5023,7 +5023,7 @@ int trims_waiting = 0;   // (retired by a trim, their mirror still wanted by a p
 bool mirrors_trim() {   // (pools_mu held; true when one was trimmed: its parts are in mirror_wanted)
     static const bool on = [] {
         const char* v = getenv("RX_VK_MIRROR_TRIM");
-        return !v || !env_value_off(v);   // (on unless set off: the switches' one rule, longshot_env.h)
+        return !v || !env_value_off(v);   // (on unless set off: the switches' one rule, inhale_env.h)
     }();
     const uint64_t chunk = import_chunk();
     if (!on || !chunk || mirror_epoch % 64 || par_active.load(std::memory_order_relaxed)) return false;

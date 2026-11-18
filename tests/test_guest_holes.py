@@ -29,7 +29,7 @@ from pathlib import Path
 RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 
 ROOT = Path(__file__).resolve().parents[1]
-ENV_ON_H = ROOT / "gpu" / "vk" / "compat" / "longshot_env.h"
+ENV_ON_H = ROOT / "gpu" / "vk" / "compat" / "inhale_env.h"
 
 FIXTURE = r'''#include <algorithm>
 #include <atomic>

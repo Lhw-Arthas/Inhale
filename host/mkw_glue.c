@@ -4,8 +4,8 @@
 #include "hos.h"
 #include "hos_crash_record.h"
 #include "hos_paths.h"
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,11 +73,11 @@ int hos_commit(uint64_t addr, uint64_t size) {
 DWORD WINAPI hos_out_of_memory_box(LPVOID unused) {
     (void)unused;
     MessageBoxA(NULL,
-                "Windows has run out of memory (RAM plus the page file), so Longshot may close.\n\n"
+                "Windows has run out of memory (RAM plus the page file), so Inhale may close.\n\n"
                 "Close other programs, and in Windows' System > About > Advanced system settings > Performance > Advanced > Virtual "
                 "memory, choose \"Automatically manage paging file size\" (or give it at least 16 GB). A lower Quality preset in the "
                 "Insert menu also uses less memory.",
-                "Longshot: out of memory", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+                "Inhale: out of memory", MB_OK | MB_ICONWARNING | MB_TOPMOST);
     return 0;
 }
 

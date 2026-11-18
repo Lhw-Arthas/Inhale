@@ -59,8 +59,8 @@
 #endif
 
 #include "vk_loader.h"
-#if __has_include("longshot_env.h")
-#include "longshot_env.h"   // (env_on: the switches' one rule; the checks paste it ahead of this file themselves)
+#if __has_include("inhale_env.h")
+#include "inhale_env.h"   // (env_on: the switches' one rule; the checks paste it ahead of this file themselves)
 #endif
 
 namespace mkwvk {

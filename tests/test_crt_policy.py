@@ -44,7 +44,7 @@ int main() { std::puts("PASS: CRT mode/PQ bypass, virtual lines, small-output ca
     replay = (vk / "vk_replay.cpp").read_text(encoding="utf-8")
     scale = (vk / "vk_framegen.cpp").read_text(encoding="utf-8")
     present = replay[replay.index("void present_image("):replay.index("static bool present_out(", replay.index("void present_image(") + 1)]
-    assert present.index("framegen_scale(") < present.index("framegen_hdr(") < present.index("menu_record("), "CRT before HDR encode and Longshot overlays"
+    assert present.index("framegen_scale(") < present.index("framegen_hdr(") < present.index("menu_record("), "CRT before HDR encode and Inhale overlays"
     assert scale.count("present_image(j.set->frame[k].image, fg.w, fg.h, nullptr, j.set->frame[k].view);") == 2, "both generated-frame schedules use the output stage"
     assert "headless_fx = framegen_scale(" in replay and "headless_fx ? headless_fx : src" in replay, "headless frames and bridge shots carry output effects"
     assert "crt_policy::enabled(opts.crt_filter, pq)" in scale, "Native PQ never enters SDR CRT"

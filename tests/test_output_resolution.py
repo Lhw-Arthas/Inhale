@@ -32,8 +32,8 @@ def main():
 
 using DWORD = unsigned long;
 constexpr int MAX_PATH = 260;
-DWORD hos_game_path_a(char *path, int size) { return snprintf(path, size, "./longshot.exe"); }
-const char *hos_options_file() { return "./longshot_options.ini"; }   // (host/options_path.c: the user folder's)
+DWORD hos_game_path_a(char *path, int size) { return snprintf(path, size, "./inhale.exe"); }
+const char *hos_options_file() { return "./inhale_options.ini"; }   // (host/options_path.c: the user folder's)
 void hos_log(const char *, ...) {}
 // (the main screen at boot, for an options file with no output_res=: none known here, so the game's 2560x1440)
 constexpr int SM_CXSCREEN = 0, SM_CYSCREEN = 1;
@@ -363,7 +363,7 @@ int main() {
         source.write_text(fixture, encoding="utf-8")
         subprocess.run([args.cxx, "-std=c++17", "-I", str(ROOT), str(source), "-o", str(exe)], check=True)
         for saved, handheld, override, mode, w, h, label, pool, writes in cases:
-            (work / "longshot_options.ini").write_text(   # (saved None: no output_res= line, a new install)
+            (work / "inhale_options.ini").write_text(   # (saved None: no output_res= line, a new install)
                 ("" if saved is None else f"output_res={saved}\n") + f"handheld_profile={handheld}\n", encoding="ascii")
             env = os.environ.copy()
             for key in ("HOS_OUTPUT_RES", "HOS_HANDHELD", "HOS_RT_POOL_MB"):

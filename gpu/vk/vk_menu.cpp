@@ -59,8 +59,8 @@
 #include "threaded_rendering.h"   // (the Threaded rendering row's rule, and the one gate over its Auto)
 #include "vk_menu_i18n.h"
 #include "display_modes.h"   // (the Aspect ratio and Output resolution rows: the screen's sizes and their shapes)
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 #include "pipeline_share.h"   // (Save my pipeline list: the zip for issue 14)
 #ifndef _WIN32   // (Save my pipeline list: the desktop's programs. On Windows, shell32 and ole32 are loaded when it is used)
@@ -76,8 +76,8 @@
 extern char** environ;
 #endif
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
-#ifndef LONGSHOT_VERSION   // (nx2/build.py gives it to this file: nx2/version.py)
-#define LONGSHOT_VERSION "unknown"
+#ifndef INHALE_VERSION   // (nx2/build.py gives it to this file: nx2/version.py)
+#define INHALE_VERSION "unknown"
 #endif
 
 namespace mkwvk {
@@ -422,7 +422,7 @@ namespace dm = display_modes;
 // display modes and its own size, each side rounded down to 8, those the game accepts, with the common sizes of the shapes
 // they have, 1440p, 4K and 5K at 16:9 on a 1080p screen too, by width then height; HOS_DISPLAY_MODES=<w>x<h>,... for a run;
 // where they are not known, the sizes offered before: 1920x1080, 2560x1440, 3840x2160, 5120x1440, 5120x2880), then, last,
-// a size of the player's own from longshot_options.ini (output_res=<width>x<height>, host/nn_applet.c hos_output_parse: the
+// a size of the player's own from inhale_options.ini (output_res=<width>x<height>, host/nn_applet.c hos_output_parse: the
 // same rules) when it is none of them. The ini keeps the size, not the choice's number: output_res=3840x2160
 constexpr Out kGameOutput{2048, 1152};
 // (the sizes offered before the screen's: output_res=0 to 5 as saved then, and where the screen's are not known, by width then
@@ -919,7 +919,7 @@ size_t text_char_start(const std::string& text, size_t at) {
 }
 std::string mic_key(const char* name) {
     std::string k(name ? name : "");
-    for (char& c : k)   // (a device's name goes into longshot_options.ini: a line break in it would add lines there)
+    for (char& c : k)   // (a device's name goes into inhale_options.ini: a line break in it would add lines there)
         if ((unsigned char)c < 0x20 || c == 0x7f) c = ' ';
     if (k.size() > kMicNameKept) k = k.substr(0, text_char_start(k, kMicNameKept));
     // (and no spaces at the end: a saved line's end, made one above, and those an older build saved with the name)
@@ -1310,21 +1310,21 @@ const char* tx_hud_layout(int v) { return v ? "Middle 16:9" : "Screen's edges"; 
 const char* hn_hud_layout(int v, int variant) {
     static const char* const t[] = {"The hearts, the buttons and the minimap at the screen's own edges and corners.",
                                     "The HUD where it is at 16:9, in the middle (fitted to the width on a narrower screen)."};
-    static const char* const held = "Set by HOS_WIDE_UI (longshot_env.txt or the environment): remove that line to choose here.";
+    static const char* const held = "Set by HOS_WIDE_UI (inhale_env.txt or the environment): remove that line to choose here.";
     const char* env = getenv("HOS_WIDE_UI");
     if (variant < 0) return env && *env ? held : t[v ? 1 : 0];
     return variant == 0 ? t[v ? 1 : 0] : variant == 1 && env && *env ? held : nullptr;
 }
-/// (the ASTC as RGBA8 row's line while RX_VK_ASTC_RGBA8 holds it: the old readme's way, still in some longshot_env.txt files)
+/// (the ASTC as RGBA8 row's line while RX_VK_ASTC_RGBA8 holds it: the old readme's way, still in some inhale_env.txt files)
 const char* hn_astc_rgba8(int, int variant) {
-    return variant <= 0 && getenv("RX_VK_ASTC_RGBA8") ? "Set by RX_VK_ASTC_RGBA8 (longshot_env.txt or the environment): remove that line to choose here."
+    return variant <= 0 && getenv("RX_VK_ASTC_RGBA8") ? "Set by RX_VK_ASTC_RGBA8 (inhale_env.txt or the environment): remove that line to choose here."
                                        : nullptr;
 }
 const char* tx_intel_compiles(int v) { return v == 1 ? "Side by side" : v == 2 ? "One at a time" : "Auto"; }
 /// (the Intel shader compiles row's line: RX_VK_NO_INTEL_SERIAL holds it, as RX_VK_ASTC_RGBA8 the ASTC row)
 const char* hn_intel_compiles(int v, int variant) {
     if (variant <= 0 && getenv("RX_VK_NO_INTEL_SERIAL"))
-        return "Set by RX_VK_NO_INTEL_SERIAL (longshot_env.txt or the environment): remove that line to choose here.";
+        return "Set by RX_VK_NO_INTEL_SERIAL (inhale_env.txt or the environment): remove that line to choose here.";
     static const char* const t[] = {"Side by side on the Arc B-series (driver 101.9154 or newer), where it was measured; one at "
                                     "a time on other Intel graphics.",
                                     "Shaders are built faster on a CPU with many cores, but Intel's driver can crash the game "
@@ -1501,7 +1501,7 @@ Row rows[] = {
     {TAB_GRAPHICS, "Window scaling filter", &opts.upscale, 0, 2, 1, tx_filter,
      "How the finished picture is scaled to the window, when its size differs from the Output resolution.", hn_filter},
     {TAB_GRAPHICS, "CRT filter", &opts.crt_filter, 0, 4, 1, tx_crt_filter,
-     "Filters the finished picture, including the game's HUD, after window effects. Longshot's menu and overlays stay "
+     "Filters the finished picture, including the game's HUD, after window effects. Inhale's menu and overlays stay "
      "clean. Changes at once; quality presets leave it alone.", hn_crt_filter, false, true},
     {TAB_GRAPHICS, "CRT lines", &opts.crt_lines, 0, 2, 1, tx_crt_lines,
      "Virtual CRT raster, not Render resolution. Capped at half the destination height (at least one line); width follows "
@@ -1559,7 +1559,7 @@ Row rows[] = {
      "What the ocarina hears when the game's microphone option is on (playing an instrument, or humming).", hn_mic, false,
      true},
     {TAB_AUDIO, "Microphone gain", &opts.microphone_gain, 0, 400, 10, tx_percent,
-     "Adjust capture for Longshot only; system volume is unchanged. Use the microphone test to see live levels while adjusting gain. "
+     "Adjust capture for Inhale only; system volume is unchanged. Use the microphone test to see live levels while adjusting gain. "
      "Changes apply to new samples.", nullptr, false, true},
     {TAB_AUDIO, "Test microphone", nullptr, 0, 0, 0, nullptr,
      "Start or stop microphone capture. No playback or audio files. You can adjust Microphone gain while testing. "
@@ -1612,7 +1612,7 @@ Row rows[] = {
     {TAB_GAMEPLAY, "Menu language", &opts.menu_lang, 0, i18n::lang_count(), 1, tx_menu_lang, "The language of this menu.",
      hn_menu_lang, false, true},
     {TAB_GAMEPLAY, "Discord status", &opts.discord, 0, 1, 1, tx_onoff,
-     "Shows \"Playing Longshot\" and the time played in your Discord status, while Discord runs on this PC.", nullptr, false,
+     "Shows \"Playing Inhale\" and the time played in your Discord status, while Discord runs on this PC.", nullptr, false,
      true},
     {TAB_GAMEPLAY, "Skip opening", &opts.skip_opening, 0, 1, 1, tx_onoff,
      "Skips the new-game opening (the story movie and Navi waking Link) and leaves later cutscenes, the Deku Tree "
@@ -2100,7 +2100,7 @@ bool stops_at_ends(const Row& r) { return !strcmp(r.name, "Microphone gain") || 
 int rumble_step(int v) { return (std::min(std::max(v, 0), 150) + 12) / 25 * 25; }
 // (longshot) A run's environment over a saved row (RX_VK_PACE=1, HOS_OUTPUT_RES=...): for that run only. save() writes the
 // player's own value while the row still holds the environment's; once the player changes the row, theirs is kept. (These
-// were copied into the row and the next save wrote them into longshot_options.ini, so a test run's switch stayed for good)
+// were copied into the row and the next save wrote them into inhale_options.ini, so a test run's switch stayed for good)
 struct EnvOverride {
     int* value;
     int saved, forced;
@@ -2446,15 +2446,15 @@ void prompts_at_once(const Row& r) {
 }
 
 
-// ---- (longshot) Save my pipeline list (the Debug tab, under Developer): longshot_pipeline_states.bin and the "Submit your pipelines" issue's
+// ---- (longshot) Save my pipeline list (the Debug tab, under Developer): inhale_pipeline_states.bin and the "Submit your pipelines" issue's
 // template, filled in from this run, zipped into the Downloads folder (pipeline_share.h; the builders do the same with
 // nx2/pipeline_share.py). Then the report on the clipboard, the folder shown and the issue opened in the browser, where the platform
 // has them; never with HOS_HEADLESS (no screen to show them on). Nothing is uploaded: the player attaches the zip ----
 namespace ps = pipeline_share;
 std::string share_said;    // (the help box's line after a save: where the zip went and what to do, or why there is none)
 std::string share_value;   // (the row's value after a save: Saved, or Not saved)
-constexpr const char* kShareSaidLongest = "Saved longshot-pipelines-2026-12-31.zip (123456 pipelines) in Downloads. The report "
-    "is in the zip. Open git.magicbean.dev/MagicBeanDev/Longshot/issues/14 and attach the zip to a comment, then paste the report and say "
+constexpr const char* kShareSaidLongest = "Saved inhale-pipelines-2026-12-31.zip (123456 pipelines) in Downloads. The report "
+    "is in the zip. Open tracker.inhale.invalid/issues/14 and attach the zip to a comment, then paste the report and say "
     "where you played.";   // (measure_help: the help box's room)
 std::string share_saved;   // (the first sentence: the zip's name, its pipelines and its folder)
 std::atomic<bool> share_busy{false};   // (the worker is copying and opening: presses wait for it)
@@ -2464,7 +2464,7 @@ void share_finish() {
     const int r = share_result.exchange(-1);
     if (r < 0) return;
     share_said = share_saved + ((r & 1) ? "The report is copied. " : "The report is in the zip. ") +
-                 ((r & 2) ? "Issue 14 is open in your browser: attach" : "Open git.magicbean.dev/MagicBeanDev/Longshot/issues/14 and attach") +
+                 ((r & 2) ? "Issue 14 is open in your browser: attach" : "Open tracker.inhale.invalid/issues/14 and attach") +
                  " the zip to a comment, then paste the report and say where you played.";
     share_busy.store(false);
     menu_refresh = true;
@@ -2559,7 +2559,7 @@ std::string share_os() {
 #endif
 }
 #ifdef _WIN32
-/// A function of shell32 or ole32, loaded at its first use: longshot_vk.dll imports only kernel32, user32, gdi32, advapi32 and the
+/// A function of shell32 or ole32, loaded at its first use: inhale_vk.dll imports only kernel32, user32, gdi32, advapi32 and the
 /// UCRT (the DLSS workflow's import check), and these two are needed only here
 FARPROC share_proc(const wchar_t* dll, const char* name) {
     HMODULE m = LoadLibraryExW(dll, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -2755,7 +2755,7 @@ bool share_write(const std::string& path, const std::string& data) {
 /// frame generation and HDR as the menu has them now, and the mods
 std::vector<std::string> share_values(long long pipelines, bool v2, long long computes) {
     std::vector<std::string> v(ps::kFieldCount);
-    v[0] = LONGSHOT_VERSION;
+    v[0] = INHALE_VERSION;
     v[1] = share_os() + "; " + dev.props.deviceName + ", driver " + driver_text();
     const Out o = shown_output();
     v[2] = ps::output_text(o.w, o.h, opts.handheld != 0, output_choice(opts.output_res) == 0, aspect_follows_host(opts.ultrawide));
@@ -2924,7 +2924,7 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
 
 // ---- (longshot) the rows that are text fields (text_edit): their fields, what Enter on each sets, the one being edited ----
 /// Custom output size: the Output resolution's size of the player's own (custom_output), typed, as output_res= in
-/// longshot_options.ini sets it (parse_output: the same rules)
+/// inhale_options.ini sets it (parse_output: the same rules)
 bool output_size_char(char c) { return (c >= '0' && c <= '9') || c == 'x' || c == 'X'; }
 const char* output_pad_chars(const TextField& f) {
     // (one separator, after 1 to 5 width digits; partial text is fine until Done)
@@ -3734,7 +3734,7 @@ void bug_report_save() {
     if (host && host->log_flush) host->log_flush();   // (the log's queued lines into the file first)
     bug_report::Inputs in;
     bug_report::fill_here(in);
-    in.version = LONGSHOT_VERSION;
+    in.version = INHALE_VERSION;
     in.gpu = device_report_text();
     in.options = changed_rows_text(in.pc_options);
     in.game_dir = game_folder_path();   // (its logs/ and bug-reports/: vk_paths.h)
@@ -3755,7 +3755,7 @@ const char* bug_report_cell() {
 /// Under its help once saved: where the report is and what to do with it (the game opens nothing: no browser or file manager is
 /// sure to be there, as on a Steam Deck in Game Mode)
 std::string bug_report_saved_text(const std::string& folder) {
-    return "Saved in the game folder as " + folder + ". To send it, open git.magicbean.dev/MagicBeanDev/Longshot/issues, choose New issue and "
+    return "Saved in the game folder as " + folder + ". To send it, open tracker.inhale.invalid/issues, choose New issue and "
            "Game problem, copy report.txt's answers into the form and drag the folder's files into it: on Windows from File "
            "Explorer, on Linux from a file manager (on a Steam Deck, in Desktop Mode).";
 }
@@ -3849,8 +3849,8 @@ void draw_options(ui::Ctx& c) {
         x += tw[i];
     }
     {   // (which build, at the banner's left, so a report can say it without opening the log: as players see it, version_text,
-        // "Longshot v3.0.0-rc.1" or "Longshot Nightly 46 · 434712bb"; the log and the bug report keep the whole name)
-        std::string ver = std::string("Longshot ") + version_text(LONGSHOT_VERSION);
+        // "Inhale v3.0.0-rc.1" or "Inhale Nightly 46 · 434712bb"; the log and the bug report keep the whole name)
+        std::string ver = std::string("Inhale ") + version_text(INHALE_VERSION);
         const float room = (c.w - total) * 0.5f - 60 * s - c.safe, px = 15 * s;
         const auto width = [&](float p) { return ui::size_of(c.f.body, p, ver.c_str()).x; };
         // (still too long, as a source build's "v2.0.11-821-g7b81752-dirty" since the Audio tab: at Small and Medium smaller
@@ -4734,7 +4734,7 @@ void draw_fps(ui::Ctx& c, bool under_banner) {
     if (foot) {   // (the footer, at the column's foot: the version, as the banner says it; at Dev the CPU, the GPU, its driver. A line
         // too long for the column's width loses its end)
         static std::string cpu, gpu, drv, fit[4];
-        static const std::string ver = std::string("Longshot ") + version_text(LONGSHOT_VERSION);
+        static const std::string ver = std::string("Inhale ") + version_text(INHALE_VERSION);
         static float fit_w = 0;
         if (gpu.empty()) cpu = hardware_cpu_name(bug_report::cpu_name()), gpu = hardware_gpu_name(device_name_text()), drv = driver_text(), fit_w = 0;
         if (fit_w != gw) {
@@ -5020,7 +5020,7 @@ void draw_startup(ui::Ctx& c) {
     ImTextureData* logo = ui::logo(&aspect);
     if (logo) c.d->AddImage(logo->GetTexRef(), ImVec2(cx - lh * aspect * 0.5f, top), ImVec2(cx + lh * aspect * 0.5f, top + lh));
     float y = top + lh + 16 * s;
-    ui::spaced(c, c.f.heading, 42 * k, ImVec2(cx, y), ui::rgba(246, 232, 204), "LONGSHOT", 6 * k);
+    ui::spaced(c, c.f.heading, 42 * k, ImVec2(cx, y), ui::rgba(246, 232, 204), "INHALE", 6 * k);
     ui::flourish(c, cx - 190 * k, cx + 190 * k, y + 66 * k, ui::kAccent);
     ui::text_centre(c, c.f.body, 14.5f * k, ImVec2(cx, y + 78 * k), ui::kDim, v.version.c_str());
     if (!v.title.empty()) {
@@ -5094,7 +5094,7 @@ void startup_screen(const StartupView* view) {
         return;
     }
     StartupView v = *view;
-    if (v.version.empty()) v.version = version_text(LONGSHOT_VERSION);   // ("v2.0.5"; "v2.0.5 dev" between releases)
+    if (v.version.empty()) v.version = version_text(INHALE_VERSION);   // ("v2.0.5"; "v2.0.5 dev" between releases)
     {
         std::lock_guard lk(startup_mu);
         startup = v;
@@ -5535,7 +5535,7 @@ void menu_option_set(int id, int value) {
 
 // ---- (longshot) the control bridge's option_get and option_set (host/control.c, docs/control.md) ----
 // The settings rows (a value, not a heading or a debug tool, shown on this PC: row_shown), found by their key in
-// longshot_options.ini (ini_key), which stays the same while rows come and go or are renamed. The bridge calls these from
+// inhale_options.ini (ini_key), which stays the same while rows come and go or are renamed. The bridge calls these from
 // its own thread: menu_mu keeps them apart from menu_tick (the present's thread) and from menu_option_set (the game's)
 bool bridge_row(int i) { return rows[i].value && !rows[i].heading && rows[i].cheat < 0 && row_shown(i); }
 void bridge_fill(int i, MkwVkSetting* out) {

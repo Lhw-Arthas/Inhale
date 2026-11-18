@@ -14,7 +14,7 @@ void hos_input_clear_toggles(void);
 #include "../hos_sdl.h"
 
 /* (the window's app id: an applications menu entry for the game names it as its StartupWMClass) */
-#define HOS_APP_ID "dev.magicbean.Longshot"
+#define HOS_APP_ID "inhale"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,8 +24,8 @@ void hos_input_clear_toggles(void);
 #include "../display_pointer.h"
 #include <math.h>
 #include <limits.h>
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../../gpu/vk/compat/inhale_env.h"
 #endif
 
 int rx_start(void *hwnd);
@@ -255,7 +255,7 @@ int hos_display_init(void) {
     }
     const char *env_class = getenv("HOS_WM_CLASS");
     const char *app_id = (env_class && env_class[0]) ? env_class : HOS_APP_ID;
-    hos_sdl_identity(window_title("Longshot"), app_id);
+    hos_sdl_identity(window_title("Inhale"), app_id);
     hos_sdl_hint("SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", "0");
     hos_sdl_hint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
     /* (bundled SDL tries x11 before wayland. NVIDIA's X11 surface has no mailbox, and an immediate
@@ -317,13 +317,13 @@ void hos_display_loop(void) {
     }
     vk_window.window = window;
     hos_posix_window[0] = 1;
-    {   /* the window's icon: longshot.png in the game folder (make_game.py puts it there: the game's own icon, else Longshot's),
+    {   /* the window's icon: inhale.png in the game folder (make_game.py puts it there: the game's own icon, else Inhale's),
            for X11 and the compositors that take one from the window; the others find it through the menu entry. (The folder, not
-           the exe's: the game is bin/longshot in a packaged builder's folder, and the icon was looked for in bin/) */
+           the exe's: the game is bin/inhale in a packaged builder's folder, and the icon was looked for in bin/) */
         char png[MAX_PATH];
         DWORD n = hos_game_path_a(png, MAX_PATH);
         while (n && png[n - 1] != '/') n--;
-        snprintf(png + n, sizeof png - n, "longshot.png");
+        snprintf(png + n, sizeof png - n, "inhale.png");
         hos_sdl_icon(window, png);
     }
     if (getenv("HOS_FULLSCREEN") && atoi(getenv("HOS_FULLSCREEN"))) set_fullscreen(1);

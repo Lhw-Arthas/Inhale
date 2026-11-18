@@ -25,8 +25,8 @@
 #endif
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 
 #define RESULT_NO_OUTPUT 0x2a1ca   /* (a failure: "no picture yet"; the library polls again) */
@@ -84,7 +84,7 @@ static DWORD WINAPI av1_notice(LPVOID unused) {
     (void)unused;
     if (MessageBoxA(NULL, "The game's movies need Microsoft's free \"AV1 Video Extension\", which this PC doesn't have, so they "
                           "show black (the sound plays).\n\nOpen its page in the Microsoft Store now? Install it, then start the game again.",
-                    "Longshot", MB_YESNO | MB_ICONINFORMATION | MB_SETFOREGROUND) == IDYES)
+                    "Inhale", MB_YESNO | MB_ICONINFORMATION | MB_SETFOREGROUND) == IDYES)
         ShellExecuteA(NULL, "open", "ms-windows-store://pdp/?ProductId=9MVZQVXJBQ9V", NULL, NULL, SW_SHOWNORMAL);
     return 0;
 }
@@ -104,14 +104,14 @@ typedef struct {
     void (*flush)(void *m);
     void (*close)(void *m);
 } Av1Decoder;
-#ifdef LONGSHOT_DAV1D
+#ifdef INHALE_DAV1D
 void *dav1d_av1_open(int w, int h);
 void dav1d_av1_decode(void *m, const uint8_t *data, size_t n, int64_t pts, mf_av1_picture_fn fn, void *user);
 void dav1d_av1_flush(void *m);
 void dav1d_av1_close(void *m);
 #endif
 static const Av1Decoder av1_decoders[] = {
-#ifdef LONGSHOT_DAV1D
+#ifdef INHALE_DAV1D
     {"dav1d", dav1d_av1_open, dav1d_av1_decode, dav1d_av1_flush, dav1d_av1_close},
 #endif
     {"Media Foundation", mf_av1_open, mf_av1_decode, mf_av1_flush, mf_av1_close},
@@ -352,7 +352,7 @@ static void dec_init_sized(Ctx *c, enum AVCodecID id, const char *what, int w, i
         static volatile LONG told;
         if (!InterlockedExchange(&told, 1)) {
             hos_log("video: no AV1 decoder: install Microsoft's free AV1 Video Extension for the movies");
-            if (!env_on("HOS_HEADLESS") && !env_on("LONGSHOT_NO_AV1_NOTICE"))
+            if (!env_on("HOS_HEADLESS") && !env_on("INHALE_NO_AV1_NOTICE"))
                 CreateThread(NULL, 0, av1_notice, NULL, 0, NULL);
         }
     }
@@ -555,7 +555,7 @@ static void decode_next(Dec *d) {
 }
 /* (longshot, issue 2316) one line when a movie stops: its decoder, the time it took for each submission against the time
    between the movie's pictures, and the pictures the catch-up skipped. A decoder slower than the movie leaves the picture
-   behind the sound, whatever the catch-up does: the line says which it was in a report's longshot_log.txt */
+   behind the sound, whatever the catch-up does: the line says which it was in a report's inhale_log.txt */
 static void movie_report(Dec *d) {
     if (d->decoded > 1) {
         const double each = (double)d->decode_ns / d->decoded / 1e6,

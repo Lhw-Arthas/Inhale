@@ -40,7 +40,7 @@ class ColdCacheCheckTests(unittest.TestCase):
     def test_a_lost_sample_runs_the_warm_pass_again(self):
         run = block(DRAW, "void precompile_run(void (*progress)(size_t done, size_t total))")
         guard = run.index("notes_lost_by_driver()")
-        self.assertIn('!env_on("LONGSHOT_PREPARE_ONLY")', run[run.rindex("if (", 0, guard):guard])
+        self.assertIn('!env_on("INHALE_PREPARE_ONLY")', run[run.rindex("if (", 0, guard):guard])
         self.assertLess(guard, run.index("if (!precompile_covers_notes()) precompile_warm(progress);"))
         self.assertIn("remove(precompile_built_path().c_str());", run[guard:guard + 120])
 

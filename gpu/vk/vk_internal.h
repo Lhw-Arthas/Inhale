@@ -10,20 +10,20 @@
 
 #include "vk_loader.h"
 #include "vk_api.h"
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "compat/longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "compat/inhale_env.h"
 #endif
 #include "vk_vendor.h"
 #include "gpu_choice.h"
 
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
 #include <intrin.h>
-#define LONGSHOT_RDTSC() ((uint64_t)__rdtsc())
-#define LONGSHOT_PAUSE() _mm_pause()
+#define INHALE_RDTSC() ((uint64_t)__rdtsc())
+#define INHALE_PAUSE() _mm_pause()
 #elif defined(__x86_64__) || defined(__i386__)
 #include <x86intrin.h>
-#define LONGSHOT_RDTSC() ((uint64_t)__rdtsc())
-#define LONGSHOT_PAUSE() _mm_pause()
+#define INHALE_RDTSC() ((uint64_t)__rdtsc())
+#define INHALE_PAUSE() _mm_pause()
 #endif
 
 typedef struct VmaAllocation_T* VmaAllocation;   // (vk_mem_alloc.h's handle)
@@ -123,7 +123,7 @@ extern Device dev;
 
 /// (longshot) Windows Intel's compiler (igvk64, UHD and Arc) faults when two threads hand it shaders at once. An Arc
 /// A750 froze the PC on four compute pipelines (issue 496). An Intel UHD on Windows read address 0x170 inside igvk64
-/// during the first scene's compiles (two frames in longshot_vk.dll, and no "driver faulted compiling" line, so the
+/// during the first scene's compiles (two frames in inhale_vk.dll, and no "driver faulted compiling" line, so the
 /// call was not inside guarded_graphics). One thread enters vkCreateShaderModule and vkCreate*Pipelines.
 /// Other vendors, and Intel on other systems, are not held. The Intel shader compiles row's Side by side, its Auto on
 /// the Arc B-series (intel_compiles.h: where side by side was measured), or RX_VK_NO_INTEL_SERIAL=1 over it: side by
@@ -476,7 +476,7 @@ void state_list_run();                        // (an update: the state list's pi
 bool predict_pending();   // vk_draw.cpp
 void predict_run(void (*progress)(size_t done, size_t total));   // (after a prepare_run that prepared: the notes' predictions)
 /// (longshot) Compile shaders: whether a preparation builds the predicted pipelines too (All), or leaves them out (Most, the
-/// default). RX_VK_COMPILE_SHADERS=all or most (the game's --compile-shaders), else compile_shaders= in longshot_options.ini
+/// default). RX_VK_COMPILE_SHADERS=all or most (the game's --compile-shaders), else compile_shaders= in inhale_options.ini
 /// (1 All, 0 Most)
 bool compile_all();   // vk_draw.cpp
 /// (longshot) The CPUs this process may run on: its affinity mask (sched_getaffinity on Linux, through host/posix), not every CPU
@@ -528,16 +528,16 @@ inline int64_t perf_ticks_to_ns(int64_t ticks, int64_t freq) {
 // A cheap nanosecond clock for the per-phase replay timers. Ten QueryPerformanceCounter reads a draw were ~4% of
 // the GPU thread (gpu/render/rx_internal.h). The hot path reads the invariant TSC; the counter calibrates the scale once.
 inline int64_t prof_now() {
-#if defined(LONGSHOT_RDTSC)
+#if defined(INHALE_RDTSC)
     struct Scale { double ns_per; bool ok; };
     static const Scale scale = [] {
         LARGE_INTEGER f, a, b;
         QueryPerformanceFrequency(&f);
-        const uint64_t c0 = LONGSHOT_RDTSC();
+        const uint64_t c0 = INHALE_RDTSC();
         QueryPerformanceCounter(&a);
         volatile int sink = 0;
-        for (int i = 0; i < 400000; i++) { LONGSHOT_PAUSE(); sink += 1; }
-        const uint64_t c1 = LONGSHOT_RDTSC();
+        for (int i = 0; i < 400000; i++) { INHALE_PAUSE(); sink += 1; }
+        const uint64_t c1 = INHALE_RDTSC();
         QueryPerformanceCounter(&b);
         const int64_t dns = perf_ticks_to_ns(b.QuadPart - a.QuadPart, f.QuadPart);
         Scale s;
@@ -545,7 +545,7 @@ inline int64_t prof_now() {
         s.ns_per = s.ok ? (double)dns / (double)(c1 - c0) : 0.0;
         return s;
     }();
-    if (scale.ok) return (int64_t)((double)LONGSHOT_RDTSC() * scale.ns_per);
+    if (scale.ok) return (int64_t)((double)INHALE_RDTSC() * scale.ns_per);
 #endif
     LARGE_INTEGER t;
     QueryPerformanceCounter(&t);

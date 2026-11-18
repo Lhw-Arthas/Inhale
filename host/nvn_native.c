@@ -25,8 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 uint64_t hos_hostcall(const char *name, void (*fn)(Ctx *, void *), void *user);   /* hos_hostcall.c */
 void hos_gpu_track(uint64_t guest, uint64_t size, int on);                          /* nvdrv.c */
@@ -172,7 +172,7 @@ int nvn_gpu_write(uint64_t gpu, const void *src, uint64_t n) {
 /* ---- device ---- */
 static volatile LONG depth_minus_w = 1;   /* (OoT's mode from the start: the shaders prepared before the game made its device were
                                             translated without the depth conversion, and the menu's text and logo fell outside the depth range
-                                            on a first start. d3zessete, Longshot PR 54) */
+                                            on a first start. d3zessete, Inhale PR 54) */
 int nvn_depth_minus_w(void) { return depth_minus_w != 0; }
 uint64_t nvn_native_proc(const char *name);
 

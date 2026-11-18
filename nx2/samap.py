@@ -1,4 +1,4 @@
-"""longshot.exe offset -> lifted function (f_<guest address>) + offset, from work/sa/build/longshot.map (build.py --standalone).
+"""inhale.exe offset -> lifted function (f_<guest address>) + offset, from work/sa/build/inhale.map (build.py --standalone).
 
 Usage:  python -I nx2/samap.py <hex offset> [...]
 """
@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kit
 
 rows = []
-for line in open(os.path.join(kit.WORK, "sa", "build", "longshot.map"), errors="replace"):
+for line in open(os.path.join(kit.WORK, "sa", "build", "inhale.map"), errors="replace"):
     m = re.match(r"\s*[0-9a-f]{4}:[0-9a-f]{8}\s+(\S+)\s+([0-9a-f]{16})", line)
     if m:
         rows.append((int(m.group(2), 16), m.group(1)))

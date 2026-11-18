@@ -36,8 +36,8 @@
 #include <string.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 
 int hos_mouse_take(int32_t *dx, int32_t *dy);                                   /* display.c */

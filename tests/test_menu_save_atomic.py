@@ -1,4 +1,4 @@
-"""The Insert menu's save (gpu/vk/vk_menu.cpp save) never leaves longshot_options.ini cut short, and saves wherever the
+"""The Insert menu's save (gpu/vk/vk_menu.cpp save) never leaves inhale_options.ini cut short, and saves wherever the
 in-place write did. A save that cannot be written whole (a full disk, often an SD card on a Steam Deck, or the game closed
 while it writes) must leave the file as it was: a file cut after a few lines made the next start take the defaults for
 every row past the cut, the controls among them, and a file cut to nothing made it a first start, Auto (this PC) chosen
@@ -87,7 +87,7 @@ void logf(const char* fmt, ...) {
     std::fprintf(stderr, "log: %s\n", b);
 }
 bool no_file = false;   // (options_path() empty: no settings file this run)
-std::string ini_path() { return no_file ? std::string() : dir + "/longshot_options.ini"; }
+std::string ini_path() { return no_file ? std::string() : dir + "/inhale_options.ini"; }
 const char* ini_key(const Row& r) {
     static char k[32];
     size_t n = 0;
@@ -184,7 +184,7 @@ int main(int argc, char** argv) {
         save();
         const std::string after = slurp(ini_path());
         if (after != before) {
-            std::fprintf(stderr, "FAIL: a save that did not fit left longshot_options.ini at %zu bytes of %zu:\n%s\n",
+            std::fprintf(stderr, "FAIL: a save that did not fit left inhale_options.ini at %zu bytes of %zu:\n%s\n",
                          after.size(), before.size(), after.c_str());
             return 1;
         }
@@ -207,13 +207,13 @@ int main(int argc, char** argv) {
         opts.fps_cap = 2;
         save();
         CHECK(has(slurp(ini_path()), "game_frame_rate_cap=2\n"));
-        CHECK(names(dir).size() == 1 && names(dir)[0] == "longshot_options.ini");
+        CHECK(names(dir).size() == 1 && names(dir)[0] == "inhale_options.ini");
         CHECK(logged.empty());
     } else if (c == "symlink") {
         // (the game folder's file a link to a synced folder's)
         const std::string synced = dir + "/synced", game = dir + "/game";
         CHECK(mkdir(synced.c_str(), 0755) == 0 && mkdir(game.c_str(), 0755) == 0);
-        const std::string target = synced + "/longshot_options.ini";
+        const std::string target = synced + "/inhale_options.ini";
         if (FILE* f = std::fopen(target.c_str(), "w")) std::fputs("discord_app_id=1234567890\n", f), std::fclose(f);
         dir = game;
         CHECK(symlink(target.c_str(), ini_path().c_str()) == 0);

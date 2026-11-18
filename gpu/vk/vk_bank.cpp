@@ -16,8 +16,8 @@
 
 #include "vk_internal.h"
 #include "vk_state.h"
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 
 namespace mkwvk {

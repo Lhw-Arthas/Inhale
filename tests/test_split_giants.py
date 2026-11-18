@@ -4,7 +4,7 @@ Text checks: what is cut (pieces of about the size asked, every label in exactly
 gotos into other pieces become returns of the label's id with their interrupt poll kept, guest returns and tail calls
 become ids the dispatcher turns into `return` and TAILCALL), what is left whole and why (a top-level declaration, a label
 inside a block, a literal, a goto to a label the function lacks, a function too small or below the size asked), and
-build.py's switch (on at 8 KB unless LONGSHOT_SPLIT_GIANTS says otherwise).
+build.py's switch (on at 8 KB unless INHALE_SPLIT_GIANTS says otherwise).
 
 Compiled checks (Clang: the build compiles lifted code with clang on every OS, nx2/build.py `toolchain.find("clang")`),
 each a function compiled whole and split into one program against the build's own guest model (nx2/rtgen.py's a64.h),
@@ -287,21 +287,21 @@ def text_checks():
         check(any(why in n for n in notes), "the note says why (%s): %s" % (why, notes))
     # build.py: the switch, and the copy compile_copy makes (compile_one itself: compiled check 3)
     import build
-    old = os.environ.get("LONGSHOT_SPLIT_GIANTS")
+    old = os.environ.get("INHALE_SPLIT_GIANTS")
     try:
-        os.environ["LONGSHOT_SPLIT_GIANTS"] = "0"
-        check(build.split_giants_flags() == [], "LONGSHOT_SPLIT_GIANTS=0: no flag")
-        os.environ.pop("LONGSHOT_SPLIT_GIANTS", None)
+        os.environ["INHALE_SPLIT_GIANTS"] = "0"
+        check(build.split_giants_flags() == [], "INHALE_SPLIT_GIANTS=0: no flag")
+        os.environ.pop("INHALE_SPLIT_GIANTS", None)
         f = build.split_giants_flags()
         check(len(f) == 1 and f[0].startswith(SG.FLAG + "%d_" % SG.PIECE_KB), "unset: on at %d KB by default: %s" % (SG.PIECE_KB, f))
-        os.environ["LONGSHOT_SPLIT_GIANTS"] = "16"
+        os.environ["INHALE_SPLIT_GIANTS"] = "16"
         f = build.split_giants_flags()
-        check(len(f) == 1 and f[0].startswith(SG.FLAG + "16_"), "LONGSHOT_SPLIT_GIANTS=16: the flag names the size: %s" % f)
+        check(len(f) == 1 and f[0].startswith(SG.FLAG + "16_"), "INHALE_SPLIT_GIANTS=16: the flag names the size: %s" % f)
     finally:
         if old is None:
-            os.environ.pop("LONGSHOT_SPLIT_GIANTS", None)
+            os.environ.pop("INHALE_SPLIT_GIANTS", None)
         else:
-            os.environ["LONGSHOT_SPLIT_GIANTS"] = old
+            os.environ["INHALE_SPLIT_GIANTS"] = old
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "code_000.c")
         open(p, "w", newline="\n").write(big_source("f_00002000"))

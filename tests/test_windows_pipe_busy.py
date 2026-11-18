@@ -14,7 +14,7 @@ from unittest import mock
 class WindowsPipeBusy(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        spec = importlib.util.spec_from_file_location("ctl_pipe_test", Path(__file__).resolve().parents[1] / "scripts/longshot_ctl.py")
+        spec = importlib.util.spec_from_file_location("ctl_pipe_test", Path(__file__).resolve().parents[1] / "scripts/inhale_ctl.py")
         cls.ctl = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.ctl)
         cls.k = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -27,7 +27,7 @@ class WindowsPipeBusy(unittest.TestCase):
         cls.invalid = ctypes.c_void_p(-1).value
 
     def setUp(self):
-        self.name = r"\\.\pipe\longshot-busy-test-%d-%d" % (os.getpid(), time.monotonic_ns())
+        self.name = r"\\.\pipe\inhale-busy-test-%d-%d" % (os.getpid(), time.monotonic_ns())
         self.server = self.k.CreateNamedPipeW(self.name, 3, 0, 1, 4096, 4096, 0, None)
         self.assertNotEqual(self.server, self.invalid)
         self.held = open(self.name, "r+b", buffering=0)

@@ -12,27 +12,27 @@
    that first include and taken back after, leaving a file's own #define of it no redefinition) */
 #if defined(_WIN32) && !defined(_CRT_SECURE_NO_WARNINGS)
 #define _CRT_SECURE_NO_WARNINGS
-#define LONGSHOT_ENV_CRT_SET
+#define INHALE_ENV_CRT_SET
 #endif
 #include <stdlib.h>
-#ifdef LONGSHOT_ENV_CRT_SET
+#ifdef INHALE_ENV_CRT_SET
 #undef _CRT_SECURE_NO_WARNINGS
-#undef LONGSHOT_ENV_CRT_SET
+#undef INHALE_ENV_CRT_SET
 #endif
 
-#ifndef LONGSHOT_ENV_H   /* (and a guard: the checks paste this file before the code they cut out) */
-#define LONGSHOT_ENV_H
+#ifndef INHALE_ENV_H   /* (and a guard: the checks paste this file before the code they cut out) */
+#define INHALE_ENV_H
 
 #ifdef __cplusplus
-#define LONGSHOT_ENV_INLINE inline
-#define LONGSHOT_ENV_BOOL bool   /* (C++: a bool, so bool x{env_on(...)} is no narrowing) */
+#define INHALE_ENV_INLINE inline
+#define INHALE_ENV_BOOL bool   /* (C++: a bool, so bool x{env_on(...)} is no narrowing) */
 #else
-#define LONGSHOT_ENV_INLINE static inline
-#define LONGSHOT_ENV_BOOL int
+#define INHALE_ENV_INLINE static inline
+#define INHALE_ENV_BOOL int
 #endif
 
 /* (whether a value says off: "", "0", "false", "off" or "no", any case, spaces around it not counted) */
-LONGSHOT_ENV_INLINE LONGSHOT_ENV_BOOL env_value_off(const char *v) {
+INHALE_ENV_INLINE INHALE_ENV_BOOL env_value_off(const char *v) {
     static const char *const off[] = {"0", "false", "off", "no"};
     const char *a = v, *b;
     unsigned i, k;
@@ -49,11 +49,11 @@ LONGSHOT_ENV_INLINE LONGSHOT_ENV_BOOL env_value_off(const char *v) {
     }
     return 0;
 }
-LONGSHOT_ENV_INLINE LONGSHOT_ENV_BOOL env_on(const char *name) {
+INHALE_ENV_INLINE INHALE_ENV_BOOL env_on(const char *name) {
     const char *v = getenv(name);
     return v && !env_value_off(v);
 }
-LONGSHOT_ENV_INLINE int env_int(const char *name, int def) {
+INHALE_ENV_INLINE int env_int(const char *name, int def) {
     const char *v = getenv(name);
     char *end;
     long n;

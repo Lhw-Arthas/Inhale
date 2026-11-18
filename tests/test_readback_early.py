@@ -59,7 +59,7 @@ MEMORY = r"""
 #include <unordered_map>
 #include <vector>
 constexpr uint64_t kPageShift = 12, kChunkPages = 16, kPages = 1024;
-#include "readback_early.h"   // (and its rule; with compat/longshot_env.h's env_on)
+#include "readback_early.h"   // (and its rule; with compat/inhale_env.h's env_on)
 static void logf(const char*, ...) {}
 static struct { struct { char deviceName[256]; } props; } dev = {{""}};   // (the device's name: not asked; the pools' mirror is)
 static bool replay_render_thread_on() { return false; }
@@ -291,7 +291,7 @@ RECORDED = r"""
 #include <cstring>
 #include <mutex>
 #include <thread>
-#include "compat/longshot_env.h"
+#include "compat/inhale_env.h"
 static void logf(const char*, ...) {}
 static std::mutex rec_map_mu;
 static std::condition_variable rec_map_cv;

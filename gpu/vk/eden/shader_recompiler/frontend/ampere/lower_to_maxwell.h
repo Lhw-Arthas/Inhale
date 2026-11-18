@@ -14,8 +14,8 @@
 #include <vector>
 #include "common/common_types.h"
 #include "shader_recompiler/frontend/ampere/program_address_map.h"
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 
 namespace Shader::Ampere {
@@ -1642,7 +1642,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             // (longshot) A warp stores to shared memory (STS) and reads it back (LDS) with no barrier between: the Switch runs a
             // warp's shared memory accesses in order, Vulkan orders another lane's store and this lane's load only through a
             // barrier, and the driver's compiler may move them past each other (OoT's 4/3 gameplay network on NVIDIA's cooperative
-            // matrix path: 16x2 bright bars, Longshot issue 2455). As for LDSM: a subgroup barrier before the first LDS after an
+            // matrix path: 16x2 bright bars, Inhale issue 2455). As for LDSM: a subgroup barrier before the first LDS after an
             // STS, only where the LDS is not predicated (every lane of the warp reaches it). RX_VK_SHARED_NO_LDS_BARRIER=1: none, as before
             static const bool lds_barrier = !env_on("RX_VK_SHARED_NO_LDS_BARRIER");
             if (opcode == 0x388) {

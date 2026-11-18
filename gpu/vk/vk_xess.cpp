@@ -36,7 +36,7 @@
 #include "vk_temporal.h"
 #include "xess_rules.h"
 
-#if defined(_WIN32) && defined(LONGSHOT_XESS)
+#if defined(_WIN32) && defined(INHALE_XESS)
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -73,7 +73,7 @@ XessWhy xess_why() {
     return w < 0 ? XESS_OK : (XessWhy)w;
 }
 
-#if defined(_WIN32) && defined(LONGSHOT_XESS)
+#if defined(_WIN32) && defined(INHALE_XESS)
 
 namespace {
 
@@ -105,7 +105,7 @@ struct Library {
     bool probed = false;
     xess_context_handle_t query = nullptr;   // (a context never initialised: the presets' input ranges are asked of it)
 };
-// (lib() and st() are never destroyed: Longshot leaves through ExitProcess / exit() with the device alive, and a destructor
+// (lib() and st() are never destroyed: Inhale leaves through ExitProcess / exit() with the device alive, and a destructor
 // then would call into Intel's library after its DLL_PROCESS_DETACH)
 Library& lib() {
     static Library& l = *new Library;

@@ -19,8 +19,8 @@
 #include <mftransform.h>
 #include <stdio.h>
 #include <string.h>
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 
 #ifndef MFVideoFormat_AV1
@@ -77,9 +77,9 @@ static int set_output_nv12(MfAv1 *m) {
    intro never ends. Said once, on its own thread (the game goes on), with the way to the Store page. HOS_AV1_MISSING=1: as if it were missing */
 static DWORD WINAPI av1_missing_notice(LPVOID unused) {
     (void)unused;
-    if (MessageBoxA(NULL, "Longshot's movies need Microsoft's free AV1 Video Extension, which this PC does not have. Without it they show a green "
+    if (MessageBoxA(NULL, "Inhale's movies need Microsoft's free AV1 Video Extension, which this PC does not have. Without it they show a green "
                           "screen and the game can stop at a black screen.\n\nOpen its Microsoft Store page now? Install it, then restart the game.",
-                    "Longshot", MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST) == IDYES)
+                    "Inhale", MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST) == IDYES)
         ShellExecuteA(NULL, "open", "ms-windows-store://pdp/?ProductId=9MVZQVXJBQ9V", NULL, NULL, SW_SHOWNORMAL);
     return 0;
 }

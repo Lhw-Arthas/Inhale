@@ -9,8 +9,8 @@
    Environment: HOS_TRACE=1 (log HLE calls), HOS_MEMORY_MB (memory the game is told it has),
                 HOS_NVN_CONTINUE=1 (go on past nvnBootstrapLoader). */
 #include "hos.h"
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 #include "hos_paths.h"
 #include "game_layout.h"
@@ -22,10 +22,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef LONGSHOT_VERSION   /* (nx2/build.py gives it: the release and a fingerprint of the sources, nx2/version.py) */
-#define LONGSHOT_VERSION "unknown"
+#ifndef INHALE_VERSION   /* (nx2/build.py gives it: the release and a fingerprint of the sources, nx2/version.py) */
+#define INHALE_VERSION "unknown"
 #endif
-const char *hos_version(void) { return LONGSHOT_VERSION; }   /* (discord_rpc.c's status) */
+const char *hos_version(void) { return INHALE_VERSION; }   /* (discord_rpc.c's status) */
 #if defined(_WIN32) || defined(__EMSCRIPTEN__)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -122,7 +122,7 @@ static void *reserve_large(SIZE_T size) {
 
 #if !defined(_WIN32) && !defined(A64_MEM_ZERO)
 extern int hos_guest_memfd;   /* (below) */
-static int startup_stderr = -1;   /* (keep startup warnings visible if stderr becomes longshot_log.txt) */
+static int startup_stderr = -1;   /* (keep startup warnings visible if stderr becomes inhale_log.txt) */
 #endif
 /* The guest window lives at the constant A64_HOST_BASE (rt/a64.h), so lifted code never loads its base. */
 static int reserve_guest(void) {
@@ -187,7 +187,7 @@ static int reserve_guest(void) {
                         u < 0 ? "/dev/udmabuf cannot be opened" : "udmabuf's size_limit_mb cannot be read");
         }
         if (e ? atoi(e) != 0 : usable) {
-            const int fd = (int)syscall(SYS_memfd_create, "longshot-guest", 1u /* MFD_CLOEXEC */ | 2u /* MFD_ALLOW_SEALING */);
+            const int fd = (int)syscall(SYS_memfd_create, "inhale-guest", 1u /* MFD_CLOEXEC */ | 2u /* MFD_ALLOW_SEALING */);
             if (fd >= 0 && ftruncate(fd, (off_t)GUEST_SPACE) == 0) {
                 fcntl(fd, 1033 /* F_ADD_SEALS */, 0x0002 /* F_SEAL_SHRINK */ | 0x0004 /* F_SEAL_GROW */);
                 void *p = mmap((void *)A64_HOST_BASE, GUEST_SPACE, PROT_READ | PROT_WRITE,
@@ -251,13 +251,13 @@ static void call_guest(Ctx *c, uint64_t addr, uint64_t sp, const char *what) {
 }
 
 #ifndef _WIN32
-/* (linux) Saves live in $XDG_DATA_HOME/longshot (~/.local/share/longshot), so a rebuilt game folder still finds them.
+/* (linux) Saves live in $XDG_DATA_HOME/inhale (~/.local/share/inhale), so a rebuilt game folder still finds them.
    A user/ folder beside the executable from before is moved there the first time, entry by entry. Anything that
    cannot be moved keeps the old place. --user still wins.
    A symbolic link in it, to saves the player keeps elsewhere (a synced folder, another drive), is made again in the
    new place, to the same folder, and never entered. It was moved as it stood, and one written from where it stood
    ("../../saves") then named nothing; from another drive it was copied as the folder it names and delete_tree emptied
-   that folder, which is not Longshot's: the next start found the link still here, kept the old place, and showed no
+   that folder, which is not Inhale's: the next start found the link still here, kept the old place, and showed no
    saves. A user/ that is a link itself is the player's choice of place, and is used as it is. */
 static int is_dir(const char *p) {
     const DWORD a = GetFileAttributesA(p);
@@ -368,7 +368,7 @@ static const char *saves_dir(const char *beside) {
         snprintf(dir, sizeof dir, "%s/.local/share", home);
     } else return beside;
     CreateDirectoryA(dir, NULL);
-    snprintf(dir + strlen(dir), sizeof dir - strlen(dir), "/longshot");
+    snprintf(dir + strlen(dir), sizeof dir - strlen(dir), "/inhale");
     CreateDirectoryA(dir, NULL);
     if (GetFileAttributesA(dir) == INVALID_FILE_ATTRIBUTES) return beside;
     char pattern[MAX_PATH];
@@ -428,7 +428,7 @@ static const char *saves_dir(const char *beside) {
         snprintf(note, sizeof note, "%.*s" SEP_S "saves-moved.txt", sep ? (int)(sep - beside) : 0, beside);
         FILE *f = fopen(note, "w");
         if (f) {
-            fprintf(f, "Longshot's saves are now in\n%s\n\nThey moved there from the user folder that was here.\n", dir);
+            fprintf(f, "Inhale's saves are now in\n%s\n\nThey moved there from the user folder that was here.\n", dir);
             fclose(f);
         }
         hos_log("saves: moved from %s to %s", beside, dir);
@@ -437,17 +437,17 @@ static const char *saves_dir(const char *beside) {
 }
 #endif
 
-/* longshot_env.txt beside the game: NAME=VALUE lines set as environment variables before anything reads them, for the
+/* inhale_env.txt beside the game: NAME=VALUE lines set as environment variables before anything reads them, for the
    switches players are asked to test (RX_VK_NOOPT and the rest). Lines starting with # are notes. On Linux this runs
    before the window, so HOS_HEADLESS and HOS_WINDOW_SIZE are already set when the window is made.
    HOS_ENV_FILE=<path> reads that file instead: a scripted or A/B test run brings its own switches and leaves the
-   player's longshot_env.txt as it is.
-   (longshot) longshot_env.txt is a file players pass around, so it sets only the game's own switches (RX_, HOS_,
-   LONGSHOT_, EDEN_, NVN_ and SDL_ names), never HOS_ENV_FILE, HOS_CONTROL_PEER_SID or SDL's library override, and no
+   player's inhale_env.txt as it is.
+   (longshot) inhale_env.txt is a file players pass around, so it sets only the game's own switches (RX_, HOS_,
+   INHALE_, EDEN_, NVN_ and SDL_ names), never HOS_ENV_FILE, HOS_CONTROL_PEER_SID or SDL's library override, and no
    value that is a path but RX_VK_DLSS_DIR's: the system's variables (the Vulkan loader's layers, PATH and the like) can
    load code, and the dump switches write files where they name. The file HOS_ENV_FILE names sets anything. */
 static int env_line_allowed(const char *name, const char *value) {
-    static const char *const prefixes[] = {"RX_", "HOS_", "LONGSHOT_", "EDEN_", "NVN_", "SDL_"};
+    static const char *const prefixes[] = {"RX_", "HOS_", "INHALE_", "EDEN_", "NVN_", "SDL_"};
     int ok = 0;
     for (size_t i = 0; i < sizeof prefixes / sizeof *prefixes; i++) ok |= !strncmp(name, prefixes[i], strlen(prefixes[i]));
     if (!ok || !strcmp(name, "HOS_ENV_FILE") || !strcmp(name, "SDL_DYNAMIC_API")) return 0;
@@ -460,7 +460,7 @@ static int env_line_allowed(const char *name, const char *value) {
     for (const char *p = name; *p; p++)
         if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')) return 0;
     /* (longshot) the switches that name a file to write or a folder take no value here, not even a bare name: one
-       resolves in the game's folder (HOS_SAMPLE_FILE=longshot_vk.dll emptied the renderer) */
+       resolves in the game's folder (HOS_SAMPLE_FILE=inhale_vk.dll emptied the renderer) */
     const size_t nl = strlen(name);
     int names_file = (nl > 5 && (!strcmp(name + nl - 5, "_FILE") || !strcmp(name + nl - 4, "_DIR"))) ||
                      !strcmp(name, "RX_VK_FRAME_LOG") || !strcmp(name, "HOS_PRESENT_TRACE");
@@ -469,7 +469,7 @@ static int env_line_allowed(const char *name, const char *value) {
        the file select) */
     static const char *const by_name[] = {
         "HOS_AUDIO_DUMP", "HOS_AUDIO_WB_DUMP", "HOS_SHADER_DUMP", "HOS_FS_OVERLAY", "HOS_MODS", "HOS_INPUT_LIVE",
-        "HOS_INPUT_SCRIPT", "HOS_SAMPLE_ALL", "HOS_CHAIN", "HOS_WATCH", "HOS_CRASH_TEST", "LONGSHOT_BUILDER_HOME", "RX_VK_SHOTS", "RX_VK_SHOT_GO",
+        "HOS_INPUT_SCRIPT", "HOS_SAMPLE_ALL", "HOS_CHAIN", "HOS_WATCH", "HOS_CRASH_TEST", "INHALE_BUILDER_HOME", "RX_VK_SHOTS", "RX_VK_SHOT_GO",
         "RX_VK_FRAMELOG", "RX_VK_HANG_DUMP", "RX_VK_DUMP", "RX_VK_DUMP_SPV", "RX_VK_DUMP_MESH_SPV", "RX_VK_DUMP_STAGES",
         "RX_VK_DUMP_FAILED", "RX_VK_IR", "RX_VK_MENU_SCRIPT", "RX_DUMP_WGSL", "RX_DUMP_SLOW_WGSL", "RX_DUMP_TICS",
         "RX_WGSL_OVERRIDE"};
@@ -481,7 +481,7 @@ static int env_line_allowed(const char *name, const char *value) {
     const int drive = ((value[0] | 0x20) >= 'a' && (value[0] | 0x20) <= 'z' && value[1] == ':');
     return !strpbrk(value, "/\\") && !drive && value[0] != '~' && strcmp(value, ".") && strcmp(value, "..");
 }
-static void load_longshot_env(void) {
+static void load_inhale_env(void) {
     char path[MAX_PATH + 32];
     const char *other = getenv("HOS_ENV_FILE");
     if (other && *other) {
@@ -489,7 +489,7 @@ static void load_longshot_env(void) {
     } else {
         DWORD n = hos_game_path_a(path, MAX_PATH);
         while (n && path[n - 1] != 92 && path[n - 1] != 47) n--;
-        memcpy(path + n, "longshot_env.txt", 17);
+        memcpy(path + n, "inhale_env.txt", 15);
     }
     FILE *f = fopen(path, "r");
     if (!f) return;
@@ -511,14 +511,14 @@ static void load_longshot_env(void) {
         char *eq = strchr(s, '=');
         *eq = 0;
         if (!(other && *other) && !env_line_allowed(s, eq + 1)) {
-            fprintf(stderr, "env: longshot_env.txt: %s left out (only the game's switches, and no paths, are taken from it)\n", s);
+            fprintf(stderr, "env: inhale_env.txt: %s left out (only the game's switches, and no paths, are taken from it)\n", s);
             continue;
         }
         int ours = 0;
         for (int i = 0; i < from_file_n && !ours; i++) ours = !strcmp(from_file[i], s);
         if (!ours && getenv(s)) {
             fprintf(stderr, "env: %s: %s left out (set in the environment, which goes first)\n",
-                    other && *other ? "HOS_ENV_FILE" : "longshot_env.txt", s);
+                    other && *other ? "HOS_ENV_FILE" : "inhale_env.txt", s);
             continue;
         }
         if (!ours && from_file_n < (int)(sizeof from_file / sizeof *from_file) && strlen(s) < sizeof from_file[0])
@@ -533,7 +533,7 @@ static void load_longshot_env(void) {
     fclose(f);
 }
 
-/* Switches this build no longer reads, still set (in the environment or longshot_env.txt, as older issues told players):
+/* Switches this build no longer reads, still set (in the environment or inhale_env.txt, as older issues told players):
    one log line each, naming what took its place, so a bug report shows the switch did nothing */
 static void removed_switch_notes(void) {
     static const char *const gone[][2] = {
@@ -1740,7 +1740,7 @@ static int memory_notice_text(unsigned long long ram_mb, unsigned long long swap
 #if defined(__linux__) && !defined(_WIN32)
     if (ram_mb < HOS_MEMORY_NEEDED_MB) {
         snprintf(out, cap,
-                 "This PC has %.1f GiB of RAM and %.1f GiB of swap. Longshot recommends 16 GB of RAM or more; "
+                 "This PC has %.1f GiB of RAM and %.1f GiB of swap. Inhale recommends 16 GB of RAM or more; "
                  "the game alone can use more than 13 GiB.\n\n"
                  "Swap can prevent an out-of-memory exit, but heavy swapping can make the game and desktop unresponsive. "
                  "Close other programs before playing. More swap is not a replacement for RAM. The game starts anyway.",
@@ -1787,7 +1787,7 @@ static void memory_notice(void) {
     int hos_sdl_load(void);
     hos_sdl_load();   /* (host/posix MessageBoxA shows it through the SDL already loaded) */
 #endif
-    MessageBoxA(NULL, text, "Longshot", MB_OK | MB_ICONWARNING);
+    MessageBoxA(NULL, text, "Inhale", MB_OK | MB_ICONWARNING);
 }
 #endif
 /* (longshot, linux) What driver_env_choose did with the driver's environment, said again in the game's own log once it is open
@@ -1813,20 +1813,20 @@ static int narrow_paths_ok(int argc, char **argv) {
     if (n && n < MAX_PATH && GetFileAttributesA(a) != INVALID_FILE_ATTRIBUTES) return 1;
     wchar_t w[MAX_PATH * 2] = L"";
     GetModuleFileNameW(NULL, w, MAX_PATH * 2);
-    fprintf(stderr, "longshot: this folder's path cannot be opened (code page %u, %s): move the game to a folder with a plain name\n",
+    fprintf(stderr, "inhale: this folder's path cannot be opened (code page %u, %s): move the game to a folder with a plain name\n",
             GetACP(), n >= MAX_PATH ? "too long" : "has characters the code page lacks");
     int quiet = env_on("HOS_HEADLESS");
     for (int i = 1; i < argc; i++) quiet |= !strcmp(argv[i], "--prepare-shaders");
     if (!quiet) {
         wchar_t text[MAX_PATH * 2 + 640];
         _snwprintf(text, sizeof text / sizeof text[0],
-                   L"Longshot can't open its files in this folder:\n\n%ls\n\n"
-                   L"%ls\n\nMove the game folder somewhere with a shorter name of plain letters and digits (for example C:\\Games\\Longshot), "
+                   L"Inhale can't open its files in this folder:\n\n%ls\n\n"
+                   L"%ls\n\nMove the game folder somewhere with a shorter name of plain letters and digits (for example C:\\Games\\Inhale), "
                    L"or update Windows.",
                    w, GetACP() == CP_UTF8 ? L"The path is too long."
                                           : L"Its name has characters this Windows can only give the game from Windows 10 version 1903 on.");
         text[sizeof text / sizeof text[0] - 1] = 0;
-        MessageBoxW(NULL, text, L"Longshot", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+        MessageBoxW(NULL, text, L"Inhale", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
     }
     return 0;
 }
@@ -1847,10 +1847,10 @@ static int game_main(int argc, char **argv) {
         void hos_relaunch_keep_env(void);   /* (host/hos_relaunch.c: the environment before the file's lines, for a restart) */
         hos_relaunch_keep_env();
     }
-    load_longshot_env();
+    load_inhale_env();
 #endif
     /* (the settings file, in the user folder: chosen before the crash window's helper, the Discord status and the renderer read
-       it, and after longshot_env.txt, which may set HOS_OPTIONS_FILE; Linux's main chose it already: host/options_path.c) */
+       it, and after inhale_env.txt, which may set HOS_OPTIONS_FILE; Linux's main chose it already: host/options_path.c) */
     hos_options_choose(argc, argv);
     {
         const char *protect_hearts = getenv("HOS_OOT_PROTECT_HEARTS");
@@ -1858,14 +1858,14 @@ static int game_main(int argc, char **argv) {
     }
 #ifdef _WIN32
     {   // (the whole process, not only the window's thread: the renderer asks the window's size from its own, and on a 4K screen at 150%
-        // Windows answered such a thread 2560 x 1440: the picture was that size, in the corner of the window. Longshot issues 15, 18, 20)
+        // Windows answered such a thread 2560 x 1440: the picture was that size, in the corner of the window. Inhale issues 15, 18, 20)
         typedef BOOL(WINAPI * SetAware)(void *);
         SetAware set = (SetAware)(void *)GetProcAddress(GetModuleHandleA("user32.dll"), "SetProcessDpiAwarenessContext");
         if (set && !env_on("HOS_DPI_UNAWARE")) set((void *)(intptr_t)-4);
     }
 #endif
     void hos_crash_record_prepare(const char *log_path);
-    {   // (started from its icon the game has nowhere to log to: longshot_log.txt in the game folder's logs/ (host/game_layout.c), for players to send in)
+    {   // (started from its icon the game has nowhere to log to: inhale_log.txt in the game folder's logs/ (host/game_layout.c), for players to send in)
 #ifdef _WIN32
         {   /* (started again by the Insert menu's Restart now (host/hos_relaunch.c): the run before still has its log open until
                it exits, so wait for it (up to 10 s) before the log moves to .1, or the move fails and its log is overwritten) */
@@ -1887,15 +1887,15 @@ static int game_main(int argc, char **argv) {
                 memcpy(path + n, "logs", 5);
                 if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) path[n + 4] = path[n - 1], n += 5;
             }
-            memcpy(path + n, "longshot_log.txt", 17);
+            memcpy(path + n, "inhale_log.txt", 15);
             hos_crash_record_prepare(path);   /* recovery before rotation; keep this run's actual destination */
-            /* (the four runs before stay as longshot_log.1.txt (the last) to .4.txt: a player who started the game again after a
+            /* (the four runs before stay as inhale_log.1.txt (the last) to .4.txt: a player who started the game again after a
                crash sent in the new run's log, and the crash was gone) */
             char from[MAX_PATH + 32], to[MAX_PATH + 32];
             for (int k = 4; k >= 1; k--) {
-                if (k == 1) memcpy(from + n, "longshot_log.txt", 17), memcpy(from, path, n);
-                else memcpy(from, path, n), snprintf(from + n, 32, "longshot_log.%d.txt", k - 1);
-                memcpy(to, path, n), snprintf(to + n, 32, "longshot_log.%d.txt", k);
+                if (k == 1) memcpy(from + n, "inhale_log.txt", 15), memcpy(from, path, n);
+                else memcpy(from, path, n), snprintf(from + n, 32, "inhale_log.%d.txt", k - 1);
+                memcpy(to, path, n), snprintf(to + n, 32, "inhale_log.%d.txt", k);
                 MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING);
             }
 #if !defined(_WIN32) && !defined(A64_MEM_ZERO)
@@ -1910,7 +1910,7 @@ static int game_main(int argc, char **argv) {
             }
         } else hos_crash_record_prepare(NULL);   /* an externally supplied stderr, not the game's log */
     }
-    hos_log("longshot %s", LONGSHOT_VERSION);   /* (the log's first line: which build a report comes from) */
+    hos_log("inhale %s", INHALE_VERSION);   /* (the log's first line: which build a report comes from) */
     const char *hos_report_run_id(void);
     hos_log("run_id: %s", hos_report_run_id());
     hos_game_layout_log();
@@ -1919,14 +1919,14 @@ static int game_main(int argc, char **argv) {
     hos_crash_record_log_notes();
     removed_switch_notes();
     void hos_control_start(const char *version);
-    hos_control_start(LONGSHOT_VERSION);   /* (HOS_CONTROL=<socket>: the control bridge, host/control.c) */
+    hos_control_start(INHALE_VERSION);   /* (HOS_CONTROL=<socket>: the control bridge, host/control.c) */
     /* (longshot) the window after a crash: a helper that waits for this run to end (host/hos_crash_dialog.c), started before
        the guest, the renderer, the sound and the input; none for --prepare-shaders, HOS_HEADLESS or HOS_CRASH_WATCH=0 */
     void hos_crash_watch_start(int argc, char **argv);
     hos_crash_watch_start(argc, argv);
     const char *image = NULL;
     /* (longshot) --compile-shaders all or most: what a preparation of this run builds (gpu/vk/vk_draw.cpp compile_all), over
-       compile_shaders= in longshot_options.ini; as RX_VK_COMPILE_SHADERS, set before --prepare-shaders runs, wherever it stands */
+       compile_shaders= in inhale_options.ini; as RX_VK_COMPILE_SHADERS, set before --prepare-shaders runs, wherever it stands */
     for (int i = 1; i + 1 < argc; i++)
         if (!strcmp(argv[i], "--compile-shaders")) {
 #ifdef _WIN32
@@ -1944,9 +1944,9 @@ static int game_main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--trace")) hos_trace = 1;
         else if (!strcmp(argv[i], "--prepare-shaders")) {   /* (longshot) a build's last step: no game */
 #ifdef _WIN32
-            _putenv("LONGSHOT_PREPARE_ONLY=1");
+            _putenv("INHALE_PREPARE_ONLY=1");
 #else
-            setenv("LONGSHOT_PREPARE_ONLY", "1", 1);
+            setenv("INHALE_PREPARE_ONLY", "1", 1);
 #endif
             int rx_prepare_shaders(void);
             if (rx_prepare_shaders()) {
@@ -2150,10 +2150,10 @@ static DWORD WINAPI game_thread(void *p) {
     ExitProcess(result);
 }
 /* (longshot, linux) Room in the drivers' own shader caches for what the preparation builds. The pipelines the notes predict (~43,000
-   in OoT, vk_draw.cpp predict_run) are built into the driver's disk cache alone, not into longshot_vk_pipelines.bin, which is read in whole
+   in OoT, vk_draw.cpp predict_run) are built into the driver's disk cache alone, not into inhale_vk_pipelines.bin, which is read in whole
    at every start. NVIDIA's cache holds 1 GiB by default and cleans itself down to that as it is written: a full preparation filled
    it to the limit (1026 MB) and the pipelines it dropped were compiled again in play. Mesa's (RADV, ANV) has the same 1 GiB default.
-   Raised for this process only, before anything loads Vulkan; a value the player set (or longshot_env.txt) is kept. Windows: the
+   Raised for this process only, before anything loads Vulkan; a value the player set (or inhale_env.txt) is kept. Windows: the
    NVIDIA driver takes its size from the control panel's Shader Cache Size, which a program cannot set (readme) */
 static void driver_cache_room(void) {
     setenv("__GL_SHADER_DISK_CACHE_SIZE", "10737418240", 0);   /* (10 GiB, bytes) */
@@ -2165,8 +2165,8 @@ static void driver_cache_room(void) {
    it neither creates it nor falls back to ~/.cache/nvidia, and every start compiles every pipeline again (a test of 300 pipelines:
    7.9 ms each at the first start and at the second, against 0.06 ms from the cache; driver 620.70). The folder a player or a
    launcher named is made here, before anything loads Vulkan. Mesa makes its own (MESA_SHADER_CACHE_DIR, parents too). Not needed:
-   NVIDIA files the cache by the program's file name alone (bin/longshot), not its folder, bytes or date, nor VkApplicationInfo, so
-   an update in place, a folder moved or copied and every Longshot folder on the PC share one cache (a cache of another driver or
+   NVIDIA files the cache by the program's file name alone (bin/inhale), not its folder, bytes or date, nor VkApplicationInfo, so
+   an update in place, a folder moved or copied and every Inhale folder on the PC share one cache (a cache of another driver or
    GPU is the driver's to drop) */
 static void driver_cache_folder(void) {
     const char *dir = getenv("__GL_SHADER_DISK_CACHE_PATH");
@@ -2199,9 +2199,9 @@ static void driver_cache_folder(void) {
    or "1x1", and loaded them in 22 s without it or with it naming no file. The preparation (the Builder, a first start from the
    desktop) runs without it, so every start from Game Mode compiled again what it built. Dropped only when it names a file that
    exists, which is when RADV reads it; no other driver reads it. RX_VK_HALF_RATE_SHADING=1 keeps it: Steam's Half Rate Shading
-   works for Longshot then (little: RADV leaves a fragment program that reads its position at full rate, and nearly all of
+   works for Inhale then (little: RADV leaves a fragment program that reads its position at full rate, and nearly all of
    ours do), and the starts in Game Mode compile their own pipelines. RADV_FORCE_VRS, a rate someone set by hand, is kept.
-   The variable is named in LONGSHOT_DRIVER_ENV_SET for the renderer's driver cache line. A restart (hos_relaunch.c) starts
+   The variable is named in INHALE_DRIVER_ENV_SET for the renderer's driver cache line. A restart (hos_relaunch.c) starts
    again from the first environment and drops it again */
 static void driver_env_choose(void) {
     const char *file = getenv("RADV_FORCE_VRS_CONFIG_FILE");
@@ -2215,10 +2215,10 @@ static void driver_env_choose(void) {
     } else {
         snprintf(driver_env_said, sizeof driver_env_said,
                  "vk: RADV_FORCE_VRS_CONFIG_FILE=%.300s dropped: with it RADV gives every graphics pipeline another key than the "
-                 "preparation's and compiles them all again; Steam's Half Rate Shading has no effect on Longshot "
+                 "preparation's and compiles them all again; Steam's Half Rate Shading has no effect on Inhale "
                  "(RX_VK_HALF_RATE_SHADING=1 keeps it)", file);
         unsetenv("RADV_FORCE_VRS_CONFIG_FILE");
-        setenv("LONGSHOT_DRIVER_ENV_SET", "RADV_FORCE_VRS_CONFIG_FILE", 1);
+        setenv("INHALE_DRIVER_ENV_SET", "RADV_FORCE_VRS_CONFIG_FILE", 1);
     }
     fprintf(stderr, "%s\n", driver_env_said);
 }
@@ -2231,7 +2231,7 @@ int main(int argc, char **argv) {
     int hos_display_init(void);
     void hos_display_loop(void);
     hos_game_layout();   /* (the game folder's cache/ and logs/, before anything writes there, --prepare-shaders too: host/game_layout.c) */
-    load_longshot_env();
+    load_inhale_env();
     hos_options_choose(argc, argv);   /* (before the Discord status reads it, below: host/options_path.c) */
     driver_cache_room();
     driver_cache_folder();

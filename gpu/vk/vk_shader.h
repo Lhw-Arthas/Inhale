@@ -27,7 +27,7 @@ struct Stage {
     // program cache (vk_progcache.cpp), which every translated program passes. Not in vk_shader.cpp, whose bytes are part of
     // the translator's stamp: a change there translates every player's programs again
     mutable uint32_t phis = 0;
-    // (longshot) where its SPIR-V is in longshot_programs.bin, and how many words (0: compressed or translated in this run, so
+    // (longshot) where its SPIR-V is in inhale_programs.bin, and how many words (0: compressed or translated in this run, so
     // its module stays): once precompile_run has built its pipelines, its module can be let go on Linux and made again from the
     // file if play ever builds a new pipeline state variant for this program
     int64_t code_at = 0;
@@ -68,7 +68,7 @@ struct Program {
     // (longshot) compute_pipeline was made without the optimizer before play (precompile_run, precompile_compute_quick): its first
     // dispatch queues compute_optimize. Not before: a first start makes every kept compute program's, most never dispatched
     std::atomic<bool> optimize_owed{false};
-    mutable std::atomic<bool> dispatched{false};   // (longshot) noted in longshot_computes.bin (vk_draw.cpp compute_note)
+    mutable std::atomic<bool> dispatched{false};   // (longshot) noted in inhale_computes.bin (vk_draw.cpp compute_note)
     bool push = false;             // its set is pushed (VK_KHR_push_descriptor)
     VkShaderStageFlags push_stages = 0;
     bool uses_render_area = false;
@@ -102,7 +102,7 @@ struct Program {
     std::vector<uint8_t> questions;
     uint64_t codes[4]{};   // (longshot) its stages' code keys: vertex (mesh), fragment, task, the header-only stage (the state list)
     // (longshot) a compute program read from the cache without its code (vk_progcache.cpp program_cache_read_light): where its
-    // SPIR-V is in longshot_programs.bin, and how many words; 0 words: it has its module (program_cache_complete makes it)
+    // SPIR-V is in inhale_programs.bin, and how many words; 0 words: it has its module (program_cache_complete makes it)
     int64_t code_at = 0;
     uint64_t code_words = 0;
 };
@@ -123,21 +123,21 @@ uint64_t program_cache_stamp();   // (what the kept programs and pipelines are g
 uint32_t mesh_fallback_layout();
 size_t program_cache_load_some(const std::unordered_set<uint64_t>& wanted, const std::function<void(Program&)>& fn,
                                bool computes = true, bool fallbacks = false);   // (computes: and every kept compute program)
-/// The precompile of every shader of the game (longshot_shaders.bin, from nx2/shader_census.py): how many programs it names, 0: none
+/// The precompile of every shader of the game (inhale_shaders.bin, from nx2/shader_census.py): how many programs it names, 0: none
 size_t seed_open();
-std::string seed_path();   // (longshot_shaders.bin, beside the game)
+std::string seed_path();   // (inhale_shaders.bin, beside the game)
 void seed_close();
 /// Program i of the seed, translated and kept for the default state (null: kept already, or it does not translate); its modules are yours
 std::unique_ptr<Program> seed_program(size_t i, int inputs = 0);
 bool seed_is_compute(size_t i);
-/// (longshot) Seed program i, a compute program, kept in longshot_programs.bin with every texture variant its questions can make (up
+/// (longshot) Seed program i, a compute program, kept in inhale_programs.bin with every texture variant its questions can make (up
 /// to cap variants); made is given each variant not kept before
 struct SeedVariants {
     size_t variants = 0, questions = 0;
     bool kept = false, failed = false, capped = false;
 };
 SeedVariants seed_compute(size_t i, size_t cap, const std::function<void(Program&)>& made);
-/// (longshot, the prediction: vk_predict.cpp) a kept graphics program variant as longshot_programs.bin has it: each stage's SPIR-V
+/// (longshot, the prediction: vk_predict.cpp) a kept graphics program variant as inhale_programs.bin has it: each stage's SPIR-V
 struct KeptProgram {
     uint64_t key = 0, variant = 0;
     int64_t at = 0;   // (where its record is in the file: of two records of one variant, the later is the one kept)
@@ -154,10 +154,10 @@ bool program_cache_complete(Program& p);
 /// *busy is set, false comes back and the program is left as it was, its code still to read (a worker completes it)
 bool program_cache_complete_ask(Program& p, bool* busy);
 /// (longshot) The graphics stages of a program whose modules were let go after the precompile (program_cache_drop_modules):
-/// remade from longshot_programs.bin before play builds a new pipeline variant for it
+/// remade from inhale_programs.bin before play builds a new pipeline variant for it
 bool program_cache_complete_graphics(const Program& p);
 /// (longshot) Lets go of the VkShaderModules of ready programs whose pipelines are built and whose stages can be remade from
-/// longshot_programs.bin (or are compute stages that need no another pipeline); returns how many modules were destroyed
+/// inhale_programs.bin (or are compute stages that need no another pipeline); returns how many modules were destroyed
 size_t program_cache_drop_modules();
 /// (longshot) precompile_run built p's noted graphics pipelines before the title: program_cache_drop_modules may let its graphics
 /// modules go (an un-noted program or variant keeps them for its first draw in play)

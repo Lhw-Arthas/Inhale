@@ -267,7 +267,7 @@ def main():
     if not args.cxx:
         print("SKIP: no C++ compiler")
         return
-    with tempfile.TemporaryDirectory(prefix="longshot-flat-map-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="inhale-flat-map-") as tmp:
         src = Path(tmp) / "flat_map_test.cpp"
         exe = Path(tmp) / "flat_map_test.exe"
         src.write_text(harness(), encoding="utf-8")

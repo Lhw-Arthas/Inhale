@@ -2,7 +2,7 @@
    once. Buttons map by position (the Xbox bottom face button is the Switch's bottom one, B).
 
    (longshot) What presses each button, on a gamepad and on the keyboard, is the player's: the Insert menu's Controls
-   page (gpu/vk/vk_menu.cpp) changes it, kept in longshot_options.ini (binds_load). The defaults:
+   page (gpu/vk/vk_menu.cpp) changes it, kept in inhale_options.ini (binds_load). The defaults:
    Keyboard (totk-pc-recomp's layout): WASD left stick, arrows or IJKL right stick (camera), Space X (jump), E A
    (action), Shift B (run/cancel), Q L (abilities), R R, Z ZL, X or F ZR (bow), Ctrl left-stick click (crouch), C
    right-stick click (first person), Tab or Enter Plus, M Minus (map), 1 2 3 4 d-pad left, up, right, down, Caps Lock
@@ -40,8 +40,8 @@
 #include "../gpu/vk/vk_api.h"   /* (the controls' names: HOS_SW_*, HOS_PAD_*) */
 #include "hos_motion.h"
 #include "hold_toggle.h"
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 
 enum { B_A = 0, B_B, B_X, B_Y, B_LS, B_RS, B_L, B_R, B_ZL, B_ZR, B_PLUS, B_MINUS, B_LEFT, B_UP, B_RIGHT, B_DOWN };
@@ -511,7 +511,7 @@ static void stick_max(int32_t stick[4], const int32_t v[4]) {
 }
 
 /* ---- (longshot) the controls: the gamepad inputs (by position) and the keys that press each Switch button, from
-   longshot_options.ini in the user folder (host/options_path.c) when it has them: pad_<button>=<position>[,<position>] (HOS_PAD_*, -1 none) and
+   inhale_options.ini in the user folder (host/options_path.c) when it has them: pad_<button>=<position>[,<position>] (HOS_PAD_*, -1 none) and
    key_<button>=<key code>,<key code> (Windows key codes, 0 none), <button> one of bind_names. Read once, at the
    first use; what the file leaves out keeps its default. Keys only, after the Switch's buttons (HOS_KEY_*): the left
    stick's and the camera's directions, and Walk; the ocarina's five note controls take a gamepad input too.
@@ -629,12 +629,12 @@ static void binds_load(void) {
                 for (int k = 0; k < 2; k++) taken |= i != HOS_KEY_WALK && key_bind[i][k] == key_default[HOS_KEY_WALK][0];
             if (taken) {
                 key_bind[HOS_KEY_WALK][0] = 0;
-                hos_log("hid: no Walk key: longshot_options.ini gives its default key (%d) to another control",
+                hos_log("hid: no Walk key: inhale_options.ini gives its default key (%d) to another control",
                         key_default[HOS_KEY_WALK][0]);
             }
         }
     }
-    if (changed) hos_log("hid: %d controls from longshot_options.ini", changed);
+    if (changed) hos_log("hid: %d controls from inhale_options.ini", changed);
     InterlockedExchange(&state, 2);
 }
 int hos_binding(int set, int button, int slot) {
@@ -1080,7 +1080,7 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
             ps[3] > 12000 || ps[3] < -12000)
             player_used();
     }
-    binds_load();   /* (the keys: key_default's, or longshot_options.ini's; the mouse's buttons once its capture is known) */
+    binds_load();   /* (the keys: key_default's, or inhale_options.ini's; the mouse's buttons once its capture is known) */
     for (int i = 0; i < HOS_SW_N; i++)
         if (bound_down(i, 0)) *buttons |= 1ULL << i, player_used();
     int32_t mouse[4] = {0};

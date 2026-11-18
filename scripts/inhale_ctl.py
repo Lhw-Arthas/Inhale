@@ -1,7 +1,7 @@
 """A client for the game's control bridge (host/control.c, docs/control.md): start the game with HOS_CONTROL=<socket>, then
 steer it and read its state from a shell, a test or a coding agent. Standard library only.
 
-    python -I scripts/longshot_ctl.py [--sock S] [--json] COMMAND ...
+    python -I scripts/inhale_ctl.py [--sock S] [--json] COMMAND ...
     --run DIR COMMAND ...                       re-attach using the run's manifest instead of a socket
     runs [ROOT] / --run DIR show / finish       list runs, show one, mark an orphaned dead run finished
     --run DIR stop [--timeout 10] [--terminate] quit, wait for its owner to reap it; force only when requested
@@ -392,7 +392,7 @@ def connect(a, timeout=10.0):
         return Session.attach(a.run).connect(timeout)
     path = a.sock or os.environ.get("HOS_CONTROL")
     if not path:
-        raise Failed("no socket: give --sock PATH or set HOS_CONTROL (longshot_ctl.py launch GAME_DIR starts a game "
+        raise Failed("no socket: give --sock PATH or set HOS_CONTROL (inhale_ctl.py launch GAME_DIR starts a game "
                      "with the bridge on and prints its socket)", 2)
     return Bridge(path, timeout)
 
@@ -619,7 +619,7 @@ def run(a):
         b.close()
 
 
-# (the one account the runtime has, host/nn_applet.c user_uid: its saves are <data>/longshot/save/<this>)
+# (the one account the runtime has, host/nn_applet.c user_uid: its saves are <data>/inhale/save/<this>)
 SAVE_USER = "5a3c9e1f0b7d24680000000000000001"
 
 
@@ -666,7 +666,7 @@ def copy_save(src, data=None, slot=None, user=None):
     slots = sorted(n for n in names if n.startswith("slot_") and os.path.isdir(os.path.join(src, n)))
     if not slots or not ({"account.sav", "option.sav"} & set(names)):
         raise Failed("--save: %s does not look like a save folder (account.sav or option.sav, and slot_NN folders): "
-                     "it is <data>/longshot/save/<user id>" % src, 2)
+                     "it is <data>/inhale/save/<user id>" % src, 2)
     if slot is not None:
         slot = slot_name(slot)
         if slot not in slots:
@@ -681,7 +681,7 @@ def place_save(entries, sources, data, user, flag):
     """entries ([(file or folder, its name in the save)]) copied into the data folder's save folder, which must be empty;
     none of sources (the folders they come from) may hold it or be in it. Returns the destination"""
     import shutil
-    root = os.path.abspath(user or os.path.join(data, "longshot"))
+    root = os.path.abspath(user or os.path.join(data, "inhale"))
     dest = os.path.join(root, "save", SAVE_USER)
     plain_save_dirs(root, flag)
     dest_real = os.path.normcase(os.path.realpath(dest))
@@ -704,7 +704,7 @@ def place_save(entries, sources, data, user, flag):
     return dest
 
 
-# Saves in the repository (assets/saves, CONTRIBUTING.md; scripts/longshot_saves.py scrub and check-repo-saves):
+# Saves in the repository (assets/saves, CONTRIBUTING.md; scripts/inhale_saves.py scrub and check-repo-saves):
 # <name>/{README.md, slot_00/{progress.sav, caption.sav}} only: account.sav and option.sav are never shipped (the game
 # makes them when it loads a slot on its own)
 CHECKOUT = Path(__file__).resolve().parents[1]
@@ -780,7 +780,7 @@ def game_exe(game, exe=None):
     """A builder folder's root executable is the launcher, not the game; a source build has no bin folder"""
     if exe:
         return os.path.abspath(exe)
-    name = "longshot.exe" if WINDOWS else "longshot"
+    name = "inhale.exe" if WINDOWS else "inhale"
     nested = os.path.join(game, "bin", name)
     if os.path.isfile(nested) or os.path.isdir(os.path.join(game, "bin")):
         return nested   # (an incomplete builder folder must not fall back to its launcher)
@@ -1359,7 +1359,7 @@ def start_session(game_dir, *, run=None, root=None, exe=None, image=None, romfs=
     socket_dir = None
     if not sock:
         if WINDOWS:
-            sock = "longshot-control-" + uuid.uuid4().hex
+            sock = "inhale-control-" + uuid.uuid4().hex
         else:
             runtime = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
             if len(os.fsencode(runtime)) > 48:
@@ -1384,7 +1384,7 @@ def start_session(game_dir, *, run=None, root=None, exe=None, image=None, romfs=
     working = os.path.abspath(cwd) if cwd else game
     user_path = user or (os.path.join(working, "user") if WINDOWS or image else
                         os.path.join(changes.get("XDG_DATA_HOME", os.environ.get("XDG_DATA_HOME") or
-                                                os.path.expanduser("~/.local/share")), "longshot"))
+                                                os.path.expanduser("~/.local/share")), "inhale"))
     session = Session(folder)
     info = {"schema_version": MANIFEST_VERSION, "client_version": CLIENT_VERSION, "run": str(folder),
             "game": game, "executable": executable, "command": command, "cwd": working, "environment": changes,
@@ -1475,7 +1475,7 @@ def main(argv=None):
     q.add_argument("--user", help="the game's --user folder, on Linux and Windows")
     q.add_argument("--data", help="XDG_DATA_HOME for the run (its saves)")
     which = q.add_mutually_exclusive_group()
-    which.add_argument("--save", help="a save folder (<data>/longshot/save/<user id>) copied in first (Linux); the source is "
+    which.add_argument("--save", help="a save folder (<data>/inhale/save/<user id>) copied in first (Linux); the source is "
                                   "only read")
     which.add_argument("--repo-save", metavar="NAME", help="a save in the repository (assets/saves/NAME): its slot_00 "
                        "alone copied in first, as --save (the game makes account.sav and option.sav)")
@@ -1577,16 +1577,16 @@ def main(argv=None):
     try:
         return run(a)
     except Failed as e:
-        print("longshot_ctl: %s" % e, file=sys.stderr)
+        print("inhale_ctl: %s" % e, file=sys.stderr)
         return e.code
     except (BrokenPipeError, ConnectionResetError):
-        print("longshot_ctl: the game closed the connection", file=sys.stderr)
+        print("inhale_ctl: the game closed the connection", file=sys.stderr)
         return 2
     except json.JSONDecodeError as e:
-        print("longshot_ctl: not JSON: %s" % e, file=sys.stderr)
+        print("inhale_ctl: not JSON: %s" % e, file=sys.stderr)
         return 2
     except OSError as e:
-        print("longshot_ctl: %s" % e, file=sys.stderr)
+        print("inhale_ctl: %s" % e, file=sys.stderr)
         return 2
 
 

@@ -27,8 +27,8 @@
 #include "shader_recompiler/frontend/ir/value.h"
 #include "shader_recompiler/host_translate_info.h"
 #include "shader_recompiler/ir_opt/passes.h"
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 
 namespace Shader::Optimization {
@@ -1419,7 +1419,7 @@ void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info, 
     if (info.pairing && conditions_or_null) {
         const TrackingConditions& conditions{*conditions_or_null};
         // (Fritchii) The 64-bit constant buffer pointer whose low word is summed into the address's low half and whose
-        // high word into its high half. Longshot's mesh programs had a texture handle and a float (c5+0x60) taken for
+        // high word into its high half. Inhale's mesh programs had a texture handle and a float (c5+0x60) taken for
         // their base by the searches below, which read only the low half: the access read zeros (Death Mountain's
         // terrain under its trees missing: the floating trees).
         const std::optional<StorageBufferAddr> paired_pointer{
@@ -1679,7 +1679,7 @@ void GlobalMemoryToStorageBufferPass(Environment& env, IR::Program& program,
     std::optional<TrackingConditions> conditions;
     StorageInfo info;
     info.pairing = pairing;
-    // (longshot: every NVN2 program Longshot translates is native, Env::IsNativeProgram)
+    // (longshot: every NVN2 program Inhale translates is native, Env::IsNativeProgram)
     info.native = pairing && GmNative() && env.IsNativeProgram();
     // (Lichii #410: the global memory functions that pick a buffer at run time need 64-bit integers)
     info.bind_competing = GmCompeting() && host_info.support_int64;

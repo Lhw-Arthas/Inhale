@@ -1,4 +1,4 @@
-"""Compile Longshot's fixed CRT compute adapters into checked-in SPIR-V headers.
+"""Compile Inhale's fixed CRT compute adapters into checked-in SPIR-V headers.
 
 The unchanged libretro sources and their notices are in third_party/crt_shaders;
 the hand-adapted .comp files are in gpu/vk/shaders. This is not a Slang loader.

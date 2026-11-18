@@ -52,10 +52,10 @@ LINKER = ("import os, sys\n"
 
 class LinkSkipTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="longshot link skip ")
+        self.temporary = tempfile.TemporaryDirectory(prefix="inhale link skip ")
         self.addCleanup(self.temporary.cleanup)
         d = Path(self.temporary.name)
-        self.d, self.out, self.runs = d, str(d / "longshot.exe"), str(d / "runs.txt")
+        self.d, self.out, self.runs = d, str(d / "inhale.exe"), str(d / "runs.txt")
         self.map = self.out[:-4] + ".map"
         self.obj = d / "a.o"
         self.obj.write_bytes(b"object")
@@ -217,7 +217,7 @@ class RealLinkTests(unittest.TestCase):
     def setUp(self):
         if not CXX:
             self.skipTest("no --cxx")
-        self.temporary = tempfile.TemporaryDirectory(prefix="longshot real link ")
+        self.temporary = tempfile.TemporaryDirectory(prefix="inhale real link ")
         self.addCleanup(self.temporary.cleanup)
         self.d = Path(self.temporary.name)
         here = os.path.dirname(shutil.which(CXX) or CXX)

@@ -1,4 +1,4 @@
-/* (linux) The part of the Win32 API Longshot's runtime and Vulkan back end use, on POSIX: host/posix is on the include
+/* (linux) The part of the Win32 API Inhale's runtime and Vulkan back end use, on POSIX: host/posix is on the include
    path of Linux builds only (nx2/build.py), so `#include <windows.h>` finds this file and the Windows code paths stay
    as they are. Implemented in win32_posix.c (threads, events, fibers, files, memory, modules, exceptions, waveOut) and
    display_sdl.c (the window, keyboard, mouse).
@@ -6,8 +6,8 @@
    Not a general emulation: what is here is what the code calls, with the behaviour it relies on. Handles are
    pointers to objects of this file's own (threads, events, timers, files, find searches); the guest window is one
    mapping (hos_main.c), so committing memory is a no-op and decommitting zeroes it. */
-#ifndef LONGSHOT_POSIX_WINDOWS_H
-#define LONGSHOT_POSIX_WINDOWS_H
+#ifndef INHALE_POSIX_WINDOWS_H
+#define INHALE_POSIX_WINDOWS_H
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -85,11 +85,11 @@ typedef struct { LONG cx, cy; } SIZE;
 #define HIWORD(l) ((WORD)(((uintptr_t)(l) >> 16) & 0xffff))
 #define RGB(r, g, b) ((COLORREF)(((BYTE)(r) | ((WORD)((BYTE)(g)) << 8)) | (((DWORD)(BYTE)(b)) << 16)))
 #define UNREFERENCED_PARAMETER(x) ((void)(x))
-#define __declspec(x) LONGSHOT_DECLSPEC_##x
-#define LONGSHOT_DECLSPEC_dllexport __attribute__((visibility("default")))
-#define LONGSHOT_DECLSPEC_dllimport
-#define LONGSHOT_DECLSPEC_noinline __attribute__((noinline))
-#define LONGSHOT_DECLSPEC_thread __thread
+#define __declspec(x) INHALE_DECLSPEC_##x
+#define INHALE_DECLSPEC_dllexport __attribute__((visibility("default")))
+#define INHALE_DECLSPEC_dllimport
+#define INHALE_DECLSPEC_noinline __attribute__((noinline))
+#define INHALE_DECLSPEC_thread __thread
 #define _stricmp strcasecmp
 #define _strnicmp strncasecmp
 #define _strdup strdup

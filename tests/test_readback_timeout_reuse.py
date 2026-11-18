@@ -301,7 +301,7 @@ def main():
                .replace("/* FLUSH_TEXTURES */", block(source, "void flush_textures(std::vector<Flush>& fs)"))
                .replace("/* EVICT_STRUCT */", evict_struct)
                .replace("/* EVICT_TAIL */", tail))
-    with tempfile.TemporaryDirectory(prefix="longshot-readback-timeout-") as temp:
+    with tempfile.TemporaryDirectory(prefix="inhale-readback-timeout-") as temp:
         cpp, exe = Path(temp) / "fixture.cpp", Path(temp) / "fixture.exe"
         cpp.write_text(fixture, encoding="utf-8")
         subprocess.run([a.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-missing-field-initializers",

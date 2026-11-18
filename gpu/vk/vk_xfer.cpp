@@ -10,8 +10,8 @@
 #include "vk_draw.h"   // (end_pass: a pass cannot stay open across a transfer)
 #include "vk_texture.h"
 #include "vk_gprof.h"
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 

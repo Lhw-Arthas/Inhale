@@ -36,8 +36,8 @@ static_assert(mkwvk::kQueueGraphics == VK_QUEUE_GRAPHICS_BIT && mkwvk::kQueueCom
 #include "vk_programs.h"
 #include "mesh_mode.h"
 #include "crash_markers.h"   // (mkwvk_close_asked: a close is not a crash)
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 
 namespace vkx {
@@ -94,7 +94,7 @@ std::string options_path() {
         const char* p = host->options_path();
         return p ? p : "";
     }
-    return game_folder_path() + "longshot_options.ini";
+    return game_folder_path() + "inhale_options.ini";
 }
 int64_t prof_ns[PROF_COUNT];
 Device dev;
@@ -279,7 +279,7 @@ bool pick_device() {
 }
 
 /// (longshot) Whether the shaders' float adds to storage buffers are asked to be the GPU's own atomic (create_device):
-/// RX_VK_NATIVE_FADD by the switches' rule (longshot_env.h env_value_off: 0, false, off, no or empty is off, any other
+/// RX_VK_NATIVE_FADD by the switches' rule (inhale_env.h env_value_off: 0, false, off, no or empty is off, any other
 /// value on); unset, with NVIDIA's driver (an RTX 4090 in Kakariko and on Death Mountain Trail) and with Intel's Windows
 /// driver on the GPU families it was run on: the Xe-LPG iGPUs of Meteor Lake and Arrow Lake (PCI device 0x7Dxx; run on a
 /// 0x7D55 in Kokiri Forest, Kakariko and on Death Mountain Trail), from that driver, 101.9175, on (Intel's Windows
@@ -309,15 +309,15 @@ bool create_device() {
     // (#1001: how task and mesh programs run, mesh_mode.h: RX_VK_MESH_SHADERS=native or compute, a launch switch; unset,
     // Automatic. RX_VK_FORCE_MESH_FALLBACK=1, a test, is Compute over it: mesh shaders not used where they are, so the no-mesh
     // fallback the GTX 10xx and RX 5000 cards run (issue 640) can be tried on any GPU. The Graphics tab's row it was, and its
-    // mesh_shaders= in longshot_options.ini, no longer choose: the line is only told of in the log)
+    // mesh_shaders= in inhale_options.ini, no longer choose: the line is only told of in the log)
     static const mesh_rule::Choice mesh_choice = [] {
         if (FILE* fl = fopen(options_path().c_str(), "r")) {   // (vk_paths.h)
             char line[80];
             int old = 0;
             while (fgets(line, sizeof line, fl))
                 if (mesh_rule::old_ini_choice(line, &old)) {
-                    logf("vk: mesh_shaders=%d in longshot_options.ini is no longer read (the Mesh shaders row left the menu): "
-                         "set RX_VK_MESH_SHADERS=native or compute in longshot_env.txt to choose", old);
+                    logf("vk: mesh_shaders=%d in inhale_options.ini is no longer read (the Mesh shaders row left the menu): "
+                         "set RX_VK_MESH_SHADERS=native or compute in inhale_env.txt to choose", old);
                     break;
                 }
             fclose(fl);
@@ -550,7 +550,7 @@ bool create_device() {
     // (bounds-checked buffer access: an out-of-range access dropped instead of faulting the device. On by default: the GPU
     // culling pass 53caac5f faulted the device while a save loaded, about one start in three, and the scene's lighting read garbage
     // for single frames (the black flashes); with it, neither in A/B runs at the same GPU time. Lichii's OoT branch keeps it on too.
-    // The 'Robust buffers' row of longshot_options.ini chooses (0 Auto: on, on every vendor; 1 Off; 2 On); RX_VK_ROBUST=0 or 1
+    // The 'Robust buffers' row of inhale_options.ini chooses (0 Auto: on, on every vendor; 1 Off; 2 On); RX_VK_ROBUST=0 or 1
     // over it. Off is null descriptors only: some NVIDIA cards ran slower with it on, issues 394, 418, 419)
     static const bool robust = []() -> bool {
         if (const char* e = getenv("RX_VK_ROBUST")) return atoi(e) != 0;
@@ -611,7 +611,7 @@ bool create_device() {
     dev.vk13 = f13;
     {   // (longshot, after TotK Recomp's vk_caps.c) NVN's programs are written for 32 lanes: the translator is told 32, and the lane
         // shuffles of OoT's networks and the lane masks of its mesh programs depend on it. NVIDIA's GPUs have no other size; AMD's
-        // default to 64 where they like, and the networks' output came out as coloured noise (Longshot issues 10 and 14)
+        // default to 64 where they like, and the networks' output came out as coloured noise (Inhale issues 10 and 14)
         VkPhysicalDeviceDriverProperties drv{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
         VkPhysicalDeviceSubgroupSizeControlProperties sc{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES};
         sc.pNext = &drv;
@@ -1019,11 +1019,11 @@ bool create_swapchain(uint32_t width, uint32_t height) {
 namespace {
 
 HWND main_window = nullptr;
-// (longshot) longshot --prepare-shaders (a builder, after a build): the same work with no game, its progress as
-// "@@progress" lines on stdout. A skip there leaves longshot_prepare_skipped beside the game: its own starts then
+// (longshot) inhale --prepare-shaders (a builder, after a build): the same work with no game, its progress as
+// "@@progress" lines on stdout. A skip there leaves inhale_prepare_skipped beside the game: its own starts then
 // leave the work out too (what was not prepared is built when first drawn), until a --prepare-shaders run ends it
-bool prepare_only() { return env_on("LONGSHOT_PREPARE_ONLY"); }
-std::string skipped_path() { return cache_path("longshot_prepare_skipped"); }
+bool prepare_only() { return env_on("INHALE_PREPARE_ONLY"); }
+std::string skipped_path() { return cache_path("inhale_prepare_skipped"); }
 // (longshot) The --prepare-shaders run's watchdog, for any GPU and any part of it.
 // - What it waits on, in the log the builder shows: every 30 s that nothing has moved, the part, its count, and whether the
 //   GPU driver faulted; a driver fault as soon as it is caught. (The pipeline steps log their own progress every 10 s,
@@ -1035,7 +1035,7 @@ std::string skipped_path() { return cache_path("longshot_prepare_skipped"); }
 //   the cause, a part that needs the stuck driver cannot go on. So when nothing has moved for RX_VK_PREPARE_STALL_S seconds
 //   (300; 0: never stopped. Long: some steps read the caches or
 //   decide the predictions for a while with no count, on a slow disk or CPU too), the run says where it stopped and why, leaves
-//   longshot_prepare_skipped so the game's own starts do not stop in the same place (what was not prepared is built when first
+//   inhale_prepare_skipped so the game's own starts do not stop in the same place (what was not prepared is built when first
 //   drawn), and ends at once with exit status 4 (make_game.py: "the GPU driver stopped responding"). Not through exit(): that
 //   unloads the driver, which can wait on the same lock. Before, it waited until make_game.py stopped it after 15 minutes with no
 //   line, and the game's first start then stopped in the same place
@@ -1390,7 +1390,7 @@ bool started_up() {
                         CloseHandle(input);
                     }
 #endif
-                    SetConsoleTitleA("Longshot");
+                    SetConsoleTitleA("Inhale");
                     console = CreateFileA("CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
                     if (console == INVALID_HANDLE_VALUE) console = nullptr;
                 }
@@ -1656,10 +1656,10 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
 #ifdef _WIN32
         std::thread([name = std::string(dev.props.deviceName)] {
             const std::string text = "Your graphics card (" + name + ") or its driver has no mesh shader support, which Ocarina of Time "
-                "uses for foliage, grass and many effects, so parts of the picture will be missing or broken.\n\nLongshot needs a GPU "
+                "uses for foliage, grass and many effects, so parts of the picture will be missing or broken.\n\nInhale needs a GPU "
                 "with mesh shaders: NVIDIA GeForce RTX 20 series or newer, AMD Radeon RX 6000 series or newer, or Intel Arc. If your "
                 "card is one of those, update its driver.";
-            MessageBoxA(nullptr, text.c_str(), "Longshot: graphics card", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+            MessageBoxA(nullptr, text.c_str(), "Inhale: graphics card", MB_OK | MB_ICONWARNING | MB_TOPMOST);
         }).detach();
 #endif
     }

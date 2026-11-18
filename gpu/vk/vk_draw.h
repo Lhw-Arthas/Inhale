@@ -11,7 +11,7 @@ namespace mkwvk {
 /// Something other than the draw path pushed or bound descriptors in the recording (its next push is whole)
 void descriptors_disturbed();
 
-/// A graphics pipeline as longshot_pipelines.bin keeps it (the precompile's notes): what built it
+/// A graphics pipeline as inhale_pipelines.bin keeps it (the precompile's notes): what built it
 struct PipeNote {
     uint64_t key, prog, variant;
     uint32_t topo, n, samples, depth_format, has_depth;
@@ -108,7 +108,7 @@ void pipeline_cache_save_play();   // what play made since the last save, into a
 // (the window closed: what play made since the last save, a few ms; the start's cache is not written there, as before)
 void pipeline_cache_close();
 void pipeline_cache_play();   // (the start-up done: what play makes goes into play files of its own)
-/// (longshot) longshot_pipeline_states.bin's bytes now, no record half written (the menu's Save my pipeline list); *present: it is there
+/// (longshot) inhale_pipeline_states.bin's bytes now, no record half written (the menu's Save my pipeline list); *present: it is there
 std::string state_list_snapshot(bool* present);
 
 /// The stream's uniform updates (UPDATE_UB, vk_replay.cpp) that overlap [addr, addr + n) and may not be in guest

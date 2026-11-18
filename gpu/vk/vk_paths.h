@@ -1,5 +1,5 @@
 // The game folder's path for the files the game keeps there (the shader list, settings): host/hos_paths.h's rule, for this
-// DLL. The game is bin\longshot.exe beside its launcher since the launcher came; its files stay in the folder above bin.
+// DLL. The game is bin\inhale.exe beside its launcher since the launcher came; its files stay in the folder above bin.
 // game_module_path answers as GetModuleFileNameA(nullptr, ...) does, with the folder's path when the exe is in a "bin" folder
 // beside image.bin. What the game makes as it runs goes in two folders of the game folder: cache/ (cache_path: the shader and
 // pipeline caches, made for this build and this GPU, which can be deleted) and logs/ (log_path: the logs and traces). The host
@@ -54,7 +54,7 @@ inline std::string game_sub_path(const char* sub, const char* name) {
 inline std::string cache_path(const char* name) { return game_sub_path("cache", name); }
 /// <game folder>/logs/<name>: the logs and traces a run writes
 inline std::string log_path(const char* name) { return game_sub_path("logs", name); }
-/// The player's settings, longshot_options.ini: the host's (MkwVkHost.options_path, host/options_path.c: in the user folder
+/// The player's settings, inhale_options.ini: the host's (MkwVkHost.options_path, host/options_path.c: in the user folder
 /// --user names, else beside the game), "" when it has none (no file: every row at its default). Without the host (a tool), the
 /// game folder's. vk_main.cpp. The build's compile_shaders= stays in the game folder's file (vk_draw.cpp compile_all)
 std::string options_path();

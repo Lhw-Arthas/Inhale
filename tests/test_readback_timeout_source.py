@@ -191,7 +191,7 @@ def main():
                .replace("/* FLUSH_TEXTURES */", block(source, "void flush_textures(std::vector<Flush>& fs)"))
                .replace("/* DESTROY_LATER */", block(source, "void destroy_later(Texture& tex)"))
                .replace("/* DEAD_LOOP */", block(frame, "    for (auto it = dead.begin(); it != dead.end();)")))
-    with tempfile.TemporaryDirectory(prefix="longshot-readback-source-") as temp:
+    with tempfile.TemporaryDirectory(prefix="inhale-readback-source-") as temp:
         cpp, exe = Path(temp) / "fixture.cpp", Path(temp) / "fixture.exe"
         cpp.write_text(fixture, encoding="utf-8")
         subprocess.run([a.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-missing-field-initializers",

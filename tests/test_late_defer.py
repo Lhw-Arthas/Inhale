@@ -43,7 +43,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 FIXTURE = r'''
-#include "gpu/vk/compat/longshot_env.h"
+#include "gpu/vk/compat/inhale_env.h"
 #include "gpu/vk/readback_early.h"
 #include <algorithm>
 #include <chrono>

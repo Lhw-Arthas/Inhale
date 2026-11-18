@@ -61,9 +61,9 @@ def main():
         subprocess.run(command + ['-o', str(executable)], check=True)
         # Synthetic image marker exercises options_path's relative --user behavior, not game discovery.
         (game/'image.bin').write_text('synthetic fixture marker', encoding='utf-8')
-        files = {game/'longshot_options.ini': 'audio_output_device_id=from-game\n',
-                 user/'longshot_options.ini': 'audio_output_device_id=from-user\n',
-                 relative/'longshot_options.ini': 'audio_output_device_id=from-relative-user\n',
+        files = {game/'inhale_options.ini': 'audio_output_device_id=from-game\n',
+                 user/'inhale_options.ini': 'audio_output_device_id=from-user\n',
+                 relative/'inhale_options.ini': 'audio_output_device_id=from-relative-user\n',
                  temp/'override.ini': 'audio_output_device_id=from-override\n'}
         for path, text in files.items():
             path.write_text(text, encoding='utf-8')

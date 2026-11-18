@@ -1,4 +1,4 @@
-// (longshot) The program cache: longshot_programs.bin (and its .idx) beside the game, what translation made, kept between runs; its
+// (longshot) The program cache: inhale_programs.bin (and its .idx) beside the game, what translation made, kept between runs; its
 // reads for play, the precompile, the prediction and the prepare; and the sizes of the prepare's worker pools.
 //
 // Not part of the translator stamp (nx2/translator_files.py: vk_shader.cpp, vk_bank.cpp, vk_state.h and the recompiler's
@@ -9,7 +9,7 @@
 // written as they lie in memory: Program::Answer, the questions, Stage::c1 and the head's words (vk_shader.h, which the translator
 // stamp does not cover); the static_asserts beside kProgramCacheFormat stop a build whose layout of those changed, so that it is
 // raised. (Shader::Info, also written as it lies, is the recompiler's: its folders are in the translator stamp.) The pipeline notes,
-// the state lists' notes and longshot_prepared.bin are stamped with program_cache_stamp too, so they go with it
+// the state lists' notes and inhale_prepared.bin are stamped with program_cache_stamp too, so they go with it
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sys/file.h>
@@ -34,7 +34,7 @@
 #include "zstd.h"
 
 #include "shader_recompiler/shader_info.h"
-#include "longshot_env.h"
+#include "inhale_env.h"
 #include "fallback_loaded.h"
 #include "fallback_size_policy.h"
 #include "vk_paths.h"
@@ -73,26 +73,26 @@ uint64_t program_cache_stamp() {
     return stamp;
 }
 
-// ---- (longshot) The program cache, longshot_programs.bin beside the executable: what translation made, by the key of the
+// ---- (longshot) The program cache, inhale_programs.bin beside the executable: what translation made, by the key of the
 // stages' code and inputs. A program met for the first time stopped the frame for its translation, 9 s of it each run,
 // the long stutters when walking somewhere (replay workers in jobs_wait for up to 150 ms). The pipelines themselves were
-// already kept (longshot_vk_pipelines.bin). Written as made; good for this translator (LONGSHOT_SHADER_STAMP) and these switches only
+// already kept (inhale_vk_pipelines.bin). Written as made; good for this translator (INHALE_SHADER_STAMP) and these switches only
 // (a file made by another starts again). RX_VK_NO_PROGRAM_CACHE=1: off ----
 std::mutex disk_mu;
 // (read as wanted: with every program of the game in it the file is gigabytes, and it was read into memory whole)
 FILE* disk_in = nullptr;
-std::string disk_path;   // (longshot_programs.bin: the precompile opens it once a thread)
+std::string disk_path;   // (inhale_programs.bin: the precompile opens it once a thread)
 std::unordered_map<uint64_t, std::vector<DiskRecord>> disk_records;
 // (longshot) the records program_cache_load and program_cache_load_some took out of disk_records as they read them in: still in the
 // file, and still kept programs to the prediction (program_cache_each). Without them a first start's prediction saw none of the
 // programs the state list's notes name, which its own preparation had just read in: "predicted 0 pipelines" on every new build
 std::unordered_map<uint64_t, std::vector<DiskRecord>> disk_taken;
 FILE* disk_out = nullptr;
-// (the records' heads, in the file's order, in longshot_programs.idx beside it: see disk_init)
+// (the records' heads, in the file's order, in inhale_programs.idx beside it: see disk_init)
 FILE* disk_idx = nullptr;
 bool disk_listing = false;
 bool disk_on = false;
-bool disk_zstd = false;   // (longshot) RX_VK_PROGRAM_CACHE_ZSTD=1: records compressed with zstd, longshot_programs.zst.bin
+bool disk_zstd = false;   // (longshot) RX_VK_PROGRAM_CACHE_ZSTD=1: records compressed with zstd, inhale_programs.zst.bin
 std::atomic<int64_t> st_cache_hits{0};
 constexpr uint32_t kDiskMagic = 0x31505348;
 constexpr uint32_t kDiskMagicZstd = 0x32505348;   // ("HSP2": a 20-byte record head, key, stored size, kind)
@@ -133,15 +133,15 @@ void disk_init() {
         // (longshot) RX_VK_PROGRAM_CACHE_ZSTD=1: each record compressed with zstd, in a file of its own so that a build
         // without this switch never reads it. SPIR-V compresses about 7.7x at zstd's level 3.
         disk_zstd = env_on("RX_VK_PROGRAM_CACHE_ZSTD");
-        const std::string path = cache_path(disk_zstd ? "longshot_programs.zst.bin" : "longshot_programs.bin");   // (vk_paths.h)
-        // (one Longshot at a time on a cache: a second one, started while the first wrote, took the record being written for one
+        const std::string path = cache_path(disk_zstd ? "inhale_programs.zst.bin" : "inhale_programs.bin");   // (vk_paths.h)
+        // (one Inhale at a time on a cache: a second one, started while the first wrote, took the record being written for one
         // cut short and cut the file there, under the first, whose list of records then named bytes written over since. Held
         // until the process ends)
         {
             uint64_t h = 0xCBF29CE484222325ull;
             for (const char ch : path) h = (h ^ (uint8_t)tolower((unsigned char)ch)) * 1099511628211ull;
             char name[64];
-            snprintf(name, sizeof name, "Local\\LongshotProgramCache_%016llx", (unsigned long long)h);
+            snprintf(name, sizeof name, "Local\\InhaleProgramCache_%016llx", (unsigned long long)h);
 #ifdef _WIN32
             const HANDLE held = CreateMutexA(nullptr, FALSE, name);
             const bool taken = !held || GetLastError() == ERROR_ALREADY_EXISTS;
@@ -150,14 +150,14 @@ void disk_init() {
             const bool taken = fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) != 0;
 #endif
             if (taken) {
-                logf("vk: program cache %s: another Longshot is using it: this one runs without it", path.c_str());
+                logf("vk: program cache %s: another Inhale is using it: this one runs without it", path.c_str());
                 return;
             }
         }
         const uint64_t stamp = program_cache_stamp();
         const size_t head_size = disk_zstd ? kZstdHead : 16;   // (the zstd cache's head has the record's kind too)
         const uint32_t magic = disk_zstd ? kDiskMagicZstd : kDiskMagic;
-        // (longshot_programs.idx: the records' heads, 20 bytes each, in the file's order. The records follow one another in the
+        // (inhale_programs.idx: the records' heads, 20 bytes each, in the file's order. The records follow one another in the
         // file, so finding them was a read of each one's head, 22000 of them over the 4 GB: seconds at every start, each a read
         // somewhere else on the disk (and on a compressed file system a block of 128 KB unpacked for those 20 bytes). The index
         // is taken when its stamp is the cache's, its sizes fit in the file and the last record's head in the file is the one
@@ -322,7 +322,7 @@ void put_info(std::vector<uint8_t>& o, const Shader::Info& i) {
     put(o, (uint64_t)i.handle_programs.size());
     for (const auto& h : i.handle_programs) put_list(o, h);
 }
-/// (longshot) every descriptor array within kMaxDescriptorCount: the counts come from longshot_programs.bin, and two of 2^31
+/// (longshot) every descriptor array within kMaxDescriptorCount: the counts come from inhale_programs.bin, and two of 2^31
 /// wrapped the layout's sum to 0 (a push layout with billions of descriptors), and one made the binds loop that often
 constexpr uint32_t kMaxDescriptorCount = 4096;
 template <class Info> bool descriptor_counts_fit(const Info& i) {

@@ -44,8 +44,8 @@
 #include "shaders/crt_lottes_comp_spv.h"
 #include "shaders/crt_hyllian_comp_spv.h"
 #include "shaders/crt_zfast_comp_spv.h"
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 #include "vk_draw.h"   // (extern_guarded_shader_module, extern_guarded_compute)
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
@@ -502,7 +502,7 @@ VkImage record_crt(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t s
     static int last_mode = 0;
     static uint32_t last_w = 0, last_h = 0, last_lines = 0;
     if (last_mode != mode || last_w != dw || last_h != dh || last_lines != raster.h) {
-        logf("vk: CRT %s: %ux%u virtual raster, %ux%u output; after scaling, before Longshot overlays",
+        logf("vk: CRT %s: %ux%u virtual raster, %ux%u output; after scaling, before Inhale overlays",
              labels[mode], raster.w, raster.h, dw, dh);
         last_mode = mode, last_w = dw, last_h = dh, last_lines = raster.h;
     }

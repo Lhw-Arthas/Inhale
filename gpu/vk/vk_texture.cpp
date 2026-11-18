@@ -65,8 +65,8 @@
 #include "target_overlap.h"
 #include "target_pool.h"
 #include "host_shaders/block_linear_unswizzle_2d_comp_spv.h"
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
@@ -2674,7 +2674,7 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     // sharing an edge page once re-uploaded garbage over a drawn LUT (the rainbow sky). Opt-in (RX_VK_CPU_OVER_GPU=1): transient render targets share memory the CPU writes for other things, and took that over their texels, and the menus' letters stayed missing with it.
     if (tex->gpu_written && !tex->released) {
         // (longshot) and a texture the GPU only cleared: the game's font cache, whose letters the CPU writes as text appears. Its menu text
-        // went missing at random (Longshot issues 40 and 44), whenever the clear reached the image first
+        // went missing at random (Inhale issues 40 and 44), whenever the clear reached the image first
         static const bool take = env_on("RX_VK_CPU_OVER_GPU");
         if ((!take && !tex->only_cleared) || tex->checked_epoch == epoch) return tex;
         tex->checked_epoch = epoch;

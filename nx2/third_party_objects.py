@@ -1,5 +1,5 @@
-"""The third-party code's objects, compiled by the release (the AppImage's usr/share/longshot/third_party_objects, the Windows
-zip's LongshotBuilder/tools/third_party_objects), so a player's first build, and a build after a change that empties the work
+"""The third-party code's objects, compiled by the release (the AppImage's usr/share/inhale/third_party_objects, the Windows
+zip's InhaleBuilder/tools/third_party_objects), so a player's first build, and a build after a change that empties the work
 folder's object cache, does not compile them: Eden's shader recompiler and sirit (gpu/vk/eden, gpu/vk/sirit), Dear ImGui,
 zbic's zstd (the Vulkan back end), libopus and zstd's decoder (the runtime). Measured on a full first build: ~200 of the
 ~325 CPU-seconds that are not the lifted game's own code. The renderer's own files (gpu/vk/*.cpp: DLSS, FSR 4 and the play
@@ -22,9 +22,9 @@ Made by the release (scripts/linux/appimage.sh; .forgejo/workflows/build-windows
   python -I nx2/third_party_objects.py make <out folder> [--jobs N]
 
 which runs nx2/build.py --standalone --third-party-objects <out> with no game, at RX_MARCH=x86-64-v3, and with the build
-tools the players' builds use (EMSDK, LONGSHOT_SYSROOT, RX_CPM; LONGSHOT_MINGW and RX_TARGET=windows for Windows).
+tools the players' builds use (EMSDK, INHALE_SYSROOT, RX_CPM; LONGSHOT_MINGW and RX_TARGET=windows for Windows).
 
-LONGSHOT_THIRD_PARTY_OBJECTS=0: not used (compiled as before); =<folder>: that set instead of the tools' own.
+INHALE_THIRD_PARTY_OBJECTS=0: not used (compiled as before); =<folder>: that set instead of the tools' own.
 """
 import hashlib
 import json
@@ -34,7 +34,7 @@ import subprocess
 import sys
 
 FORMAT = 1
-ENV = "LONGSHOT_THIRD_PARTY_OBJECTS"
+ENV = "INHALE_THIRD_PARTY_OBJECTS"
 FOLDER = "third_party_objects"
 MANIFEST = "manifest.json"
 
@@ -68,7 +68,7 @@ def is_third_party(src, root=ROOT):
 
 
 def folder(root=ROOT):
-    """The set this build uses: LONGSHOT_THIRD_PARTY_OBJECTS's folder, else the tools' own; None when it is turned off"""
+    """The set this build uses: INHALE_THIRD_PARTY_OBJECTS's folder, else the tools' own; None when it is turned off"""
     raw = os.environ.get(ENV, "").strip()
     if raw.lower() in ("0", "false", "off", "no"):
         return None
@@ -223,13 +223,13 @@ def make(out, jobs):
     out = os.path.abspath(out)
     if os.path.exists(out):
         shutil.rmtree(out)
-    work = tempfile.mkdtemp(prefix="longshot-third-party-")
+    work = tempfile.mkdtemp(prefix="inhale-third-party-")
     try:
         # (x86-64-v3: the level a player's build compiles them at on every CPU that has it, whatever this PC's CPU is.
         # RX_RELEASE as make_game.py sets it; it is not in these objects' flags, but the build is a player's otherwise)
         env = dict(os.environ, OOT_WORK=work, RX_MARCH="x86-64-v3", RX_RELEASE="1", A64_HOT_CHUNK="1", PYTHONIOENCODING="utf-8")
         env.pop(ENV, None)
-        env.pop("LONGSHOT_OBJ_STORE", None)
+        env.pop("INHALE_OBJ_STORE", None)
         r = subprocess.run([sys.executable, "-I", "-B", "-u", os.path.join(ROOT, "nx2", "build.py"), "--standalone",
                             "--jobs", str(jobs), "--third-party-objects", out], env=env)
         return r.returncode

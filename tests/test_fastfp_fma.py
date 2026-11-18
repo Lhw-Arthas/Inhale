@@ -52,7 +52,7 @@ def main():
         print("fastfp fma: skipped (no C/C++ compiler)")
         return
     t0 = time.time()
-    with tempfile.TemporaryDirectory(prefix="longshot-fastfp-fma-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="inhale-fastfp-fma-") as tmp:
         S.generate(cxx, tmp, S.target_flags(cxx, tmp))
         sys.path.insert(0, os.path.join(ROOT, "nx2"))
         import fastfp

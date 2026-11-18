@@ -1,4 +1,4 @@
-/* Where the rx_* calls go (gpu/vk/vk_api.h): the Vulkan back end in longshot_vk.dll (longshot_vk.so) beside the
+/* Where the rx_* calls go (gpu/vk/vk_api.h): the Vulkan back end in inhale_vk.dll (inhale_vk.so) beside the
    executable, the only renderer. Loaded at rx_start, before any other rx_* call; a DLL that is missing or finds no usable
    Vulkan device leaves the wgr_* stand-ins in place (host/rx_nowgpu.c, host/posix/linux_stubs.c: once the WebGPU
    renderer's functions, gpu/render, which is built no more), and nothing is drawn (logged). */
@@ -340,7 +340,7 @@ static void flush_early(void) {
     ReleaseSRWLockExclusive(&early_lock);
 }
 
-/* dll: longshot_vk.dll (longshot_vk.so on Linux), the Vulkan back end: one export */
+/* dll: inhale_vk.dll (inhale_vk.so on Linux), the Vulkan back end: one export */
 static const MkwVkRenderer *load_vulkan(const char *dll) {
     char path[MAX_PATH];
     const DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
@@ -352,7 +352,7 @@ static const MkwVkRenderer *load_vulkan(const char *dll) {
 #ifdef _WIN32
         hos_log("rx: %s did not load (%lu): nothing is drawn", path, GetLastError());
 #else   /* (why, as dlerror() said: a missing file, a glibc too old, a wrong ELF class. The line names the file
-           LoadLibraryA opened, longshot_vk.so, and drops dlerror()'s leading "<that file>: ", so the path, home folder
+           LoadLibraryA opened, inhale_vk.so, and drops dlerror()'s leading "<that file>: ", so the path, home folder
            included, is in it once. wgr_start draws nothing) */
         char *ext = strrchr(path, '.');
         if (ext && !strcmp(ext, ".dll")) strcpy(ext, ".so");
@@ -383,7 +383,7 @@ static const MkwVkRenderer *load_vulkan(const char *dll) {
 
 int rx_start(void *hwnd) {
     /* (longshot: Vulkan, the only renderer; RX_BACKEND, which once picked the WebGPU one, is not read) */
-    const char *dll = "longshot_vk.dll";
+    const char *dll = "inhale_vk.dll";
     const MkwVkRenderer *r = load_vulkan(dll);
     if (r && r->start(hwnd)) {
         vk = r;
@@ -396,10 +396,10 @@ int rx_start(void *hwnd) {
     flush_early();
     return ok;
 }
-/* (longshot) longshot --prepare-shaders: the Vulkan back end started with no window and no game, which prepares
+/* (longshot) inhale --prepare-shaders: the Vulkan back end started with no window and no game, which prepares
    every shader in its start (gpu/vk/vk_main.cpp started_up) and is then let go. 0 when there is no usable Vulkan */
 int rx_prepare_shaders(void) {
-    const MkwVkRenderer *r = load_vulkan("longshot_vk.dll");
+    const MkwVkRenderer *r = load_vulkan("inhale_vk.dll");
     return r && r->start(NULL);
 }
 /* (longshot) the window is being closed: a back end still preparing its shaders stops and keeps what it made first (a few

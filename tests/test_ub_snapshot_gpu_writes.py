@@ -312,7 +312,7 @@ def main():
             cpp, exe = tmp / ("t%d.cpp" % on), tmp / ("t%d.exe" % on)
             cpp.write_text(FIXTURE.replace("@@GUARD@@", guard), encoding="utf-8")
             r = subprocess.run([args.cxx, "-std=c++20", "-DSNAPSHOT_ON=%d" % on, "-include",
-                                str(VK / "compat" / "longshot_env.h"), "-Wall", "-Wextra", "-Werror", str(cpp), "-o",
+                                str(VK / "compat" / "inhale_env.h"), "-Wall", "-Wextra", "-Werror", str(cpp), "-o",
                                 str(exe)], capture_output=True, text=True, timeout=120)
             if r.returncode:
                 print(r.stdout + r.stderr)

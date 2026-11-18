@@ -31,7 +31,7 @@ def esc(p):
 
 class HostDepfileTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="longshot host depfiles ")
+        self.temporary = tempfile.TemporaryDirectory(prefix="inhale host depfiles ")
         top = Path(self.temporary.name)
         self.host, self.gpu, self.gen = top / "host", top / "gpu", top / "work" / "sa" / "gen"
         for d in (self.host / "posix", self.gpu / "render", self.gpu / "vk" / "eden", self.gpu / "third_party", self.gen):

@@ -1,7 +1,7 @@
 """Windows Intel's compiler is entered by one thread, and a fault creating a shader module leaves that program out.
 
 Intel UHD on Windows (igvk64) read address 0x170 during the first scene and the process ended. The stack was two frames
-in longshot_vk.dll and then the thread start, and the log had no "driver faulted compiling" line, so the call was not
+in inhale_vk.dll and then the thread start, and the log had no "driver faulted compiling" line, so the call was not
 inside guarded_graphics or guarded_compute. vkCreateShaderModule (translation, the movie and upscale helpers, a masked
 clear) and gpl_link's vkCreateGraphicsPipelines were not guarded, and graphics pipelines were still built side by side.
 NVIDIA, AMD, and Intel on other systems are not held. The Debug tab's Intel shader compiles row (Intel graphics on
@@ -132,7 +132,7 @@ def main():
     need(module.index("driver_faulted_program(program)") < module.index("IntelDriverGate"),
          "a program the driver faulted on is handed to it again")
     need("if (r == (VkResult)-77) driver_faulted_module(program);" in module,
-         "a fault making a module is not kept in longshot_driver_faults.txt")
+         "a fault making a module is not kept in inhale_driver_faults.txt")
     temporal = (ROOT / "gpu/vk/vk_temporal.cpp").read_text(encoding="utf-8")
     pipe = block(temporal, "bool make_pipeline(")
     actor = block(temporal, "bool make_actor_pipeline()")

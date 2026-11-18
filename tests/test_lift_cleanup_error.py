@@ -39,7 +39,7 @@ def production():
 
 class LiftCleanupErrorTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="longshot-lift-cleanup-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="inhale-lift-cleanup-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
         self.assertEqual(self.root.parent, Path(tempfile.gettempdir()).resolve())
@@ -52,7 +52,7 @@ class LiftCleanupErrorTests(unittest.TestCase):
         self.namespace.update(work=str(self.work), exefs=str(self.root / "exefs"), env={}, key="b" * 40, PY=["authored-python"],
                               gen_dir=str(self.gen), KEPT_LIST="lifted_objects.txt", KEPT_SCHEME=1,
                               kept_lift=[], contextlib=contextlib,
-                              # (LONGSHOT_LIFT_STORE unset: no lift shared with another work folder, nx2/lift_store.py)
+                              # (INHALE_LIFT_STORE unset: no lift shared with another work folder, nx2/lift_store.py)
                               _lift_store=types.SimpleNamespace(root=lambda: None))
         self.actual_write = self.namespace["write_lift_key"]
 

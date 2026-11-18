@@ -37,8 +37,8 @@ int main() {
     check(said(o).find("nothing new") != std::string::npos, "nothing new");
     o.what = Outcome::kOff;
     check(said(o).find("RX_VK_PCACHE_LOAD=0") != std::string::npos, "off, and why");
-    o.what = Outcome::kWriteFailed, o.detail = "cache/longshot_vk_pipelines.bin";
-    check(said(o).find("cache/longshot_vk_pipelines.bin could not be written") != std::string::npos, "the file named");
+    o.what = Outcome::kWriteFailed, o.detail = "cache/inhale_vk_pipelines.bin";
+    check(said(o).find("cache/inhale_vk_pipelines.bin could not be written") != std::string::npos, "the file named");
     o.what = Outcome::kError, o.detail = "disk full";
     check(said(o).find("disk full") != std::string::npos, "the error's words");
     for (Outcome::What w : {Outcome::kNoCache, Outcome::kFetchFailed})

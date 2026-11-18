@@ -5,14 +5,14 @@ compiled at full speed before Play, and what could wait or take a cheaper path; 
     python -I scripts/coverage/cover.py report <run folder> [--gen DIR | --csize FILE] [--hot LIST ...] [--json]
     python -I scripts/coverage/cover.py compare <listed run> <played run> [--csize FILE]
 
-run: starts <game folder>\\bin\\longshot.exe the way the launcher's Play does (that folder as the working folder, no arguments)
+run: starts <game folder>\\bin\\inhale.exe the way the launcher's Play does (that folder as the working folder, no arguments)
 with cover_dll.c loaded before its entry point, then waits for the game to end (or --seconds, then stops it). Nothing is built
 again: the lifted functions are found in the exe's own symbol table (f_<guest address>), and the DLL is compiled from
 cover_dll.c with the launcher's clang (llvm-mingw). Marks: press Ctrl+Alt+M (in the game too; Windows' default sound says it
 was taken) or type a note and Enter here. The first two hotkey marks are named "title screen" and "in play (file loaded)",
 later ones "mark 3", ...; each is kept with its time, and the report says how many functions had run by then. Windows
 only (run); report and compare read a run folder anywhere. The run folder (default
-%LOCALAPPDATA%\\LongshotCover\\<date-time>) gets: fns.txt (each function's offset in the exe, its name(s) and host code
+%LOCALAPPDATA%\\InhaleCover\\<date-time>) gets: fns.txt (each function's offset in the exe, its name(s) and host code
 bytes), cover.bin (the DLL's: first-run time per function, rewritten every 5 s), marks.txt, cover.bin.log, report.txt.
 What it holds is offsets, names (guest addresses) and times: no game code or data. The cost in the game: one breakpoint
 exception per function, the first time it runs, and ~400 MB more committed memory (the code pages become private copies).
@@ -48,9 +48,9 @@ COMPILER_S = 6478.0   # (the lifted C's -O1 compiler-seconds: nightly-34's first
 # ---- the toolchain ------------------------------------------------------------------------------------------------------
 def tool_dirs():
     local = os.environ.get("LOCALAPPDATA", "")
-    found = sorted(glob.glob(os.path.join(local, "LongshotLauncher", "toolchains", "*", "LongshotBuilder", "tools", "llvm-mingw", "bin")),
+    found = sorted(glob.glob(os.path.join(local, "InhaleLauncher", "toolchains", "*", "InhaleBuilder", "tools", "llvm-mingw", "bin")),
                    key=os.path.getmtime, reverse=True)
-    found += glob.glob(os.path.join(local, "LongshotBuilder", "versions", "*", "*", "tools", "llvm-mingw", "bin"))
+    found += glob.glob(os.path.join(local, "InhaleBuilder", "versions", "*", "*", "tools", "llvm-mingw", "bin"))
     return found
 
 
@@ -64,7 +64,7 @@ def tool(name, given=None):
     p = shutil.which(name)
     if p:
         return p
-    sys.exit("cover: no %s found (the Longshot Launcher's toolchain, or on the PATH)" % name)
+    sys.exit("cover: no %s found (the Inhale Launcher's toolchain, or on the PATH)" % name)
 
 
 def image_base(exe):
@@ -181,15 +181,15 @@ def run(a):
     if os.name != "nt":
         sys.exit("cover: run is Windows only (the DLL hooks the Windows game); report and compare work anywhere")
     folder = os.path.abspath(a.folder)
-    exe = os.path.join(folder, "bin", "longshot.exe")
+    exe = os.path.join(folder, "bin", "inhale.exe")
     if not os.path.exists(exe):
-        sys.exit("cover: %s has no bin\\longshot.exe" % folder)
-    out = os.path.abspath(a.out or os.path.join(os.environ["LOCALAPPDATA"], "LongshotCover",
+        sys.exit("cover: %s has no bin\\inhale.exe" % folder)
+    out = os.path.abspath(a.out or os.path.join(os.environ["LOCALAPPDATA"], "InhaleCover",
                                                 datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
     os.makedirs(out, exist_ok=True)
-    busy = subprocess.run(["tasklist", "/FI", "IMAGENAME eq longshot.exe", "/NH"], capture_output=True, text=True).stdout
-    if "longshot.exe" in busy.lower() and not a.force:
-        sys.exit("cover: a game (longshot.exe) is running already; close it first (or --force)")
+    busy = subprocess.run(["tasklist", "/FI", "IMAGENAME eq inhale.exe", "/NH"], capture_output=True, text=True).stdout
+    if "inhale.exe" in busy.lower() and not a.force:
+        sys.exit("cover: a game (inhale.exe) is running already; close it first (or --force)")
     functions(exe, out, a.nm)
     dll = build_dll(out, a.cc)
     env = dict(os.environ)

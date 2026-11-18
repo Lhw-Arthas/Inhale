@@ -7,7 +7,7 @@
 #include <windows.h>
 #include <stdlib.h>
 
-#include "../gpu/vk/compat/longshot_env.h" /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h" /* (env_on: the switches' one rule) */
 
 extern volatile uint32_t hos_frame_seconds_bits;   /* (host/nn_vi.c: the frame's seconds, 0 at a cap of 60) */
 

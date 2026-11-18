@@ -1,4 +1,4 @@
-"""Translations reused across work folders (nx2/lift_store.py, LONGSHOT_LIFT_STORE): a lift is saved whole under the share key
+"""Translations reused across work folders (nx2/lift_store.py, INHALE_LIFT_STORE): a lift is saved whole under the share key
 (make_game.py lift_share_key: the lift key without the work and game folders' paths), another folder takes it with the chunk
 boundaries and hot pieces that lift left, a snapshot that is not whole or whose C is cut short is never used, and only the newest
 are kept.
@@ -35,7 +35,7 @@ def lifted(work, chunk="80001000", body=b"void f_80001000(void) {\n}\n"):
 with tempfile.TemporaryDirectory() as top:
     top = Path(top)
     store = top / "lifts"
-    with mock.patch.dict(os.environ, {"LONGSHOT_LIFT_STORE": "0"}):
+    with mock.patch.dict(os.environ, {"INHALE_LIFT_STORE": "0"}):
         assert lift_store.root() is None
     a, b = top / "a" / "work", top / "b" / "work"
     lifted(a)

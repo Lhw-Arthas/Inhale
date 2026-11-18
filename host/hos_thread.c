@@ -7,8 +7,8 @@
 #include "hos.h"
 #include "hos_crash_record.h"
 #include "hos_report_prefixes.h"
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 #include <stdio.h>
 #include <stdlib.h>

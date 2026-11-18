@@ -98,7 +98,7 @@ def build(source_path, cc, folder):
     fixture.write_text(driver, encoding="utf-8")
     executable = folder/("recovery.exe" if os.name == "nt" else "recovery")
     command = [cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(folder), "-I", str(ROOT/"host"),
-               "-include", str(ROOT/"gpu/vk/compat/longshot_env.h")]
+               "-include", str(ROOT/"gpu/vk/compat/inhale_env.h")]
     if "static void output_route_update(void)" in section:
         command.append("-DHAVE_ROUTE_UPDATE")
     command += [str(fixture), "-o", str(executable)]

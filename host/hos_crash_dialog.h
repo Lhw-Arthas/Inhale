@@ -2,13 +2,13 @@
 /* (longshot) The window after a crash (host/hos_crash_dialog.c): the parts that decide, as plain C with no system calls, for
    tests/test_crash_dialog.py.
 
-   The game starts a small helper of itself early, `longshot --crash-watch <pid> <run id> <game folder> <log> <options>`
-   (<options> the run's longshot_options.ini, host/options_path.c; "-" none, and left out the game folder's), which waits for
+   The game starts a small helper of itself early, `inhale --crash-watch <pid> <run id> <game folder> <log> <options>`
+   (<options> the run's inhale_options.ini, host/options_path.c; "-" none, and left out the game folder's), which waits for
    the game to end and then reads what it left: a crash record of its run in bug-reports/pending (hos_crash_record.c), an
    unclean-end record (the game ended without its crash handler: killed, out of memory), the quit the player asked for, and
    the run's log. From those it decides whether to say anything (hos_crash_verdict), when it happened (hos_crash_stage) and
    why, where that is known (hos_crash_cause). A start that finds a crash record nobody showed (no helper could run) asks a
-   helper to show it: `longshot --crash-show <record> <game folder> <log> <options>`. Nothing is sent anywhere: Report copies a
+   helper to show it: `inhale --crash-show <record> <game folder> <log> <options>`. Nothing is sent anywhere: Report copies a
    redacted text and opens the issue form, and only when the player clicks it. */
 #pragma once
 #include <stddef.h>
@@ -21,8 +21,8 @@
 #define HOS_CRASH_SHOW_ARG "--crash-show"
 /* (the game-problem form, as the Insert menu's Bug report links it: gpu/vk/vk_bug_report.cpp kForm. Forgejo fills a form's field
    from the query's field:<its id>, and the title from title=) */
-#define HOS_CRASH_ISSUE_FORM "https://git.magicbean.dev/MagicBeanDev/Longshot/issues/new?template=.forgejo/ISSUE_TEMPLATE/1-game-problem.yml"
-#define HOS_CRASH_ISSUES "https://git.magicbean.dev/MagicBeanDev/Longshot/issues/new/choose"
+#define HOS_CRASH_ISSUE_FORM "https://tracker.inhale.invalid/issues/new?template=.forgejo/ISSUE_TEMPLATE/1-game-problem.yml"
+#define HOS_CRASH_ISSUES "https://tracker.inhale.invalid/issues/new/choose"
 enum { HOS_CRASH_LINK_MAX = 2000, HOS_CRASH_LOG_LINES = 200 };
 
 /* ---- the helper's command line ---- */
@@ -33,7 +33,7 @@ typedef struct HosCrashArgs {
     const char *record;    /* (show) a record's file name in bug-reports/pending */
     const char *dir;       /* the game folder */
     const char *log;       /* the run's log, NULL when it logged to no file ("-") */
-    const char *options;   /* the run's longshot_options.ini (host/options_path.c), NULL when not given ("-", or left out): the
+    const char *options;   /* the run's inhale_options.ini (host/options_path.c), NULL when not given ("-", or left out): the
                               game folder's */
 } HosCrashArgs;
 
@@ -194,7 +194,7 @@ static inline void hos_crash_log_line(HosCrashLog *f, const char *line) {
     if (strstr(line, "] boot: LOW MEMORY")) f->low_memory = 1;
     if (strstr(line, "device lost") || strstr(line, "VK_ERROR_DEVICE_LOST")) f->device_lost = 1;
     /* (what the report names) */
-    if (!f->version[0] && (at = strstr(line, "] longshot "))) hos_crash_take(f->version, sizeof f->version, at + 11);
+    if (!f->version[0] && (at = strstr(line, "] inhale "))) hos_crash_take(f->version, sizeof f->version, at + 9);
     if ((at = strstr(line, "] vk: driver: "))) hos_crash_take(f->driver, sizeof f->driver, at + 14);
     if ((at = strstr(line, "] vk: ")) && strstr(at, ", Vulkan ") && strstr(at, "; mesh shaders ")) {   /* (the device chosen) */
         const char *name = at + 6, *end = strstr(name, ", Vulkan ");
@@ -245,8 +245,8 @@ static inline int hos_crash_record_value(const char *text, const char *key, char
 }
 static inline void hos_crash_record_parse(const char *text, HosCrashRecord *r) {
     memset(r, 0, sizeof *r);
-    if (!strncmp(text, "Longshot crash record 1\n", 24)) r->kind = 1;
-    else if (!strncmp(text, "Longshot unclean record 1\n", 26)) r->kind = 2;
+    if (!strncmp(text, "Inhale crash record 1\n", 22)) r->kind = 1;
+    else if (!strncmp(text, "Inhale unclean record 1\n", 24)) r->kind = 2;
     else return;
     char v[40];
     hos_crash_record_value(text, "reason", r->reason, sizeof r->reason);
@@ -309,13 +309,13 @@ static inline int hos_crash_cause(int verdict, const HosCrashRecord *r, const Ho
     return HOS_CAUSE_UNKNOWN;
 }
 static inline const char *hos_crash_title(int verdict) {
-    return verdict == HOS_CRASH_SHOW_START ? "Longshot couldn't start" : "Longshot closed unexpectedly";
+    return verdict == HOS_CRASH_SHOW_START ? "Inhale couldn't start" : "Inhale closed unexpectedly";
 }
 static inline const char *hos_crash_stage_text(int stage) {
     return stage == HOS_STAGE_PLAY ? "while you were playing" : stage == HOS_STAGE_PREPARING ? "while it prepared the shaders"
          : stage == HOS_STAGE_UNKNOWN ? "" : "during the start";
 }
-/* What happened and when, as a sentence without its full stop: "Longshot closed unexpectedly while you were playing" */
+/* What happened and when, as a sentence without its full stop: "Inhale closed unexpectedly while you were playing" */
 static inline void hos_crash_headline(char *out, size_t cap, const char *what, int stage) {
     const char *when = hos_crash_stage_text(stage);
     snprintf(out, cap, "%s%s%s", what, when[0] ? " " : "", when);
@@ -323,18 +323,18 @@ static inline void hos_crash_headline(char *out, size_t cap, const char *what, i
 static inline const char *hos_crash_cause_text(int cause) {
     switch (cause) {
     case HOS_CAUSE_FILES:
-        return "Longshot's game files are missing or don't match each other. Build the game again with the Longshot Launcher.";
+        return "Inhale's game files are missing or don't match each other. Build the game again with the Inhale Launcher.";
     case HOS_CAUSE_VULKAN:
-        return "Vulkan didn't start on your graphics card. Update your graphics driver: Longshot needs a graphics card and "
+        return "Vulkan didn't start on your graphics card. Update your graphics driver: Inhale needs a graphics card and "
                "driver with Vulkan 1.3.";
-    case HOS_CAUSE_WINDOW: return "Longshot couldn't open its window. Restart your PC, and update your graphics driver.";
+    case HOS_CAUSE_WINDOW: return "Inhale couldn't open its window. Restart your PC, and update your graphics driver.";
     case HOS_CAUSE_MEMORY:
-        return "Your PC ran out of memory. Close other programs and try again; Longshot needs 16 GB of RAM, and on Windows a "
+        return "Your PC ran out of memory. Close other programs and try again; Inhale needs 16 GB of RAM, and on Windows a "
                "page file Windows manages.";
     case HOS_CAUSE_GPU_DRIVER:
         return "The graphics driver failed. Update your graphics driver, and turn off overlays and tools hooked into the game.";
     case HOS_CAUSE_ENDED:
-        return "Longshot ended without a crash report: it was closed from outside (Task Manager, a kill), or the system "
+        return "Inhale ended without a crash report: it was closed from outside (Task Manager, a kill), or the system "
                "stopped it, often for running out of memory.";
     default: return "An unexpected error.";
     }
@@ -342,13 +342,13 @@ static inline const char *hos_crash_cause_text(int cause) {
 /* The window's text: what happened and when, why, and what Report does */
 static inline size_t hos_crash_message(char *out, size_t cap, int verdict, int stage, int cause) {
     char headline[160];
-    hos_crash_headline(headline, sizeof headline, verdict == HOS_CRASH_SHOW_START ? "Longshot stopped" : "Longshot closed unexpectedly",
+    hos_crash_headline(headline, sizeof headline, verdict == HOS_CRASH_SHOW_START ? "Inhale stopped" : "Inhale closed unexpectedly",
                        stage);
     const int n = snprintf(out, cap,
                            "%s.\n\nWhat went wrong: %s\n\n"
                            "Report copies a report to your clipboard (the error, your PC's hardware and the end of the log, "
-                           "with your home folder and user name taken out) and opens Longshot's issue form in your browser, "
-                           "for you to paste it into. Longshot itself sends nothing.",
+                           "with your home folder and user name taken out) and opens Inhale's issue form in your browser, "
+                           "for you to paste it into. Inhale itself sends nothing.",
                            headline, hos_crash_cause_text(cause));
     return n < 0 ? 0 : (size_t)n < cap ? (size_t)n : cap ? cap - 1 : 0;
 }
@@ -499,11 +499,11 @@ static inline size_t hos_crash_ready_text(char *out, size_t cap, int copied, int
         copied ? "The report is on your clipboard. "
         : saved ? "The report could not be put on the clipboard. Click Open the report, select all of it and copy it. "
                 : "The report could not be put on the clipboard, nor saved. ",
-        opened ? "In the issue form that opened in your browser, paste it into the longshot_log.txt box, say what you were doing, "
+        opened ? "In the issue form that opened in your browser, paste it into the inhale_log.txt box, say what you were doing, "
                  "and fill in the rest."
                : "Open ",
         opened ? "" : issues,
-        opened ? "" : ", choose Game problem, and paste it into the longshot_log.txt box.",
+        opened ? "" : ", choose Game problem, and paste it into the inhale_log.txt box.",
         saved ? "\n\nIt is saved as " : "", saved ? saved : "");
     size_t used = n < 0 ? 0 : (size_t)n < cap ? (size_t)n : cap ? cap - 1 : 0;
     const char *tail = saved ? "." : "";

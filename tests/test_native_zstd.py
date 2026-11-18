@@ -48,7 +48,7 @@ ZSTD = ROOT / "third_party/zstd/lib"
 SOURCES = ["common/debug.c", "common/entropy_common.c", "common/error_private.c", "common/fse_decompress.c", "common/xxhash.c",
            "common/zstd_common.c", "decompress/huf_decompress.c", "decompress/zstd_ddict.c", "decompress/zstd_decompress.c",
            "decompress/zstd_decompress_block.c"]
-ENV_ON_H = ROOT / "gpu/vk/compat/longshot_env.h"
+ENV_ON_H = ROOT / "gpu/vk/compat/inhale_env.h"
 BROKEN = ("                S_STAGED(g) = (uint32_t)staged;\n", "")   # (the staging fill never stored)
 BROKEN_F = ("ZSTD_decompress_usingDDict(z, GP(dst), room, GP(src), n, d->dd)",   # (the whole-buffer decode's DDict not passed)
             "ZSTD_decompress_usingDDict(z, GP(dst), room, GP(src), n, NULL)")

@@ -102,7 +102,7 @@ Row rows[] = {
 };
 /* INIKEY */
 int parse_output(const char*) { return 0; }
-void load(const char* text) {   // (one line of longshot_options.ini, through the menu's own loop)
+void load(const char* text) {   // (one line of inhale_options.ini, through the menu's own loop)
     char line[80];
     std::snprintf(line, sizeof line, "%s", text);
     char* eq = std::strchr(line, '=');
@@ -115,7 +115,7 @@ bool starts(const char* s, const char* with) { return s && !std::strncmp(s, with
 void reset_run() { unavailable = FG_SKIP_NONE, why_dlss = DLSS_OK, forced = false, maker = FgMaker::None, skip_now = FG_SKIP_NONE; }
 int main() {
     const Row& r = rows[0];
-    CHECK(std::strcmp(ini_key(r), "frame_generation_by") == 0, "the row's key in longshot_options.ini changed");
+    CHECK(std::strcmp(ini_key(r), "frame_generation_by") == 0, "the row's key in inhale_options.ini changed");
     CHECK(r.lo == 0 && r.hi == 1 && r.step == 1, "the row is not two choices, DLSS FG and Built-in FG");
     CHECK(Options{}.framegen_by == 0, "the default is not DLSS FG (0, the old Auto's number)");
     // (no value reads Auto, wherever DLSS FG runs or not and whoever made the last frames)
@@ -300,7 +300,7 @@ def main():
     for key, value in parts.items():
         src_text = src_text.replace(key, value)
     # (the switches fg_possible and fg_asked read are the run's: none from the shell this runs in)
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("RX_", "HOS_", "LONGSHOT_"))}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("RX_", "HOS_", "INHALE_"))}
     with tempfile.TemporaryDirectory(prefix="framegen-by-") as tmp:
         src = Path(tmp) / "row.cpp"
         exe = Path(tmp) / ("row.exe" if os.name == "nt" else "row")

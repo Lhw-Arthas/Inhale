@@ -34,10 +34,10 @@
 #else
 #include "hos_sdl.h"
 #endif
-#include "options_path.h"   /* (longshot_options.ini, au_menu_output) */
+#include "options_path.h"   /* (inhale_options.ini, au_menu_output) */
 #include "audio_output_devices.h"
-#ifndef LONGSHOT_ENV_H   /* (env_on: the switches' one rule) */
-#include "../gpu/vk/compat/longshot_env.h"
+#ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/inhale_env.h"
 #endif
 
 void hos_system_event_init(uint64_t key, int autoclear);
@@ -806,7 +806,7 @@ static int au_device_channels(void) {
 #else
 static int au_device_channels(void) { return hos_sdl_audio_channels(); }
 #endif
-/* (longshot) The Insert menu's Audio output (gpu/vk/vk_menu.cpp): audio_output= in longshot_options.ini (host/options_path.c),
+/* (longshot) The Insert menu's Audio output (gpu/vk/vk_menu.cpp): audio_output= in inhale_options.ini (host/options_path.c),
    0 Auto, 1 Stereo, 2 5.1, 3 Mono (stereo with a live final average). A number past them is the nearest, as the menu reads
    it. Read from the file, as host/nn_applet.c reads the Handheld profile: the game asks for its speakers only once,
    at its start */

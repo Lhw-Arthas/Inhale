@@ -1,14 +1,14 @@
-"""The hot pieces' compile flags carry the giant split (nx2/build.py hot_flags, LONGSHOT_SPLIT_GIANTS).
+"""The hot pieces' compile flags carry the giant split (nx2/build.py hot_flags, INHALE_SPLIT_GIANTS).
 
 A build with a hot list compiles its hot functions as code_hot*.c at RX_HOT_OPT (-O2). One of them was a single lifted
 function, f_81b8c000, 4.79 MB of C, and at -O2 it took 438 s of a from-scratch build's 446 s compile. The lifted chunks
-compile their functions of 256 KB or more as pieces cut at their labels (LONGSHOT_SPLIT_GIANTS, nx2/split_giants.py), but
+compile their functions of 256 KB or more as pieces cut at their labels (INHALE_SPLIT_GIANTS, nx2/split_giants.py), but
 the hot pieces' flags were built separately from the plain fl and never carried that flag, so the hot giants were compiled
 whole. hot_flags() now adds it. This check is the source-level guard on those flags: the regression would be silent -- the
 builds still finish, they just take minutes more.
 
 What it checks: hot_flags() puts split_giants.FLAG on the hot pieces at RX_HOT_OPT (default O2), with
-LONGSHOT_SPLIT_GIANTS=0 turning it off and a size carrying through; main() takes its hot_fl from hot_flags(), so an edit
+INHALE_SPLIT_GIANTS=0 turning it off and a size carrying through; main() takes its hot_fl from hot_flags(), so an edit
 back to the inline list fails here; and source_flags() sends a code_hot* file to those flags.
 
 The splitter's exactness is not this check's: tests/test_split_giants.py (unchanged) proves it, compiled, over random
@@ -27,7 +27,7 @@ import build  # noqa: E402
 import split_giants as SG  # noqa: E402
 
 FAILS = []
-SWITCHES = ("RX_HOT_OPT", "LONGSHOT_SPLIT_GIANTS")
+SWITCHES = ("RX_HOT_OPT", "INHALE_SPLIT_GIANTS")
 
 
 def check(ok, what):
@@ -61,13 +61,13 @@ def flag_checks():
         check(any(f.startswith(SG.FLAG) for f in hot), "RX_HOT_OPT=O1: the split stays (it is about size, not level) (%r)" % hot)
         os.environ.pop("RX_HOT_OPT", None)
 
-        os.environ["LONGSHOT_SPLIT_GIANTS"] = "0"
+        os.environ["INHALE_SPLIT_GIANTS"] = "0"
         hot = build.hot_flags(fl)
         check(not any(f.startswith(SG.FLAG) for f in hot) and "-O2" in hot,
-              "LONGSHOT_SPLIT_GIANTS=0: no split, still -O2 (%r)" % hot)
-        os.environ["LONGSHOT_SPLIT_GIANTS"] = "16"
+              "INHALE_SPLIT_GIANTS=0: no split, still -O2 (%r)" % hot)
+        os.environ["INHALE_SPLIT_GIANTS"] = "16"
         hot = build.hot_flags(fl)
-        check(any(f.startswith(SG.FLAG + "16_") for f in hot), "LONGSHOT_SPLIT_GIANTS=16: the size carries through (%r)" % hot)
+        check(any(f.startswith(SG.FLAG + "16_") for f in hot), "INHALE_SPLIT_GIANTS=16: the size carries through (%r)" % hot)
     finally:
         for k in SWITCHES:
             os.environ.pop(k, None)
@@ -79,7 +79,7 @@ def flag_checks():
     check("hot_fl = [(" not in src, "main() does not build the hot flags inline again")
     # (source_flags sends a code_hot* file to hot_fl, so the flag reaches the compiler)
     hot = build.hot_flags(fl)
-    with tempfile.TemporaryDirectory(prefix="longshot-hot-flags-") as gen:
+    with tempfile.TemporaryDirectory(prefix="inhale-hot-flags-") as gen:
         Path(gen, "code_000.c").write_text('void f_00000000(Ctx *__restrict A64_NOESC c) {\n    c->x[1] = c->x[2] + 1;\n}\n',
                                            newline="\n")
         check(build.source_flags(os.path.join(gen, "code_hot_0.c"), gen, fl, fl + build.split_giants_flags(), hot, b"", 1024) == hot,

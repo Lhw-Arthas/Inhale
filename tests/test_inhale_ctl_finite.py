@@ -1,6 +1,6 @@
 """CLI floats must reject non-finite values before opening the control bridge.
 
-Game-free: python -I -B tests/test_longshot_ctl_finite.py
+Game-free: python -I -B tests/test_inhale_ctl_finite.py
 """
 import contextlib
 import importlib.util
@@ -27,7 +27,7 @@ class FiniteCLI(unittest.TestCase):
         self.no_socket = mock.patch("socket.socket", side_effect=AssertionError("real socket forbidden"))
         self.no_socket.start()
         self.addCleanup(self.no_socket.stop)
-        spec = importlib.util.spec_from_file_location("ctl_finite", ROOT / "scripts" / "longshot_ctl.py")
+        spec = importlib.util.spec_from_file_location("ctl_finite", ROOT / "scripts" / "inhale_ctl.py")
         self.m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.m)
 

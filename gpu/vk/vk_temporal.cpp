@@ -259,7 +259,7 @@ struct State {
     std::atomic<bool> holding{false};   // (an engine's state, images or frees still to do: temporal_idle has something to let go)
 };
 State& st() {
-    // (never destroyed: Longshot leaves through ExitProcess / exit() with the device alive, and `dead` may still hold an
+    // (never destroyed: Inhale leaves through ExitProcess / exit() with the device alive, and `dead` may still hold an
     // engine's state then (an FSR context), whose destructor would call into a library already gone)
     static State& s = *new State;
     return s;

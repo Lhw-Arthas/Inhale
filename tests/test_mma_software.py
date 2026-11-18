@@ -228,7 +228,7 @@ def switch(cxx, folder):
     checks = "\n".join(
         f'    if (software_unroll_wanted({d}, {"nullptr" if e is None else chr(34) + e + chr(34)}) != {str(w).lower()}) '
         f'{{ std::puts("FAIL: {d} {e}"); return 1; }}' for d, e, w in cases)
-    env_h = (VK / "compat/longshot_env.h").read_text(encoding="utf-8")
+    env_h = (VK / "compat/inhale_env.h").read_text(encoding="utf-8")
     enum = "enum VkDriverId { " + ", ".join(f"{k} = {n}" for k, n in DRIVER_IDS.items()) + " };\n"
     source = env_h + "\n#include <cstdio>\n#include <cstdlib>\n" + enum + fn + "\nint main() {\n" + checks + "\n    return 0;\n}\n"
     compile_and_run(cxx, source, [], folder, "switch")

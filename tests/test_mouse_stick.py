@@ -22,8 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # (python -I leaves t
 from srccut import between, block  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-# (env_on, the switches' rule, before the code cut out of the source: gpu/vk/compat/longshot_env.h)
-ENV_ON_H = str(ROOT / "gpu" / "vk" / "compat" / "longshot_env.h")
+# (env_on, the switches' rule, before the code cut out of the source: gpu/vk/compat/inhale_env.h)
+ENV_ON_H = str(ROOT / "gpu" / "vk" / "compat" / "inhale_env.h")
 
 BEFORE = r"""
 #include <math.h>
@@ -107,7 +107,7 @@ def main():
         block(hid, "static void mouse_setup(void)"),
         block(hid, "static int mouse_stick("),
     ))
-    with tempfile.TemporaryDirectory(prefix="longshot-mouse-stick-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="inhale-mouse-stick-") as tmp:
         tmp = Path(tmp)
         (tmp / "t.c").write_text(BEFORE + cut + AFTER, encoding="utf-8")
         binary = tmp / "t.exe"

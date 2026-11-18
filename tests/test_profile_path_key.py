@@ -1,5 +1,5 @@
 """The object keys name a play profile by its contents, not its path (nx2/build.py flag_text). make_game.py puts both profiles
-in the work folder (RX_PGO=<work>/longshot_pieces.prof for the eight hot pieces, RX_VK_PGO=<work>/longshot_vk.shipped.profdata
+in the work folder (RX_PGO=<work>/inhale_pieces.prof for the eight hot pieces, RX_VK_PGO=<work>/inhale_vk.shipped.profdata
 for the renderer's own objects), so with the path in the key another work folder could share neither through the object store
 (nx2/object_store.py) or a dev_packs.py base. The -D..._PROFILE_SHA1 beside the path is what the key needs of the profile.
 
@@ -20,10 +20,10 @@ spec.loader.exec_module(build)
 
 class ProfilePathTests(unittest.TestCase):
     def test_the_profiles_path_is_not_in_the_key_and_its_contents_are(self):
-        for define in ("-DLONGSHOT_PROFILE_SHA1=", "-DLONGSHOT_VK_PROFILE_SHA1="):
-            a = ["-O2", "-fprofile-instr-use=C:/one/work/longshot_pieces.prof", define + "0123456789abcdef"]
-            b = ["-O2", "-fprofile-instr-use=/home/two/work/longshot_pieces.prof", define + "0123456789abcdef"]
-            c = ["-O2", "-fprofile-instr-use=C:/one/work/longshot_pieces.prof", define + "fedcba9876543210"]
+        for define in ("-DINHALE_PROFILE_SHA1=", "-DINHALE_VK_PROFILE_SHA1="):
+            a = ["-O2", "-fprofile-instr-use=C:/one/work/inhale_pieces.prof", define + "0123456789abcdef"]
+            b = ["-O2", "-fprofile-instr-use=/home/two/work/inhale_pieces.prof", define + "0123456789abcdef"]
+            c = ["-O2", "-fprofile-instr-use=C:/one/work/inhale_pieces.prof", define + "fedcba9876543210"]
             self.assertEqual(build.flag_text(a), build.flag_text(b))
             self.assertNotEqual(build.flag_text(a), build.flag_text(c))
             self.assertEqual(build.object_key(__file__, a, b""), build.object_key(__file__, b, b""))
@@ -36,7 +36,7 @@ class ProfilePathTests(unittest.TestCase):
         self.assertGreaterEqual(len(uses), 2, "the hot pieces' RX_PGO and the renderer's RX_VK_PGO")
         for at in uses:
             rest = src[at:src.index("]", at)]
-            self.assertRegex(rest, r'"-DLONGSHOT_(VK_)?PROFILE_SHA1=" \+ hashlib\.sha1\(f\.read\(\)', src[at - 60:at + 120])
+            self.assertRegex(rest, r'"-DINHALE_(VK_)?PROFILE_SHA1=" \+ hashlib\.sha1\(f\.read\(\)', src[at - 60:at + 120])
 
 
 if __name__ == "__main__":

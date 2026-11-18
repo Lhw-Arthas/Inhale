@@ -1,6 +1,6 @@
 /* cover_dll.c: which lifted functions run, and when each first ran (scripts/coverage/cover.py loads it into the game).
 
-   Loaded into bin\longshot.exe before its entry point (cover.py starts the game suspended and queues LoadLibraryW on its
+   Loaded into bin\inhale.exe before its entry point (cover.py starts the game suspended and queues LoadLibraryW on its
    main thread). It reads the lifted functions' offsets in the exe (COVER_FNS: a file of sorted, distinct uint32 RVAs that
    cover.py made from the exe's own symbol table, f_<guest address>), writes an int3 (0xCC) over the first byte of each,
    and keeps the bytes it replaced. A vectored handler takes the breakpoint the first time a function is entered, puts the

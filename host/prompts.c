@@ -5,7 +5,7 @@
    at the face's icon of the pad input bound to it (host/nn_hid.c's controls, the menu's Layout preset and Controls page). So the
    icons say which button to press on this pad, custom controls too.
 
-   The face: longshot_options.ini's button_prompts (the menu's Button prompts row): 0 Auto, from the first controller's name
+   The face: inhale_options.ini's button_prompts (the menu's Button prompts row): 0 Auto, from the first controller's name
    (SDL; with none, and none through XInput, the keyboard's), else 1 Switch, 2 Xbox, 3 PlayStation 4, 4 PlayStation 5, 5 Steam
    Deck, 6 Keyboard. The keyboard face (nx2/prompt_keys.py) points each Switch button at the icon of the first key bound to it,
    the sticks at the keys that move (the Controls page's: stick_shows) and the mouse that turns the camera, and keeps the

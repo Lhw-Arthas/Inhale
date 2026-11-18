@@ -20,7 +20,7 @@ def check(what, ok):
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix="longshot-lift-key-") as d:
+    with tempfile.TemporaryDirectory(prefix="inhale-lift-key-") as d:
         d = Path(d)
         exefs, work = d / "exefs", d / "work"
         (exefs).mkdir()
@@ -132,7 +132,7 @@ def check_key_after_lift():
     check("what the lift reads and does not write is taken as it starts", 0 <= start < lift)
     check("the key taken after the lift is kept only if that did not change while it ran", split < guard < taken < write)
     check("the key is taken before that comparison, so an edit between the two is caught by it", again < guard)
-    with tempfile.TemporaryDirectory(prefix="longshot-lift-key-after-") as d:
+    with tempfile.TemporaryDirectory(prefix="inhale-lift-key-after-") as d:
         d = Path(d)
         exefs, work = d / "exefs", d / "work"
         exefs.mkdir()
@@ -198,7 +198,7 @@ def check_lift_env():
     env_on("X") and env_int("X"). A read through an alias (e = os.environ; e.get("X")) or of a name built at run time slips past
     it (HumanBean on #22): a variable read that way has to be added to the lists by hand"""
     import re
-    with tempfile.TemporaryDirectory(prefix="longshot-lift-env-") as d:
+    with tempfile.TemporaryDirectory(prefix="inhale-lift-env-") as d:
         d = Path(d)
         for top in ("a", "b"):
             (d / top / "exefs").mkdir(parents=True)
@@ -241,7 +241,7 @@ def check_hot_list_override():
     """(HumanBean on #22) A64_HOT_FUNCS is a path the key leaves out: the build sets it to <work>/hot_funcs.txt, whose contents
     the key holds. With no <work>/hot_funcs.txt, a developer's own list named in the shell is what the lift reads, so the key holds
     its contents, or its path when the file is not there; with the build's own list, that one is read and the shell's is not"""
-    with tempfile.TemporaryDirectory(prefix="longshot-hot-list-") as d:
+    with tempfile.TemporaryDirectory(prefix="inhale-hot-list-") as d:
         d = Path(d)
         (d / "exefs").mkdir()
         (d / "work" / "image").mkdir(parents=True)

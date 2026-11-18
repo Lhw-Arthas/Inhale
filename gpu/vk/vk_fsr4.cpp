@@ -18,7 +18,7 @@
 #include "vk_internal.h"
 #include "vk_temporal.h"
 
-#ifdef LONGSHOT_FSR
+#ifdef INHALE_FSR
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -71,7 +71,7 @@ FsrWhy fsr4_why() {
     return w < 0 ? FSR_OK : (FsrWhy)w;
 }
 
-#ifdef LONGSHOT_FSR
+#ifdef INHALE_FSR
 
 namespace {
 
@@ -94,7 +94,7 @@ struct Library {
     uint64_t version_id = 0;
     VkDeviceContext device_context{};
 };
-// (lib() and st() are never destroyed: Longshot leaves through ExitProcess / exit() with the device alive, and a destructor
+// (lib() and st() are never destroyed: Inhale leaves through ExitProcess / exit() with the device alive, and a destructor
 // then would call into AMD's library after its DLL_PROCESS_DETACH, or under a render thread still recording with it)
 Library& lib() {
     static Library& l = *new Library;
@@ -1233,7 +1233,7 @@ bool fsr4_wants_descriptor_buffer() {
 #endif
 }
 
-#else  // (no LONGSHOT_FSR in this build: FSR is not there)
+#else  // (no INHALE_FSR in this build: FSR is not there)
 
 bool fsr4_built() { return false; }
 const TemporalEngine* fsr4_engine() { return nullptr; }

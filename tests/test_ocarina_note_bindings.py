@@ -82,13 +82,13 @@ static const char *ini_dir;
 #else
 #define EXE_SEP "/"
 #endif
-static DWORD GetModuleFileNameA(void *m, char *b, DWORD n) { (void)m; return (DWORD)snprintf(b, n, "%s" EXE_SEP "longshot.exe", ini_dir); }
+static DWORD GetModuleFileNameA(void *m, char *b, DWORD n) { (void)m; return (DWORD)snprintf(b, n, "%s" EXE_SEP "inhale.exe", ini_dir); }
 #define hos_game_path_a(b,n) GetModuleFileNameA(0,b,n)
 static const char *hos_options_file(void) {   /* (host/options_path.c: here, beside the exe) */
     static char p[600];
     DWORD n = GetModuleFileNameA(0, p, 560);
     while (n && p[n - 1] != 92 && p[n - 1] != 47) n--;
-    snprintf(p + n, sizeof p - n, "longshot_options.ini");
+    snprintf(p + n, sizeof p - n, "inhale_options.ini");
     return p;
 }
 """
@@ -160,9 +160,9 @@ class OcarinaNoteBindingsTests(unittest.TestCase):
         hid = (ROOT / "host" / "nn_hid.c").read_text(encoding="utf-8")
         code = between(hid, "static const char *const bind_names[HOS_KEY_N]",
                        "void hos_bind(int set, int button, int slot, int code) {")
-        with tempfile.TemporaryDirectory(prefix="longshot-note-bindings-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="inhale-note-bindings-") as tmp:
             tmp = Path(tmp)
-            (tmp / "longshot_options.ini").write_text(
+            (tmp / "inhale_options.ini").write_text(
                 "key_move_up=90,0\npad_a=5\nkey_note_y=78,0\n", encoding="utf-8")
             (tmp / "t.c").write_text(PRELUDE + code + MAIN, encoding="utf-8")
             binary = tmp / ("t.exe" if sys.platform == "win32" else "t")

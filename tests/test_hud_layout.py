@@ -139,7 +139,7 @@ int main(void) {
        the minimap) */
     CHECK(mapfx == -1700 && maps == 1.0f && dcx == 1500 && ds == 1.0f && near(lgx, 1600 + e) && lgy == -900);
     /* (the loading fade, its layout in the middle 16:9 as the centred Ultrawide menus modes draw it: its pane over the whole
-       picture, its icon as it is, Longshot #82) */
+       picture, its icon as it is, Inhale #82) */
     drawn_size(fpane, &fw, &fh), drawn_size(ficon, &iw, &ih);
     CHECK(near(fw * hos_ui_qx, 3840.0f) && fh == 2160.0f && iw == 160.0f && ih == 160.0f);
     /* (its icon left in the middle 16:9: beside it, the centred modes' sides cover the picture while the world is not drawn) */

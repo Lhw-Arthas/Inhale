@@ -61,7 +61,7 @@ def section(text, first, before):
 
 
 FIXTURE = r'''
-#include "gpu/vk/compat/longshot_env.h"
+#include "gpu/vk/compat/inhale_env.h"
 #include <algorithm>
 #include <atomic>
 #include <cstring>

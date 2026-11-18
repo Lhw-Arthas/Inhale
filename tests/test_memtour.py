@@ -20,7 +20,7 @@ def load(name):
     return m
 
 
-ctl = load("longshot_ctl")
+ctl = load("inhale_ctl")
 mt = load("memtour")
 
 
@@ -28,7 +28,7 @@ def fake_proc(root, pid=42, anon=3000, shmem=5000, swap=700, vmswap=200, avail=9
     kb = 1024
     (root / str(pid)).mkdir(parents=True, exist_ok=True)
     (root / str(pid) / "status").write_text(
-        f"Name:\tlongshot\nVmRSS:\t{(anon + shmem + 50) * kb} kB\nRssAnon:\t{anon * kb} kB\nRssFile:\t{50 * kb} kB\n"
+        f"Name:\tinhale\nVmRSS:\t{(anon + shmem + 50) * kb} kB\nRssAnon:\t{anon * kb} kB\nRssFile:\t{50 * kb} kB\n"
         f"RssShmem:\t{shmem * kb} kB\nVmSwap:\t{vmswap * kb} kB\n")
     (root / str(pid) / "smaps_rollup").write_text(f"Rss:\t1 kB\nSwap:\t{swap * kb} kB\nSwapPss:\t1 kB\n")
     (root / "meminfo").write_text(

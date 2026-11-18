@@ -1,14 +1,14 @@
 /* (EvilOOT, 11-06) Stand-ins for the WebGPU renderer (gpu/render, its functions once renamed wgr_*), which is built no
-   more: the Vulkan back end in longshot_vk.dll is the only renderer (host/rx_backend.c). host/rx_backend.c and nn_hid.c
+   more: the Vulkan back end in inhale_vk.dll is the only renderer (host/rx_backend.c). host/rx_backend.c and nn_hid.c
    still name these functions, and the Windows executable is linked with them, as the Linux one is with
    host/posix/linux_stubs.c. None of the wgr_* calls is made while the Vulkan back end runs; wgr_start fails, so a
-   missing or unusable longshot_vk.dll shows as "no renderer" instead of a game that runs with nothing drawn. */
+   missing or unusable inhale_vk.dll shows as "no renderer" instead of a game that runs with nothing drawn. */
 #include "hos.h"
 #include <stdint.h>
 
 int wgr_start(void *hwnd) {
     (void)hwnd;
-    hos_log("rx: no WebGPU renderer in this build: only the Vulkan back end (longshot_vk.dll) draws");
+    hos_log("rx: no WebGPU renderer in this build: only the Vulkan back end (inhale_vk.dll) draws");
     return 0;
 }
 void wgr_resize(int width, int height) { (void)width, (void)height; }

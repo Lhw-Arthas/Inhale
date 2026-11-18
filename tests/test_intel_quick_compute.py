@@ -55,7 +55,7 @@ def main():
 
     # (before play, the same: the preparation at the build and a start's precompile ask for the pipeline the dispatch's first
     # build asks for. With the optimizer one build took 389.5 s, past the preparation's 300 s with nothing finished: it was
-    # stopped, longshot_prepare_skipped left, and every later start built each shader in play)
+    # stopped, inhale_prepare_skipped left, and every later start built each shader in play)
     quick = block(draw, "bool precompile_compute_quick(VkComputePipelineCreateInfo& ci) {")
     need("if (!serial_builds_on() || !intel_quick_compute() || (ci.flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT)) return false;"
          in quick and "ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;" in quick,

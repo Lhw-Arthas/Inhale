@@ -63,7 +63,7 @@ static volatile int ui_on;
 volatile float hos_ui_qx, hos_ui_qy;
 static volatile float ui_ex, ui_ey, ui_wx = 1.0f, ui_fit = 1.0f;
 /* (the loading fade's pane that spans its canvas, drawn the whole picture: ui_fill_x wider (a wider screen, its layout in the
-   middle 16:9), ui_fill_y taller (a narrower one, its layout at the HUD's size). Longshot #82,
+   middle 16:9), ui_fill_y taller (a narrower one, its layout at the HUD's size). Inhale #82,
    https://github.com/NotRexed/Hookshot/issues/2220: in the centred Ultrawide menus modes the fade covered the middle 16:9
    alone, the world still showing beside it. While its screen is not kept whole (fade_planned) on a narrower screen
    (fade_icon_planned), the rest of its layout, the loading icon, is placed as the HUD's: at the screen's corner, at the HUD's

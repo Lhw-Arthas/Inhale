@@ -1,4 +1,4 @@
-// The Insert menu (vk_menu.cpp): options that apply while the game runs, kept in longshot_options.ini in the user folder
+// The Insert menu (vk_menu.cpp): options that apply while the game runs, kept in inhale_options.ini in the user folder
 // (vk_paths.h options_path, host/options_path.c).
 #pragma once
 #include "auto_settings.h"

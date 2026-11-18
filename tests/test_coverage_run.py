@@ -1,6 +1,6 @@
 """scripts/coverage/cover.py run marks exactly the lifted functions a game runs, with the real DLL, on Windows.
 
-Builds a stand-in game (bin/longshot.exe with four f_<address> functions, two of them called, one of those a thousand
+Builds a stand-in game (bin/inhale.exe with four f_<address> functions, two of them called, one of those a thousand
 times) with the given clang, then runs it under `cover.py run` (the real cover_dll.c, loaded before the entry point) and
 checks the run folder: four functions found in the exe's symbol table, the two called ones and only those in covered.txt,
 in the order they first ran, and the program ending normally (exit code 0) after the breakpoints.
@@ -53,7 +53,7 @@ def main():
         src = os.path.join(tmp, "game.c")
         with open(src, "w") as f:
             f.write(GAME)
-        exe = os.path.join(game, "bin", "longshot.exe")
+        exe = os.path.join(game, "bin", "inhale.exe")
         subprocess.run([cc, "-O1", "-o", exe, src], check=True)
         want = subprocess.run([exe], capture_output=True, text=True, check=True).stdout
         assert want.strip() == "result -6998", want

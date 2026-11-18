@@ -1,6 +1,6 @@
 """A quit is not a crash (gpu/vk/crash_markers.h). Four steps of a start leave a file that says they began and did not end,
 so that a driver whose compiler crashes on one pipeline does not crash every start: the stage libraries
-(longshot_prepared.bin.warming, one such start and they are left out), the predicted pipelines (.predicting), the warm into
+(inhale_prepared.bin.warming, one such start and they are left out), the predicted pipelines (.predicting), the warm into
 the pipeline cache (.built.warming) and the precompile (.running): two such starts and the step is let go, the precompile's
 notes dropped. Closing the window, the Insert menu's Quit and the control socket's quit end the process at once
 (ExitProcess: no destructor runs, no thread is joined), so a quit in a step used to count as a crash there: two quits in the
@@ -72,10 +72,10 @@ void logf(const char* fmt, ...) {
 }
 void prepare_stop() { halt.store(true); }
 bool prepare_stopped() { return halt.load(); }
-std::string pipe_notes_path() { return dir + "/longshot_pipelines.bin"; }
+std::string pipe_notes_path() { return dir + "/inhale_pipelines.bin"; }
 std::string precompile_built_path() { return pipe_notes_path() + ".built"; }
 std::string predict_pending_path() { return pipe_notes_path() + ".predicting"; }
-std::string prepared_path() { return dir + "/longshot_prepared.bin"; }
+std::string prepared_path() { return dir + "/inhale_prepared.bin"; }
 void precompile_built_write(size_t n) {
     if (FILE* f = fopen(precompile_built_path().c_str(), "wb")) fprintf(f, "%u\n", (unsigned)n), fclose(f);
 }
@@ -224,7 +224,7 @@ def start(exe, folder, step, fate):
 def starts(exe, tmp, step, fates):
     """A new game folder and its starts in turn, then one more that gets through: whether each got to the step's work"""
     folder = Path(tempfile.mkdtemp(prefix="starts-", dir=tmp))
-    (folder / "longshot_pipelines.bin").write_bytes(b"the notes")
+    (folder / "inhale_pipelines.bin").write_bytes(b"the notes")
     return [start(exe, folder, step, fate) for fate in list(fates) + ["through"]], folder
 
 
@@ -249,7 +249,7 @@ def check_behaviour(exe, tmp):
             folder = Path(tempfile.mkdtemp(prefix="one-quit-", dir=tmp))
             start(exe, folder, step, quit)
             left = sorted(p.name for p in folder.iterdir())
-            pending = folder / "longshot_pipelines.bin.predicting"
+            pending = folder / "inhale_pipelines.bin.predicting"
             if step == "predict":   # (a prediction that did not finish is begun again at the next start, not counted)
                 if left != [pending.name] or pending.read_text().split() != ["0"]:
                     problems.append("predict: a quit (%s) left %s, wanted the prediction pending, with 0 starts that "

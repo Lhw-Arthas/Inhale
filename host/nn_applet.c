@@ -52,7 +52,7 @@ static const char *desired_language(void) {
                 if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF) p += 3;   /* (a BOM: Notepad's UTF-8) */
                 while (*p == ' ' || *p == '\t') p++;
                 if (*p == '#' || *p == '\r' || *p == '\n' || !*p) continue;
-                /* (only a code the game has: a stray line was taken before, and the game stayed in English, Longshot issue 75) */
+                /* (only a code the game has: a stray line was taken before, and the game stayed in English, Inhale issue 75) */
                 char code[32];
                 snprintf(code, sizeof code, "%s", p);
                 code[strcspn(code, " \t\r\n")] = 0;
@@ -89,7 +89,7 @@ HLE(_ZN2nn2oe18GetDesiredLanguageEv) {
    (MKW docked composes 3840 x 2160) */
 int hos_ini_option(const char *key, int otherwise);
 #define ini_option hos_ini_option
-/* (longshot) An option's text in longshot_options.ini (the Insert menu's choices, gpu/vk/vk_menu.cpp; where it is:
+/* (longshot) An option's text in inhale_options.ini (the Insert menu's choices, gpu/vk/vk_menu.cpp; where it is:
    host/options_path.c), the last line that sets it, its line end cut: whether there was one */
 static int ini_text(const char *key, char *out, size_t size) {
     if (!size) return 0;

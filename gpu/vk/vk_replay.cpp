@@ -51,8 +51,8 @@
 #include "vk_present_trace.h"
 
 #include "vk_internal.h"
-#ifndef LONGSHOT_ENV_H   // (env_on: the switches' one rule)
-#include "longshot_env.h"
+#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
+#include "inhale_env.h"
 #endif
 #include "vk_programs.h"
 #include "readback_late.h"
@@ -4781,12 +4781,12 @@ void status_tick() {
     static int64_t last_ns = 0, slowest_ns = 0;
     const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (last_ns) slowest_ns = std::max(slowest_ns, now_ns - last_ns);
-    // (RX_VK_FRAME_TRACE=1: every frame a line of longshot_frames.csv beside the game, present to present and what the frame did,
+    // (RX_VK_FRAME_TRACE=1: every frame a line of inhale_frames.csv beside the game, present to present and what the frame did,
     // so that each stutter can be matched to its cause: waits for shaders or pipelines, translation, uploads, the memory sync,
     // pipeline compiles, the GPU behind. RX_VK_FRAME_LOG has the frame times alone)
     static FILE* trace = [] {
         if (!getenv("RX_VK_FRAME_TRACE") || !atoi(getenv("RX_VK_FRAME_TRACE"))) return (FILE*)nullptr;
-        FILE* f = fopen(log_path("longshot_frames.csv").c_str(), "w");   // (the game folder's logs/: vk_paths.h)
+        FILE* f = fopen(log_path("inhale_frames.csv").c_str(), "w");   // (the game folder's logs/: vk_paths.h)
         if (f) fprintf(f, "frame,ms,pipe_waits,pipe_wait_ms,left_out,translate_ms,uploads,upload_mb,textures,memsync_ms,pipelines_ms,"
                           "uploads_ms,programs_ms,slot_wait_ms,gpu_behind_ms,draw_ms,desc_ms,cmds_ms,tex_lookup_ms,textures_gone,"
                           "late_wait_ms,readback_wait_ms,tex_frame_ms\n");
@@ -5143,7 +5143,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
             }
         }
         shot_ask_record(r.cmd, headless_fx ? headless_fx : src, headless_fx ? kShotW : sw, headless_fx ? kShotH : sh,
-                        headless_fx ? nullptr : crop, value);   // the bridge captures the same CRT output, without Longshot overlays
+                        headless_fx ? nullptr : crop, value);   // the bridge captures the same CRT output, without Inhale overlays
         memory_end_submission(r.cmd, r.part);
         full_barrier(r.cmd);
         submit_recording(r);   // (nothing is stopped at a present: drain)
