@@ -187,7 +187,10 @@ def write_image_c(gen, img, meta, exefs):
              "const uint64_t hos_entry_nninitStartup = %#xULL;" % ex.get("nninitStartup", 0),
              "const uint64_t hos_entry_nnMain = %#xULL;" % ex.get("nnMain", 0),
              "const uint64_t hos_program_id = %#xULL;   /* (main.npdm's ACI0) */" % program_id,
-             'const char hos_main_build_id[] = "%s";' % main_build]
+             'const char hos_main_build_id[] = "%s";' % main_build,
+             # (inhale) svcGetInfo 16: not 0 turns on the SDK's virtual address memory (hos_svc.c)
+             "const uint64_t hos_system_resource_size = %#xULL;   /* (main.npdm's) */"
+             % int.from_bytes(npdm[0x14:0x18], "little")]
     for sym in ("_init_libc0", "_init_libc1", "_init_libc2", "nnosInitialize", "nninitInitializeSdkModule",
                 "nvnBootstrapLoaderInternal"):
         lines.append("const uint64_t hos_entry_%s = %#xULL;" % (sym.lstrip("_"), ex.get(sym, 0)))

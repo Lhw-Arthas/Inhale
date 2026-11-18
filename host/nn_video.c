@@ -134,7 +134,8 @@ typedef struct {
     int slot_last[MAX_SLOTS];        /* the stream's last picture (the submission marked last, all decoded) */
     Picture queue[MAX_QUEUE];
     int qhead, qn;
-    int eos;                         /* the last submission is in and decoded: an empty queue is the end */
+    int eos;                         /* the last submission is in and decoded: an empty queue is the end. (inhale) 2 once
+                                        a buffer marked last went out: the end is told once (dec_acquire) */
     int stopped;                     /* (longshot) Stop or Flush since the last submission: no picture is coming (dec_acquire) */
     Pending *phead, *ptail;          /* submissions not decoded yet, oldest first */
     int64_t submits, acquires;
@@ -343,6 +344,10 @@ static void dec_init_sized(Ctx *c, enum AVCodecID id, const char *what, int w, i
     if (codec) {
         d->ctx = avcodec_alloc_context3(codec);
         d->ctx->thread_count = id == AV_CODEC_ID_AV1 ? 8 : 4;   /* (1080p AV1 in software) */
+        /* (VP9: a player that submits one picture and waits for it before the next. Frame threads give a picture back
+           only once thread_count - 1 more are in: it waited forever after its first submission. Tile threads have no
+           such delay) */
+        if (id == AV_CODEC_ID_VP9) d->ctx->thread_type = FF_THREAD_SLICE;
         if (avcodec_open2(d->ctx, codec, NULL) < 0) avcodec_free_context(&d->ctx);
     }
     for (size_t i = 0; !d->ctx && !d->mf && id == AV_CODEC_ID_AV1 && i < sizeof av1_decoders / sizeof av1_decoders[0]; i++)
@@ -379,13 +384,15 @@ static int input_limit(void) {
 /* the rule: full with `limit` submissions waiting, not decoded (pending) or decoded and not taken (queued); never with
    no limit */
 static int input_full(int pending, int queued, int limit) { return limit > 0 && pending + queued >= limit; }
-/* the decoder's submission-ready event follows the rule: clear while it is full, signalled once there is room (an
-   Acquire took a picture or decoded on, a Flush or Stop emptied it). Holding d->lock */
+/* the decoder's submission-ready event follows the rule: clear while it is full, signalled while there is room (an
+   Acquire took a picture or decoded on, a Flush or Stop emptied it). Signalled again at every call with room, not
+   only after it was full: a player that clears the event itself each time it wakes (and then submits one picture)
+   got the one signal made with the event and never submitted a second picture. Holding d->lock */
 static void input_room(Dec *d) {
     if (!d->ready) return;
     const int full = input_full(d->npending, d->qn, input_limit());
     if (full && !d->ready_clear) d->ready_clear = 1, hos_system_event_clear(d->ready);
-    else if (!full && d->ready_clear) d->ready_clear = 0, hos_system_event_signal(d->ready);
+    else if (!full) d->ready_clear = 0, hos_system_event_signal(d->ready);
 }
 static void picture_free(Picture *p) {
     free(p->rgba), free(p->nv12);
@@ -620,7 +627,16 @@ int hos_video_sync_defer(uint64_t event, uint64_t handle) {
         if (i == nwaiters && nwaiters < (int)(sizeof waiters / sizeof waiters[0])) waiters[nwaiters++] = event;
         else if (i == nwaiters) deferred = 0;   /* (full: signalled now, as before) */
     }
+    /* (inhale) A request starts over: the event may still be signalled from the buffer's last picture, which nothing
+       clears (a manual-clear event; the movie library's decoder thread takes it off its wait and puts it back at the
+       next request). Left so, the thread took a buffer handed out after a movie's end, or before the next pass's first
+       submission, for a picture at once and queued it for the player; the flush of a looping movie (Kirby and the
+       Forgotten Land's hints) then took the buffer back, and the player aborted giving it back again (lr 0x80450168).
+       Under the lock, so a submission's signal comes after it */
+    if (deferred) hos_system_event_clear(event);
     ReleaseSRWLockExclusive(&waiter_lock);
+    if (video_log()) hos_log("video: sync event %#llx, handle %#llx: %s", (unsigned long long)event, (unsigned long long)handle,
+                             deferred ? "at the next submission" : "due now");
     return deferred;
 }
 
@@ -720,7 +736,10 @@ static void dec_flush(Ctx *c, const char *what) {
         d->eos = 0;
         d->clock_set = 0;
         d->stopped = 1;   /* (longshot: until the next submission, dec_acquire has nothing to wait for) */
-        for (int i = 0; i < MAX_SLOTS; i++) d->slot_last[i] = 0;
+        /* (inhale) and their times: a buffer that goes out before the next pass's first picture ("nothing decoded") told
+           the last pass's time, 4.9 s into a 5 s hint movie that had started again at 0. The game's player took its
+           clock from it, found every picture of the second pass late, ran through them in 0.45 s and stood still */
+        for (int i = 0; i < MAX_SLOTS; i++) d->slot_last[i] = 0, d->slot_pts[i] = 0;
         input_room(d);   /* (emptied: there is room again) */
         ReleaseSRWLockExclusive(&d->lock);
     }
@@ -777,12 +796,19 @@ static void dec_acquire(Ctx *c) {
     d->acquires++;
     if (!d->qn) {   /* (nothing decoded: the buffer's last picture again; after the last submission, as the last) */
         d->busy[slot] = 1;
-        if (d->eos) d->slot_last[slot] = 1, d->slot_pts[slot] = d->last_pts;   /* (the end at the last picture's time) */
-        const int idle = !d->eos && !d->phead;   /* (nothing will come into this buffer: its sync is not reached) */
+        /* (inhale) The end is told once. Every acquire after the last submission marked its buffer last, the last picture's
+           own included: a player that keeps both its buffers out got three "last" pictures at a movie's end. A looping
+           one (Kirby and the Forgotten Land's hint movies, 5 s) flushes at the first and starts again, then gives a
+           stale one back to a decoder wrapper that no longer has it, and aborts (lr 0x80450168). After the one marked
+           last, a buffer goes out as before the first submission: not last, its sync not reached */
+        const int end = d->eos == 1;
+        if (end) d->slot_last[slot] = 1, d->slot_pts[slot] = d->last_pts, d->eos = 2;   /* (the end at the last picture's time) */
+        else if (d->eos) d->slot_last[slot] = 0;
+        const int idle = !end && !d->phead;   /* (nothing will come into this buffer: its sync is not reached) */
         if (idle && ARG(1))
             G64(ARG(1)) = SYNC_IDLE_TAG | ((uint64_t)InterlockedCompareExchange64(&submissions, 0, 0) & SYNC_IDLE_MASK);
         if (video_log()) hos_log("video: acquire %lld: nothing decoded%s, buffer %d again", (long long)d->acquires,
-                                 d->eos ? " (the end)" : idle ? " (idle: its sync not reached)" : "", slot);
+                                 end ? " (the end)" : idle ? " (idle: its sync not reached)" : "", slot);
         else if (d->acquires == 1 && !d->eos)   /* (the start: the frame shows the buffer as it was, black since the pool's fill) */
             hos_log("video: the first buffer went out before the first picture was decoded (shown black)");
         input_room(d);   /* (longshot: the pending ones were decoded on) */
@@ -853,6 +879,7 @@ static void dec_acquire(Ctx *c) {
     }
     d->slot_pts[slot] = d->last_pts = p->pts;
     d->slot_last[slot] = p->last;
+    if (p->last) d->eos = 2;   /* (inhale: the end is told, above) */
     d->busy[slot] = 1;
     {   /* (longshot) the time since the picture before it, for the movie's report */
         const int64_t now = hos_now_ns(), gap = d->out_ns ? now - d->out_ns : 0;
@@ -893,6 +920,7 @@ static void dec_acquire(Ctx *c) {
 static void dec_release(Ctx *c) {
     Dec *d = (Dec *)host_of(ARG(0), DEC_MAGIC);
     if (d && (uint32_t)ARG(1) < MAX_SLOTS) d->busy[(uint32_t)ARG(1)] = 0;
+    if (video_log()) hos_log("video: release buffer %u (lr %#llx)", (uint32_t)ARG(1), (unsigned long long)c->x[30]);
     RET(0);
 }
 /* GetXDecoderOutputBufferProperties(u16* w, u16* h, u16* display w, u16* display h, TimeSpan* pts, bool* last,

@@ -6,6 +6,7 @@ Differences from running the vendored test as is:
   - Unicorn runs its "max" CPU model, which has the ARMv8.1+ forms (the default Cortex-A72 rejects LSE, CAS, LDAPR);
   - the harness is built with -mcx16 (CASP on 128 bits);
   - PAC and MTE forms are left out: here they are the identity by design (see insn.py), not the hardware's result;
+  - on Linux the harness maps its guest memory with mmap: the vendored one is written for Windows (VirtualAlloc);
   - memory operands based on x29 / x30 get their scratch address too: capstone names them fp / lr, which
     insn_test.mem_regs does not parse, so those cases ran on a random (often tiny) address that the harness
     does not reset between cases (a false LDADD [x29] failure, 2026-10-31).
@@ -74,8 +75,25 @@ def mem_regs(w):
     return None
 
 
+def posix_harness():
+    """(inhale) insn_test.build_harness with the guest memory from mmap: the vendored source is not edited
+    (third_party/ stays as it came), so its text is taken, its two Windows lines replaced, and the function made again"""
+    import inspect
+    src = inspect.getsource(insn_test.build_harness)
+    for old, new in (('"#include <windows.h>"', '"#include <sys/mman.h>"'),
+                     ("VirtualAlloc(A64_MEM, %d, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) != A64_MEM",
+                      "mmap(A64_MEM, %d, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0)"
+                      " != (void *)A64_MEM")):
+        if src.count(old) != 1:
+            raise SystemExit("insn_test.build_harness no longer has %r once: update nx2/test_insn.py posix_harness" % old)
+        src = src.replace(old, new)
+    exec(src, insn_test.__dict__)
+
+
 def main():
     kit.wait_for_quiet('the instruction test')
+    if os.name != "nt":
+        posix_harness()
     only = None
     if "--only" in sys.argv:
         i = sys.argv.index("--only")

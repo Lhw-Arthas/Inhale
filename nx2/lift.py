@@ -172,7 +172,11 @@ def main():
         print("ADR / ADRP+ADD code addresses outside the %d unwind-covered functions: %d, %d of them new entries" % (
             len(spans), len(refs), len(new)))
     L = a64_lift.Lifter(img)
-    if a.standalone:   # (longshot) widescreen and ultrawide: C after a few of the game's instructions
+    # (inhale) the other game's hooks sit at fixed addresses of its main: only in its image. Two of them check no build id
+    # of their own, only the instruction word at each address, which another game's code can hold by coincidence
+    import oot_fov
+    other_game = next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), "") == oot_fov.BUILD_ID
+    if a.standalone and other_game:   # (longshot) widescreen and ultrawide: C after a few of the game's instructions
         import oot_wide
         oot_wide.install(L, img)
         import oot_fov   # (the gameplay lens, before projection and culling are built)
@@ -181,6 +185,11 @@ def main():
         oot_shadow.install(L, img, next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), ""))
         import oot_jitter   # (the temporal upscalers' camera jitter, DLSS's and FSR 3.1's: none unless one runs, host/rx_backend.c)
         oot_jitter.install(L, img)
+    if a.standalone:   # (inhale) far animated objects at the frame rate, not half of it: nx2/kirby_far.py
+        import kirby_far
+        mod = next((m for m in meta["modules"] if m["name"] == "main"), None)
+        if mod:
+            kirby_far.install(img, mod["base"], mod.get("build_id", ""))
     L.discover(max_insns=a.max_func)
     print("discovered %d functions (%.0fs)" % (len(L.funcs), time.time() - t0))
     last[0] = time.time()

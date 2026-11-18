@@ -221,7 +221,20 @@ def select(P, counts, rng, calls, max_tree):
 HARNESS = r"""
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef _WIN32
 #include <windows.h>
+static void *map_rw(void *at, size_t n) { return VirtualAlloc(at, n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
+#else   /* (inhale) Linux: the same memory with mmap, and a fault in a lifted function caught with a signal */
+#include <setjmp.h>
+#include <signal.h>
+#include <sys/mman.h>
+static void *map_rw(void *at, size_t n) {
+    void *p = mmap(at, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    return p == MAP_FAILED ? NULL : p;
+}
+static sigjmp_buf fault_jmp;
+static void on_fault(int sig) { siglongjmp(fault_jmp, sig); }
+#endif
 static const A64Fn T[] = {%(table)s};
 void a64_trap(Ctx *c, uint64_t pc, uint32_t insn) { (void)pc; (void)insn; c->halted = 9; }
 void a64_ret_mismatch(Ctx *c, uint64_t pc) { (void)pc; c->halted = 10; }
@@ -263,13 +276,22 @@ static void make_scratch(uint64_t seed, uint64_t *out) {
 }
 static int run(int idx, Ctx *c) {
     poll_ctx = c;
+#ifdef _WIN32
     __try { T[idx](c); } __except (EXCEPTION_EXECUTE_HANDLER) { return (int)GetExceptionCode(); }
     return 0;
+#else
+    int sig = sigsetjmp(fault_jmp, 1);   /* (1: the signal mask as it was, so the next fault is caught too) */
+    if (!sig) T[idx](c);
+    return sig;
+#endif
 }
 int main(int argc, char **argv) {
     FILE *img = fopen(argv[1], "rb"), *in = fopen(argv[2], "rb"), *out = fopen(argv[3], "wb");
-    if (VirtualAlloc(A64_PTR(IMG_BASE), IMG_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) != A64_PTR(IMG_BASE)) return 3;
-    if (VirtualAlloc(A64_PTR(SCR_BASE), SCR_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) != A64_PTR(SCR_BASE)) return 4;
+#ifndef _WIN32
+    signal(SIGSEGV, on_fault); signal(SIGBUS, on_fault); signal(SIGFPE, on_fault); signal(SIGILL, on_fault);
+#endif
+    if (map_rw(A64_PTR(IMG_BASE), IMG_SIZE) != A64_PTR(IMG_BASE)) return 3;
+    if (map_rw(A64_PTR(SCR_BASE), SCR_SIZE) != A64_PTR(SCR_BASE)) return 4;
     if (fread(A64_PTR(IMG_BASE), 1, IMG_SIZE, img) != IMG_SIZE) return 5;
     p_img = malloc(IMG_SIZE); p_scr = malloc(SCR_SIZE);
     memcpy(p_img, A64_PTR(IMG_BASE), IMG_SIZE);

@@ -613,6 +613,17 @@ HLE(_ZN2nn2os23SignalConditionVariableEPNS0_21ConditionVariableTypeE) {
     ReleaseSRWLockExclusive(&cv->lk);
     WakeConditionVariable(&cv->cv);
 }
+/* BroadcastConditionVariable: every waiter leaves (no mutex reserved: they take it in turn). Left to the lifted SDK it
+   wrote the SDK's own structure and woke no waiter of the functions here. */
+HLE(_ZN2nn2os26BroadcastConditionVariableEPNS0_21ConditionVariableTypeE) {
+    Obj *cv = obj(ARG(0), K_COND);
+    HOS_CHAIN(HOS_CHAIN_SIGNAL, cv->key);
+    if (!__atomic_load_n(&cv->cv_waiting, __ATOMIC_SEQ_CST) && !cv_signal_always()) return;
+    AcquireSRWLockExclusive(&cv->lk);
+    cv->gen++;
+    ReleaseSRWLockExclusive(&cv->lk);
+    WakeAllConditionVariable(&cv->cv);
+}
 HLE(_ZN2nn2os21WaitConditionVariableEPNS0_21ConditionVariableTypeEPNS0_9MutexTypeE) {
     Obj *cv = obj(ARG(0), K_COND), *m = obj(ARG(1), K_MUTEX);
     const int w = watched(ARG(1));
@@ -1304,6 +1315,14 @@ HLE(_ZN2nn2os18TryJamMessageQueueEPNS0_16MessageQueueTypeEm) { RET(queue_put(obj
 HLE(_ZN2nn2os22TryReceiveMessageQueueEPmPNS0_16MessageQueueTypeE) {
     uint64_t v;
     const int ok = queue_get(obj(ARG(1), K_QUEUE), &v, 1, 0);
+    if (ok) G64(ARG(0)) = v;
+    RET(ok);
+}
+/* (a movie player's input threads: left to the lifted SDK they slept forever in its critical section) */
+HLE(_ZN2nn2os24TimedReceiveMessageQueueEPmPNS0_16MessageQueueTypeENS_8TimeSpanE) {
+    uint64_t v;
+    const int64_t t = (int64_t)ARG(2);
+    const int ok = queue_get(obj(ARG(1), K_QUEUE), &v, 1, t > 0 ? t : 0);
     if (ok) G64(ARG(0)) = v;
     RET(ok);
 }

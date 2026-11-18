@@ -36,19 +36,24 @@ def module_bytes(supported=True, payload=b"new authored module"):
     return bytes(header) + payload
 
 
-HEAPDEF = "System/HeapSize/Product.Nin_Ounce_NVN2.HeapDef.byml.zs"
-DEFAULT_HEAPDEF = "System/HeapSize/Default.Nin_Ounce_NVN2.HeapDef.byml.zs"
+ARCHIVE = "fdg/Archive.dat"
+TITLE = "01004d300c5af001"   # (the data title: nup.py unpacks it to aoc/<title id>/romfs, and the code title's romfs is empty)
 
 
-def game_files(romfs, heapdef=HEAPDEF):
-    """What the build and the game's start need from a romfs (make_game.ROMFS_NEEDED), as authored stand-ins. The .zs ones
-    start as zstd, so the damaged-file check reads them as whole"""
-    (romfs / "Pack").mkdir(parents=True, exist_ok=True)
-    (romfs / "Pack" / "ZsDic.pack.zs").write_bytes(b"\x28\xb5\x2f\xfd" + b"authored dictionary stand-in")
-    (romfs / "System" / "Resource").mkdir(parents=True, exist_ok=True)
-    if heapdef:
-        (romfs / heapdef).parent.mkdir(parents=True, exist_ok=True)
-        (romfs / heapdef).write_bytes(b"\x28\xb5\x2f\xfd" + b"authored heap definition stand-in")
+def game_files(romfs, archive=True):
+    """What the game's start needs from the romfs that holds the data (make_game.ROMFS_NEEDED), as authored stand-ins"""
+    (romfs / "ubin" / "Step" / "Map").mkdir(parents=True, exist_ok=True)
+    (romfs / "gfx" / "Common").mkdir(parents=True, exist_ok=True)
+    if archive:
+        (romfs / ARCHIVE).parent.mkdir(parents=True, exist_ok=True)
+        (romfs / ARCHIVE).write_bytes(b"authored archive stand-in")
+
+
+def program_file(exefs, program_id=0x04004D300C5AE001):
+    """An authored main.npdm: only the ACI0 block's place and its program id (make_game.npdm_name)"""
+    npdm = bytearray(0x80)
+    npdm[0x70:0x78] = (0x80).to_bytes(4, "little") + (0x20).to_bytes(4, "little")
+    (exefs / "main.npdm").write_bytes(bytes(npdm) + b"ACI0" + bytes(12) + program_id.to_bytes(8, "little") + bytes(8))
 
 
 class NupCacheHarness(unittest.TestCase):
@@ -96,7 +101,9 @@ class NupCacheHarness(unittest.TestCase):
                 for path in self.out.rglob("*") if path.is_file() and ".game" not in path.parts}
 
     def run_to_lift(self, nup, failure=None, supported=True, include_romfs=True, update=False, folders=None,
-                    romfs_files=None, start_files=True, romfs_from=None):
+                    romfs_files=None, start_files=True, romfs_from=None, data_title=False, game=None):
+        """data_title: the authored extraction is this game's (no romfs folder, the files in aoc/<title id>/romfs).
+        folders: (romfs, exefs) or (romfs or None, exefs, aoc). game: a dump folder, as --game"""
         self.assert_owned_fixture()
 
         def run(cmd, env=None, on_line=None):
@@ -111,27 +118,32 @@ class NupCacheHarness(unittest.TestCase):
                     (target / "romfs" / "asset.txt.part").write_bytes(b"incomplete authored asset")
                     make_game.fail(failure)
                 if include_romfs:
-                    (target / "romfs").mkdir()
-                    (target / "romfs" / "asset.txt").write_bytes(b"new authored assets")
-                    (target / "romfs" / "new-only.txt").write_bytes(b"new authored file")
+                    romfs = target / "aoc" / TITLE / "romfs" if data_title else target / "romfs"
+                    romfs.mkdir(parents=True)
+                    (romfs / "asset.txt").write_bytes(b"new authored assets")
+                    (romfs / "new-only.txt").write_bytes(b"new authored file")
                     if start_files:
-                        game_files(target / "romfs")
+                        game_files(romfs)
                     for name, data in (romfs_files or {}).items():
-                        path = target / "romfs" / name
+                        path = romfs / name
                         path.parent.mkdir(parents=True, exist_ok=True)
                         path.write_bytes(data)
                 return
             if "nx2/unpack.py" in cmd:   # (a chosen exefs folder: its authored module is already unpacked)
                 return
             if "nx2/lift.py" in cmd:
+                self.lift_env = env
                 raise Prepared
             self.fail("Unexpected build subprocess: %r" % cmd)
 
         argv = ["make_game.py", "--work", str(self.work)]
         if update:
             argv += ["--update", str(self.out)]
+        elif game:
+            argv += ["--game", str(game), "--out", str(self.out)]
         elif folders:
-            argv += ["--romfs", str(folders[0]), "--exefs", str(folders[1]), "--out", str(self.out)]
+            argv += (["--romfs", str(folders[0])] if folders[0] else []) + ["--exefs", str(folders[1]), "--out", str(self.out)]
+            argv += ["--aoc", str(folders[2])] if len(folders) > 2 else []
         else:
             argv += ["--nup", str(nup), "--out", str(self.out)]
         if romfs_from:
@@ -361,13 +373,13 @@ class NupCacheTests(NupCacheHarness):
             self.run_to_lift(self.new_nup, include_romfs=False)
         self.assertEqual(self.extractions, [self.new_nup])
         self.assertEqual(result.exception.code, 1)
-        self.assertIn("The package did not contain a romfs folder.", self.output)
+        self.assertIn("The package did not contain the game's files (no romfs and no data title).", self.output)
         self.assertEqual(self.cache(), before)
         self.assertFalse((self.out / ".game").exists())
 
-    def game_files(self, romfs, heapdef=HEAPDEF):
+    def game_files(self, romfs, archive=True):
         """What a chosen romfs folder needs (check_romfs_folder), as authored stand-ins"""
-        game_files(romfs, heapdef)
+        game_files(romfs, archive)
 
     def test_romfs_folder_without_the_game_files_is_refused_before_the_build(self):
         # (issue 467: another tool's packed copy, index.json and one romfs.bin, was built for 15 minutes, then the game
@@ -377,27 +389,28 @@ class NupCacheTests(NupCacheHarness):
         exefs.mkdir(parents=True)
         (exefs / "main").write_bytes(module_bytes())
         packed, empty, half = self.root / "dump" / "packed", self.root / "dump" / "empty", self.root / "dump" / "half"
-        no_heap = self.root / "dump" / "no-heap"   # (#689: no System/HeapSize, and the game crashed at boot)
+        no_archive = self.root / "dump" / "no-archive"
         packed.mkdir()
         (packed / "index.json").write_text("{}")
         (packed / "romfs.bin").write_bytes(b"authored packed stand-in")
         empty.mkdir()
         self.game_files(half)
-        (half / "System" / "Resource").rmdir()
-        self.game_files(no_heap, heapdef=None)
-        for romfs, said, packed_copy in ((packed, "no Pack/ZsDic.pack.zs", True), (empty, "no Pack/ZsDic.pack.zs", False),
-                                         (half, "no System/Resource", False), (no_heap, "no " + HEAPDEF, False)):
+        (half / "gfx" / "Common").rmdir()
+        self.game_files(no_archive, archive=False)
+        for romfs, said, packed_copy in ((packed, "no ubin/Step/Map", True), (empty, "no ubin/Step/Map", False),
+                                         (half, "no gfx/Common", False), (no_archive, "no " + ARCHIVE, False)):
             with self.subTest(romfs=romfs.name):
                 with self.assertRaises(SystemExit) as result:
                     self.run_to_lift(self.new_nup, folders=(romfs, exefs))
                 self.assertEqual(result.exception.code, 1)
-                self.assertIn("does not hold the game's files (%s): choose the extracted RomFS." % said, self.output)
+                self.assertIn("The folder %s does not hold the game's files (%s): choose the extracted dump's aoc folder (--aoc), "
+                              "where this game's files are." % (romfs, said), self.output)
                 self.assertEqual("a packed copy" in self.output, packed_copy)
                 self.assertFalse(self.out.exists())
                 self.assertFalse((self.work / "exefs").exists())
 
     def test_romfs_folder_is_looked_at_as_a_long_path(self):
-        # (Windows: a dump's Pack/ZsDic.pack.zs past 260 characters is found only through long_path, as the copy reads it)
+        # (Windows: a dump's files past 260 characters are found only through long_path, as the copy reads them)
         romfs = self.root / "dump" / "romfs"
         self.game_files(romfs)
         named = str(self.root / "dump" / "named-only-through-long-path")
@@ -411,40 +424,30 @@ class NupCacheTests(NupCacheHarness):
         (exefs / "main").write_bytes(module_bytes())
         with self.assertRaises(Prepared):
             self.run_to_lift(self.new_nup, folders=(romfs, exefs))
-        self.assertTrue((self.out / "romfs" / "Pack" / "ZsDic.pack.zs").is_file())
-
-    def test_romfs_folder_with_the_default_heap_definition_reaches_lift(self):
-        # (the game opens the Product heap definition, then the Default one: either is enough)
-        romfs, exefs = self.root / "dump" / "romfs", self.root / "dump" / "exefs"
-        self.game_files(romfs, heapdef=DEFAULT_HEAPDEF)
-        exefs.mkdir(parents=True)
-        (exefs / "main").write_bytes(module_bytes())
-        with self.assertRaises(Prepared):
-            self.run_to_lift(self.new_nup, folders=(romfs, exefs))
-        self.assertTrue((self.out / "romfs" / DEFAULT_HEAPDEF).is_file())
+        self.assertTrue((self.out / "romfs" / ARCHIVE).is_file())
 
     def test_nup_without_the_start_files_is_refused_and_the_previous_cache_kept(self):
-        # (a .nup unpacked into a romfs without the heap definition: refused before it replaces the folder's files)
+        # (a .nup unpacked into a romfs without what the game's start needs: refused before it replaces the folder's files)
         before = self.cache()
         with self.assertRaises(SystemExit) as result:
             self.run_to_lift(self.new_nup, start_files=False)
         self.assertEqual(self.extractions, [self.new_nup])
         self.assertEqual(result.exception.code, 1)
-        self.assertIn("Your .nup file %s does not hold all of the game's files (no Pack/ZsDic.pack.zs): a game built from "
-                      "it could not start. Dump the game again" % self.new_nup, self.output)
+        self.assertIn("Your .nup file %s does not hold all of the game's files (no ubin/Step/Map): a game built from "
+                      "it could not start. Build again from a complete copy" % self.new_nup, self.output)
         self.assertEqual(self.cache(), before)
         self.assertFalse((self.out / ".game").exists())
 
     def test_cached_nup_or_update_without_the_start_files_is_refused(self):
         # (a folder unpacked by a builder before this check, or kept for an update: refused before the build)
-        (self.out / "romfs" / HEAPDEF).unlink()
+        (self.out / "romfs" / ARCHIVE).unlink()
         for update, said in ((False, "Your .nup file %s" % self.old_nup),
                              (True, "This game folder's copy of the game files (%s)" % (self.out / "romfs"))):
             with self.subTest(update=update):
                 with self.assertRaises(SystemExit) as result:
                     self.run_to_lift(self.old_nup, update=update)
                 self.assertEqual(result.exception.code, 1)
-                self.assertIn("%s does not hold all of the game's files (no %s)" % (said, HEAPDEF), self.output)
+                self.assertIn("%s does not hold all of the game's files (no %s)" % (said, ARCHIVE), self.output)
                 self.assertEqual(self.extractions, [])
 
     def test_reparse_cache_is_rejected_before_extraction_or_replacement(self):
@@ -534,7 +537,7 @@ class RomfsFromTests(NupCacheHarness):
         self.assertFalse((self.out / "romfs" / "b.txt").exists())
 
     def test_a_folder_without_what_the_game_needs_is_passed_over(self):
-        shutil.rmtree(self.other / "romfs" / "Pack")   # (unpacked by a builder before the romfs check)
+        shutil.rmtree(self.other / "romfs" / "ubin")   # (unpacked by a builder before the romfs check)
         with self.assertRaises(Prepared):
             self.run_to_lift(self.new_nup, romfs_from=self.other)
         self.assertEqual(self.extractions, [self.new_nup])
@@ -643,6 +646,187 @@ class RomfsFromTests(NupCacheHarness):
         self.assertEqual(self.extractions, [])
         self.assertIn("reading it again is skipped", self.output)
         self.assertEqual((self.out / "romfs" / "asset.txt").read_bytes(), b"old authored assets")
+
+
+class DataTitleTests(NupCacheHarness):
+    """This game's layout: the code title's romfs is empty and all the files are a data title's, which nup.py unpacks to
+    aoc/<title id>/romfs. The game folder keeps them there (out/aoc), beside a romfs folder that is there and empty"""
+
+    def setUp(self):
+        super().setUp()
+        shutil.rmtree(self.out / "romfs")
+        (self.out / "romfs").mkdir()
+        self.data = self.out / "aoc" / TITLE / "romfs"
+        self.data.mkdir(parents=True)
+        (self.data / "asset.txt").write_bytes(b"old authored assets")
+        game_files(self.data)
+
+    def dump(self, romfs=None):
+        """An authored dump folder: exefs (with its main.npdm) and aoc; romfs: None for none, else its files"""
+        dump = self.root / "dump"
+        (dump / "exefs").mkdir(parents=True)
+        (dump / "exefs" / "main").write_bytes(module_bytes())
+        program_file(dump / "exefs")
+        game_files(dump / "aoc" / TITLE / "romfs")
+        (dump / "aoc" / TITLE / "romfs" / "dump-only.txt").write_bytes(b"authored dump file")
+        if romfs is not None:
+            (dump / "romfs").mkdir()
+            for name, data in romfs.items():
+                (dump / "romfs" / name).write_bytes(data)
+        return dump
+
+    def test_the_package_moves_the_data_title_into_the_game_folder(self):
+        with self.assertRaises(Prepared):
+            self.run_to_lift(self.new_nup, data_title=True)
+        self.assertEqual(self.extractions, [self.new_nup])
+        self.assertEqual((self.data / "asset.txt").read_bytes(), b"new authored assets")
+        self.assertTrue((self.data / "new-only.txt").is_file())
+        self.assertEqual(list((self.out / "romfs").iterdir()), [], "the code title's romfs: there, and empty")
+        self.assertFalse((self.out / ".game").exists())
+        self.assertEqual((self.out / ".inhale_exefs" / "main").read_bytes(), module_bytes())
+        self.assertEqual(self.marker.read_text(), self.stamp(self.new_nup) + "\n")
+        self.assertEqual((self.out / "user/save/sentinel.txt").read_bytes(), b"authored save sentinel")
+        # (the lift and the build read the data's romfs, by the names nx2/kit.py reads first)
+        self.assertEqual({name: self.lift_env.get(name) for name in ("INHALE_WORK", "INHALE_EXEFS", "INHALE_ROMFS", "INHALE_DUMP")},
+                         {"INHALE_WORK": str(self.work), "INHALE_EXEFS": str(self.work / "exefs"),
+                          "INHALE_ROMFS": str(self.data), "INHALE_DUMP": str(self.out)})
+        self.assertFalse([name for name in self.lift_env if name.startswith("OOT_")])
+        # (the same .nup again, and an update: the files in aoc are the ones built from, and nothing is unpacked)
+        for update in (False, True):
+            with self.subTest(update=update), self.assertRaises(Prepared):
+                self.run_to_lift(None if update else self.new_nup, update=update, data_title=True)
+            self.assertEqual(self.extractions, [self.new_nup])
+            self.assertEqual("reading it again is skipped" in self.output, not update)
+            self.assertEqual(self.lift_env["INHALE_ROMFS"], str(self.data))
+
+    def test_a_package_with_a_romfs_and_no_data_title_drops_the_old_data_title(self):
+        with self.assertRaises(Prepared):
+            self.run_to_lift(self.new_nup)
+        self.assertEqual((self.out / "romfs" / "asset.txt").read_bytes(), b"new authored assets")
+        self.assertFalse((self.out / "aoc").exists())
+        self.assertEqual(self.lift_env["INHALE_ROMFS"], str(self.out / "romfs"))
+
+    def test_same_source_reuses_the_folder(self):
+        before = self.cache()
+        with self.assertRaises(Prepared):
+            self.run_to_lift(self.old_nup, data_title=True)
+        self.assertEqual(self.extractions, [])
+        after = self.cache()
+        after.pop(".inhale_romfs_checked")   # (the damaged-texture check's note that this unpack was checked)
+        self.assertEqual(after, before)
+        self.assertEqual((self.work / "exefs/main").read_bytes(), (self.out / ".inhale_exefs/main").read_bytes())
+
+    def test_a_failed_or_incomplete_package_keeps_the_folder(self):
+        before = self.cache()
+        for said, how in (("No space left", dict(failure="nup.py stopped (exit status 1): OSError: [Errno 28] No space left on device")),
+                          ("Inhale supports build", dict(supported=False)),
+                          ("does not hold all of the game's files (no ubin/Step/Map)", dict(start_files=False)),
+                          ("The package did not contain the game's files", dict(include_romfs=False))):
+            with self.subTest(said=said):
+                with self.assertRaises(SystemExit):
+                    self.run_to_lift(self.new_nup, data_title=True, **how)
+                self.assertIn(said, self.output)
+                self.assertEqual(self.cache(), before)
+                self.assertFalse((self.out / ".game").exists())
+
+    def test_cached_nup_or_update_without_the_start_files_is_refused(self):
+        (self.data / ARCHIVE).unlink()
+        for update, said in ((False, "Your .nup file %s" % self.old_nup),
+                             (True, "This game folder's copy of the game files (%s)" % self.data)):
+            with self.subTest(update=update):
+                with self.assertRaises(SystemExit) as result:
+                    self.run_to_lift(self.old_nup, update=update)
+                self.assertEqual(result.exception.code, 1)
+                self.assertIn("%s does not hold all of the game's files (no %s)" % (said, ARCHIVE), self.output)
+                self.assertEqual(self.extractions, [])
+
+    def test_a_dump_folder_with_exefs_and_aoc_reaches_lift(self):
+        # (--game <folder>, with no romfs folder and with an empty one, and --exefs with --aoc, with and without --romfs)
+        for name, romfs, explicit in (("no romfs", None, False), ("an empty romfs", {}, False), ("--aoc", None, True),
+                                      ("--aoc and --romfs", {}, True)):
+            with self.subTest(name):
+                for folder in (self.out, self.root / "dump"):
+                    shutil.rmtree(folder, ignore_errors=True)
+                dump = self.dump(romfs)
+                folders = (dump / "romfs" if romfs is not None else None, dump / "exefs", dump / "aoc")
+                with self.assertRaises(Prepared):
+                    self.run_to_lift(None, **(dict(folders=folders) if explicit else dict(game=dump)))
+                self.assertEqual(self.extractions, [])
+                mine, theirs = self.out / "aoc" / TITLE / "romfs" / "dump-only.txt", dump / "aoc" / TITLE / "romfs" / "dump-only.txt"
+                self.assertEqual(mine.read_bytes(), theirs.read_bytes())
+                self.assertTrue((self.out / "aoc" / TITLE / "romfs" / ARCHIVE).is_file())
+                self.assertEqual(list((self.out / "romfs").iterdir()), [], "a romfs folder, empty: what an update looks for")
+                self.assertEqual((self.out / ".inhale_exefs" / "main").read_bytes(), module_bytes())
+                self.assertEqual(self.lift_env["INHALE_ROMFS"], str(self.out / "aoc" / TITLE / "romfs"))
+                # (the name its program id has: an unpacked dump carries none)
+                self.assertEqual((self.out / make_game.game_title.TITLE_FILE).read_text(encoding="utf-8"),
+                                 make_game.game_title.NAMES[0x04004D300C5AE001] + make_game.game_title.SUFFIX + "\n")
+                with self.assertRaises(Prepared):   # (and the folder it made is one an update builds from)
+                    self.run_to_lift(None, update=True)
+
+    def test_a_dump_folder_without_the_data_is_refused_before_the_build(self):
+        shutil.rmtree(self.out)
+        dump = self.dump(romfs={})
+        shutil.rmtree(dump / "aoc" / TITLE / "romfs" / "ubin")
+        empty = self.root / "empty aoc"
+        empty.mkdir()
+        for said, how in ((dump / "aoc" / TITLE / "romfs", dict(game=dump)),
+                          (dump / "romfs", dict(folders=(dump / "romfs", dump / "exefs"))),
+                          (empty, dict(folders=(None, dump / "exefs", empty)))):
+            with self.subTest(said=said):
+                with self.assertRaises(SystemExit) as result:
+                    self.run_to_lift(None, **how)
+                self.assertEqual(result.exception.code, 1)
+                self.assertIn("The folder %s does not hold the game's files (no ubin/Step/Map)" % said, self.output)
+                self.assertFalse(self.out.exists())
+
+    def test_links_in_the_aoc_folder_are_refused(self):
+        dump = self.dump()
+        try:
+            (dump / "aoc" / TITLE / "romfs" / "link.txt").symlink_to(self.root / "old.nup")
+        except OSError:
+            self.skipTest("no symbolic links here")
+        with self.assertRaises(SystemExit):
+            self.run_to_lift(None, game=dump)
+        self.assertIn("contain a link", self.output)
+        self.assertFalse((self.out / "aoc" / TITLE / "romfs" / "link.txt").exists())
+
+    def test_a_dump_with_another_program_id_or_no_npdm_keeps_no_name(self):
+        exefs = self.root / "other exefs"
+        exefs.mkdir()
+        self.assertIsNone(make_game.npdm_name(str(exefs)))
+        program_file(exefs, program_id=0x0100000000001234)
+        self.assertIsNone(make_game.npdm_name(str(exefs)))
+        (exefs / "main.npdm").write_bytes(b"short")
+        self.assertIsNone(make_game.npdm_name(str(exefs)))
+        program_file(exefs)
+        self.assertEqual(make_game.npdm_name(str(exefs)), make_game.game_title.NAMES[0x04004D300C5AE001])
+
+    def test_another_folders_data_title_is_linked_not_read_again(self):
+        other = self.root / "other version"
+        (other / "romfs").mkdir(parents=True)
+        data = other / "aoc" / TITLE / "romfs"
+        game_files(data)
+        (data / "b.txt").write_bytes(b"authored asset b")
+        (other / ".inhale_exefs").mkdir()
+        (other / ".inhale_exefs" / "main").write_bytes(module_bytes(payload=b"other authored module"))
+        (other / ".inhale_romfs").write_text(self.stamp(self.new_nup) + "\n", encoding="utf-8", newline="")
+        with self.assertRaises(Prepared):
+            self.run_to_lift(self.new_nup, romfs_from=other, data_title=True)
+        self.assertEqual(self.extractions, [])
+        self.assertIn("linked, not read again", self.output)
+        for rel in ("b.txt", ARCHIVE):
+            self.assertTrue(os.path.samefile(self.data / rel, data / rel), rel + " is a hard link, not a copy")
+        self.assertFalse((self.data / "asset.txt").exists())   # (the old unpack's files are gone with it)
+        self.assertEqual(list((self.out / "romfs").iterdir()), [])
+        self.assertEqual((self.work / "exefs" / "main").read_bytes(), (other / ".inhale_exefs" / "main").read_bytes())
+        self.assertEqual(sorted(p.name for p in self.out.iterdir() if p.name.endswith(".part")), [])
+        shutil.rmtree(data / "gfx")   # (without what the game's start needs it is passed over, and the .nup read)
+        (self.out / ".inhale_romfs").unlink()
+        with self.assertRaises(Prepared):
+            self.run_to_lift(self.new_nup, romfs_from=other, data_title=True)
+        self.assertEqual(self.extractions, [self.new_nup])
+        self.assertIn("has no gfx/Common: this .nup is read", self.output)
 
 
 class RomfsCopyTests(unittest.TestCase):

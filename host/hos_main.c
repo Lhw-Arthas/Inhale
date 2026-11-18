@@ -5,7 +5,7 @@
    guest main thread, run every module's DT_INIT in rtld's order (the SDK crt's _init: TLS registration with musl,
    then the module's constructors), then nninitStartup and nnMain.
 
-   Usage: <game>.exe [image.bin] [--romfs <dir>] [--user <dir>] [--trace] [--prepare-shaders] [--compile-shaders all|most]
+   Usage: <game>.exe [image.bin] [--romfs <dir>] [--aoc <dir>] [--user <dir>] [--trace] [--prepare-shaders] [--compile-shaders all|most]
    Environment: HOS_TRACE=1 (log HLE calls), HOS_MEMORY_MB (memory the game is told it has),
                 HOS_NVN_CONTINUE=1 (go on past nvnBootstrapLoader). */
 #include "hos.h"
@@ -77,6 +77,11 @@ static void no_power_throttling(void) {
 #endif
 
 int hos_game_is_mkw(void) { return !strcmp(hos_main_build_id, "d00e4f399e411d0613aa8d26b1c02fef"); }
+int hos_game_is_oot(void) {   /* (inhale; kept, since its callers are on hot paths: SleepThread, GetSystemTick) */
+    static int is = -1;
+    if (is < 0) is = !strcmp(hos_main_build_id, "e0f3ccfaf50065ae4ea01eb5aeb13b1a45da3348");
+    return is;
+}
 
 /* gen/hos_image.c (build.py lift) */
 extern const uint64_t hos_main_stack_size;
@@ -88,6 +93,7 @@ extern const uint64_t hos_entry_init_libc0, hos_entry_init_libc1, hos_entry_init
     hos_entry_nninitInitializeSdkModule;
 /* nn_fs.c */
 extern const char *hos_romfs_dir, *hos_user_dir;
+extern const char *hos_aoc_dir;   /* nn_aoc.c (inhale) */
 
 /* HOS_LARGE_PAGES=1 (experiment): the guest window in 2 MB pages, for fewer TLB misses (the game touches hundreds of MB
    of scattered heap; 4 KB pages cover only ~12 MB of it in the CPU's TLB). The whole window is then physical memory at
@@ -140,7 +146,12 @@ static int reserve_guest(void) {
     /* mkw-recomp: 512 GB reserved, committed as the runtime hands memory out (hos_commit) or on first touch */
     void hos_commit_init(void);
     hos_commit_init();
-    return VirtualAlloc((void *)A64_HOST_BASE, GUEST_SPACE, MEM_RESERVE, PAGE_NOACCESS) == (void *)A64_HOST_BASE;
+    if (VirtualAlloc((void *)A64_HOST_BASE, GUEST_SPACE, MEM_RESERVE, PAGE_NOACCESS) != (void *)A64_HOST_BASE) return 0;
+    /* The first MB reads as zero, as the whole window does on Linux: this game reads through a null singleton pointer and
+       goes on with the zero it gets (the call to 0 that follows is skipped by a64_call_miss). commit_on_touch leaves a fault
+       there alone, so without this page the read ended the game. */
+    VirtualAlloc((void *)A64_HOST_BASE, 0x100000, MEM_COMMIT, PAGE_READWRITE);
+    return 1;
 #else
     /* (linux) the whole window readable and writable at once, its pages made as they are first touched (no commit
        step: MAP_NORESERVE). Decommitting is madvise (host/posix/win32_posix.c VirtualFree): the pages read as zero. */
@@ -1852,6 +1863,18 @@ static int game_main(int argc, char **argv) {
     /* (the settings file, in the user folder: chosen before the crash window's helper, the Discord status and the renderer read
        it, and after inhale_env.txt, which may set HOS_OPTIONS_FILE; Linux's main chose it already: host/options_path.c) */
     hos_options_choose(argc, argv);
+    /* (inhale) Every pipeline is waited for, unless the player set the switch. The renderer's own default leaves a draw
+       out of the frame while its pipeline is built, and this game showed that as one-frame flashes, with a warm pipeline
+       cache too: the title screen's background black, a frame without the new zone's objects at a zone change. Waiting
+       cost nothing measurable with the caches warm, and one 120-present window at 53 a second with every cache empty.
+       RX_VK_PIPE_SKIP=1 is the renderer's default again */
+    if (!getenv("RX_VK_PIPE_SKIP")) {
+#ifdef _WIN32
+        _putenv("RX_VK_PIPE_SKIP=0");
+#else
+        setenv("RX_VK_PIPE_SKIP", "0", 1);
+#endif
+    }
     {
         const char *protect_hearts = getenv("HOS_OOT_PROTECT_HEARTS");
         hos_oot_protect_hearts = protect_hearts && !strcmp(protect_hearts, "1");
@@ -1939,6 +1962,7 @@ static int game_main(int argc, char **argv) {
         }
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--romfs") && i + 1 < argc) hos_romfs_dir = argv[++i];
+        else if (!strcmp(argv[i], "--aoc") && i + 1 < argc) hos_aoc_dir = argv[++i];   /* (inhale: nn_aoc.c) */
         else if (!strcmp(argv[i], "--compile-shaders") && i + 1 < argc) i++;   /* (taken above) */
         else if (!strcmp(argv[i], "--user") && i + 1 < argc) hos_user_dir = argv[++i];
         else if (!strcmp(argv[i], "--trace")) hos_trace = 1;
@@ -1965,7 +1989,7 @@ static int game_main(int argc, char **argv) {
         hos_discord_start();
     }
 #endif
-    static char beside_image[MAX_PATH], beside_romfs[MAX_PATH], beside_user[MAX_PATH];
+    static char beside_image[MAX_PATH], beside_romfs[MAX_PATH], beside_user[MAX_PATH], beside_aoc[MAX_PATH];
     if (!image) {   /* (longshot) started with nothing, as a game is: everything beside the executable (the builder's folder) */
         char dir[MAX_PATH];
         const DWORD len = hos_game_path_a(dir, MAX_PATH);
@@ -1976,9 +2000,11 @@ static int game_main(int argc, char **argv) {
             snprintf(beside_image, MAX_PATH, "%s" SEP_S "image.bin", dir);
             snprintf(beside_romfs, MAX_PATH, "%s" SEP_S "romfs", dir);
             snprintf(beside_user, MAX_PATH, "%s" SEP_S "user", dir);
+            snprintf(beside_aoc, MAX_PATH, "%s" SEP_S "aoc", dir);   /* (inhale: the add-on titles, nn_aoc.c) */
             if (GetFileAttributesA(beside_image) != INVALID_FILE_ATTRIBUTES) {
                 image = beside_image;
                 if (!hos_romfs_dir) hos_romfs_dir = beside_romfs;
+                if (!hos_aoc_dir && !getenv("HOS_AOC")) hos_aoc_dir = beside_aoc;
 #ifndef _WIN32
                 if (!hos_user_dir) hos_user_dir = saves_dir(beside_user);
 #else
@@ -1988,7 +2014,7 @@ static int game_main(int argc, char **argv) {
         }
     }
     if (!image) {
-        fprintf(stderr, "usage: %s [image.bin] [--romfs <dir>] [--user <dir>] [--trace] [--prepare-shaders] [--compile-shaders all|most]\n",
+        fprintf(stderr, "usage: %s [image.bin] [--romfs <dir>] [--aoc <dir>] [--user <dir>] [--trace] [--prepare-shaders] [--compile-shaders all|most]\n",
                 argv[0]);
         return 2;
     }
@@ -2068,6 +2094,10 @@ static int game_main(int argc, char **argv) {
         /* An output of a shape of its own (the Insert menu's Aspect ratio: 21:9, 16:10, 4:3, a 32:9 surround...) asks for that
            shape, over HOS_ASPECT and Ultrawide, even if the OS reports one monitor (host/hos_wide_size.h) */
         if (hos_output_own_shape(output_w, output_h)) want = (float)output_w / (float)output_h;
+        /* (inhale) Only the other game draws a picture of another shape (nx2/oot_wide.py's hooks, in its image alone). Any
+           other game keeps its own 16:9 picture, which the window shows whole, with bars on a screen of another shape:
+           told the screen's shape, the renderer stretched the 16:9 picture to it (gpu/vk/vk_present_rect.h) */
+        if (!hos_game_is_oot()) want = 0.0f;
         const double game = 16.0 / 9.0;
         /* (a screen narrower than 16:9 too, 16:10 to 5:4: the picture keeps the game's height and is narrower, the
            cameras take its ratio, and the HUD fills its width instead of a middle 16:9 wider than the screen. A 4:3 CRT

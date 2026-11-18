@@ -33,7 +33,10 @@ static uint64_t get_info(uint32_t id0, uint64_t id1, int *ok) {
     case 13: return HOS_SPACE_END - 0x08000000ULL;         /* AslrRegionSize */
     case 14: return HOS_SYSTEM_BASE;                       /* StackRegionAddress */
     case 15: return HOS_SYSTEM_END - HOS_SYSTEM_BASE;      /* StackRegionSize */
-    case 16: case 17: return 0;                            /* SystemResourceSize total / used */
+    /* (inhale) the total is main.npdm's: the SDK's VammManager takes "not 0" as virtual address memory being on, and a game
+       whose allocator starts with no memory of its own (nn::mem::StandardAllocator::Initialize(NULL, size)) aborts without */
+    case 16: return hos_system_resource_size;              /* SystemResourceSize total */
+    case 17: return 0;                                     /* SystemResourceSize used */
     case 18: return hos_program_id;                        /* ProgramId (main.npdm's, gen/hos_image.c) */
     case 20: {   /* UserExceptionContextAddress: (longshot) OoT's nn::os::SetDyingMessageRegionPrivate writes its
                     dying-message region into it; a zeroed page, made once */

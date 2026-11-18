@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import prof  # noqa: E402
 
 maps = prof.load_symbols()
-game = next((m for m in prof.GAME_MODS if m in maps), None)
+game = next((m for m in prof.GAME_MODS if m in maps and maps[m][0]), None)   # (inhale: a Linux build has a linker map too, which gives the .exe entry no symbols)
 if not game:
     sys.exit("no inhale.map (Windows) or inhale binary (Linux) in %s: set RX_MAPS" % os.environ.get("RX_MAPS", prof.BUILD))
 addrs, names = maps[game]
@@ -48,6 +48,11 @@ for n, k in c.most_common():
 ZSTD_DECODER = ("f_80115c80 f_80109790 f_80113880 f_80116490 f_801099a0 f_8010b160 f_8010ffc0 f_801102e0 f_80110860 "
                 "f_801117a0 f_80112880 f_80113080 f_801156e0 f_80115880 f_8010ad60 f_834ab610 f_834abda0 f_834ab4a0 "
                 "f_834ac0b0 f_834ac110 f_834ac2a0 f_8572f040").split()
-out += [n for n in ZSTD_DECODER if n not in out]
+# (inhale) those addresses are that game's: only where the profiled build is that game's, by the build id its lift wrote
+# (gen/hos_image.c beside the build folder; maps alone, with no lift beside them, are taken for that game's). Another
+# game's main has other functions at them
+image_c = os.path.join(os.environ.get("RX_MAPS", prof.BUILD), "..", "gen", "hos_image.c")
+if not os.path.exists(image_c) or 'hos_main_build_id[] = "e0f3ccfa' in open(image_c, encoding="utf-8").read():
+    out += [n for n in ZSTD_DECODER if n not in out]
 open(sys.argv[2], "w").write("".join(n + "\n" for n in out))
 print("%d samples in %d functions; %d functions cover %.0f%%" % (total, len(c), len(out), 100.0 * acc / max(1, total)))

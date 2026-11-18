@@ -1,7 +1,8 @@
 """A game folder from the user's own dump: what the builder app (builder/) runs.
 
     python -I nx2/make_game.py --nup <file.nup> --out <folder> [--work <folder>] [--jobs <n>]
-    python -I nx2/make_game.py --romfs <dir> --exefs <dir> --out <folder> [--work <folder>] [--jobs <n>]
+    python -I nx2/make_game.py --exefs <dir> --aoc <dir> [--romfs <dir>] --out <folder> [--work <folder>] [--jobs <n>]
+                                  (--aoc: the dump's folder that holds <title id>/romfs, where this game's files are)
     python -I nx2/make_game.py --check --nup <file.nup>       (or --exefs <dir>: is this the right game and version?)
     python -I nx2/make_game.py --update <folder>             (a folder built before, again with these tools: the game files it keeps)
     python -I nx2/make_game.py --nup <file.nup> --out <folder> --romfs-from <folder>
@@ -50,7 +51,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 PY = [sys.executable, "-I", "-u", "-X", "utf8"]   # (utf8: every step's output in UTF-8 whatever the console's code page: lift.py crashed on a letter, #180)   # (-u: the steps' output as it comes, not in 8 KB blocks minutes apart)
-BUILD_ID = "e0f3ccfa"   # (the version the patches, the hot list and the profile were made from)
+BUILD_ID = "395fc326"   # (the version this port is made for, and a hot list and profiles under work/ were made from)
 STARTED = time.time()   # (the build's total time, kept in build_times.json and said as @@times)
 sys.path[:0] = [HERE, os.path.join(ROOT, "third_party", "a64-kit", "tools")]   # (python -I leaves the script folder off)
 import toolchain as _toolchain
@@ -65,9 +66,9 @@ LINUX, CROSS = not _toolchain.windows(), _toolchain.windows() and os.name != "nt
 # library" three times and no controller worked: Discord #bug-reporting, 11-08)
 BESIDE = ["inhale", "inhale_vk.so", "libSDL2-2.0.so.0"] if LINUX else ["inhale.exe", "inhale_vk.dll", "SDL2.dll", "SDL3.dll"]
 LANGUAGES = [("en-US", "English (US)"), ("en-GB", "English (UK)"), ("fr", "French (France)"), ("fr-CA", "French (Canada)"), ("de", "German"),
-             ("it", "Italian"), ("es", "Spanish (Spain)"), ("es-419", "Spanish (Latin America)"), ("pt-BR", "Portuguese (Brazil)"), ("nl", "Dutch"),
-             ("pl", "Polish"), ("ru", "Russian"), ("ja", "Japanese"), ("ko", "Korean"), ("zh-Hans", "Chinese (Simplified)"),
-             ("zh-Hant", "Chinese (Traditional)")]
+             ("it", "Italian"), ("es", "Spanish (Spain)"), ("es-419", "Spanish (Latin America)"), ("nl", "Dutch"),
+             ("ja", "Japanese"), ("ko", "Korean"), ("zh-Hans", "Chinese (Simplified)"),
+             ("zh-Hant", "Chinese (Traditional)")]   # (inhale: this game's 13, the folders of its msg/Kirby15; host/nn_applet.c)
 
 
 def no_throttle(handle=None):
@@ -600,12 +601,14 @@ def romfs_from_build(other, out, stamp, romfs, kept, exefs):
     damaged-texture check found carried over with them: the .nup's ~25 GB is not read and written again for each version
     (about 3 minutes, and the disk space, on a PC's own drive). False, and nothing changed, when it is not such a folder, when
     its files can't be hard-linked into this one (link_problem), or when linking them stops part-way: the .nup is read as
-    usual. The files are shared with that folder: neither the build nor the game writes into its romfs"""
+    usual. The files are shared with that folder: neither the build nor the game writes into its romfs.
+    (inhale) Its aoc folder goes the same way: the data titles, where this game's files are"""
     if not other or not os.path.isdir(other):
         return False
     if os.path.normcase(os.path.realpath(other)) == os.path.normcase(os.path.realpath(out)):
         return False
     src_romfs, src_kept, src_stamp = (os.path.join(other, n) for n in ("romfs", ".inhale_exefs", ".inhale_romfs"))
+    src_aoc, aoc = os.path.join(other, "aoc"), os.path.join(out, "aoc")
     if not (os.path.isdir(src_romfs) and os.path.isdir(src_kept) and os.path.isfile(src_stamp)):
         return False
     if read_stamp(src_stamp).strip() != stamp:
@@ -613,7 +616,8 @@ def romfs_from_build(other, out, stamp, romfs, kept, exefs):
         return False
     # (a folder unpacked by a builder before check_unpacked_romfs may lack what the game's start needs: read the .nup instead,
     # whose unpack is checked, rather than link in game files a game could not start from)
-    missing = romfs_missing(src_romfs)
+    data = data_romfs(src_romfs, src_aoc)
+    missing = romfs_missing(data)
     if missing:
         print("the game folder %s has no %s: this .nup is read" % (other, missing), flush=True)
         return False
@@ -622,27 +626,31 @@ def romfs_from_build(other, out, stamp, romfs, kept, exefs):
         print("the game folder %s's copy of the game's code can't be built from (%s): this .nup is read" % (other, problem), flush=True)
         return False
     refuse_dump_links(src_romfs)
+    if os.path.isdir(src_aoc):
+        refuse_dump_links(src_aoc)
     probe = os.path.join(out, ".inhale-link-probe")
     check_cache_paths(out, [probe])
-    why = link_problem(src_romfs, probe)
+    why = link_problem(data, probe)   # (inhale) one of the files that hold the data: the romfs itself may be empty
     if why:
         print("the game files in %s can't be hard-linked into %s (%s: another drive, or a disk without hard links): this .nup "
               "is read" % (other, out, why), flush=True)
         return False
     # (made beside this folder's copy first, then put in its place: a link or copy that stops part-way, a full disk, leaves the last
     # usable copy as it was. The marks' paths are checked too: a link there would carry their write out of the build folder)
-    staged_romfs, staged_kept = romfs + ".from.part", kept + ".from.part"
+    staged_romfs, staged_kept, staged_aoc = romfs + ".from.part", kept + ".from.part", aoc + ".from.part"
     marks = [os.path.join(out, name) for name in ROMFS_MARKS]
-    check_cache_paths(out, [staged_romfs, staged_kept, os.path.join(out, ".inhale_romfs")] + marks)
-    for staged in (staged_romfs, staged_kept):
+    check_cache_paths(out, [staged_romfs, staged_kept, staged_aoc, aoc, os.path.join(out, ".inhale_romfs")] + marks)
+    for staged in (staged_romfs, staged_kept, staged_aoc):
         if os.path.lexists(staged):
             shutil.rmtree(staged)
     print("the game files come from %s, unpacked from this .nup before: linked, not read again" % other, flush=True)
     try:
         link_or_copy(src_romfs, staged_romfs)
+        if os.path.isdir(src_aoc):
+            link_or_copy(src_aoc, staged_aoc)
         shutil.copytree(src_kept, staged_kept)
     except BaseException as e:
-        for staged in (staged_romfs, staged_kept):
+        for staged in (staged_romfs, staged_kept, staged_aoc):
             shutil.rmtree(staged, ignore_errors=True)
         if not isinstance(e, OSError):
             raise
@@ -656,6 +664,10 @@ def romfs_from_build(other, out, stamp, romfs, kept, exefs):
         if os.path.exists(final):
             shutil.rmtree(final)
         os.replace(staged, final)
+    if os.path.exists(aoc):   # (inhale) the data titles go with the romfs: an older unpack's are not left under a romfs without any
+        shutil.rmtree(aoc)
+    if os.path.isdir(staged_aoc):
+        os.replace(staged_aoc, aoc)
     shutil.copytree(kept, exefs)
     for name, target in zip(ROMFS_MARKS, marks):
         if os.path.isfile(os.path.join(other, name)):
@@ -722,7 +734,7 @@ def stand_in_damaged_files(out, romfs):
     else:
         lines = ["Your game dump is incomplete: %d game file%s in it %s damaged (a complete dump is about 23.8 GB, an incomplete "
                  "one 23.3 GB). Similar files are used where available, "
-                 "with different textures in those places. Dump the game again for the original files:" %
+                 "with different textures in those places. A complete copy of the game's files has the original ones:" %
                  (len(done), "" if len(done) == 1 else "s", "is" if len(done) == 1 else "are")]
         for path, other in done:
             lines.append("  %s: %s" % (os.path.relpath(path, romfs),
@@ -735,7 +747,7 @@ def stand_in_damaged_files(out, romfs):
         unresolved = sum(other is None for _, other in done)
         if unresolved:
             fail("The game dump still has %d damaged file%s with no replacement. The build stopped before compiling. "
-                 "Dump the game again and select the complete dump in Inhale Builder. The affected files are listed above." %
+                 "Build again from a complete copy of the game's files. The affected files are listed above." %
                  (unresolved, "" if unresolved == 1 else "s"))
     write_stamp(checked, checked_stamp)
     with contextlib.suppress(FileNotFoundError):
@@ -1150,7 +1162,7 @@ def _cleanup_owns(q, work, default_work):
             elif option.startswith("--work="):
                 works.append(_cleanup_path(option[7:]))
         if works:
-            # build.py gets OOT_WORK through its environment; it has no --work option.
+            # build.py gets INHALE_WORK through its environment; it has no --work option.
             return entry != "build.py" and all(w == work for w in works)
         # Versions share the default work folder. An update must also recognize the
         # packaged entry point of an earlier version, not arbitrary make_game scripts.
@@ -1178,7 +1190,7 @@ def _cleanup_owns(q, work, default_work):
 
 
 def _cleanup_build_child(child, parent):
-    """make_game runs this exact child in ROOT with OOT_WORK; an orphan has no such proof."""
+    """make_game runs this exact child in ROOT with INHALE_WORK; an orphan has no such proof."""
     python_names = ("python.exe", "pythonw.exe", "python3.exe")
     if child.get("Name", "").lower() not in python_names or parent.get("Name", "").lower() not in python_names:
         return False
@@ -1678,8 +1690,8 @@ def system_language(name=None):
         return "zh-Hant" if any(t in name for t in ("TW", "HK", "MO", "Hant")) else "zh-Hans"
     if family == "es" and name.lower() not in ("es", "es-es"):
         return "es-419"
-    if family == "pt":
-        return "pt-BR"
+    if family == "pt":   # (inhale: where the game has it; this one has no Portuguese)
+        return "pt-BR" if "pt-BR" in dict(LANGUAGES) else None
     return next((code for code, _ in LANGUAGES if code == family), None)
 
 
@@ -1747,10 +1759,43 @@ def vk_profile_for(work, environ, readable=None, root=ROOT):
     return prof if (readable or (lambda p: profile_readable(p, any_os=True)))(prof) else None
 
 
-def game_name(out, work, nup=None):
+def npdm_name(exefs):
+    """(inhale) The game's name by the program id in exefs/main.npdm (its ACI0, as nx2/standalone.py reads it), or None: an
+    unpacked dump has no name of its own, and game_title.NAMES has the names by title id"""
+    try:
+        with open(os.path.join(exefs, "main.npdm"), "rb") as f:
+            npdm = f.read()
+    except OSError:
+        return None
+    aoff, asz = int.from_bytes(npdm[0x70:0x74], "little"), int.from_bytes(npdm[0x74:0x78], "little")
+    aci = npdm[aoff:aoff + asz]
+    return game_title.NAMES.get(int.from_bytes(aci[0x10:0x18], "little")) if aci[:4] == b"ACI0" else None
+
+
+PROMPT_MODULES = ("PIL", "numpy", "lz4", "texture2ddecoder")   # (what nx2/kirby_prompts.py draws with: nx2/prompt_requirements.txt)
+
+
+def make_prompts(out, romfs):
+    """The button icons of each controller face (nx2/kirby_prompts.py), in <game folder>/prompts/<face>/: host/prompts.c serves
+    the one the player chose. Optional: without its packages, or if it fails, the game is the same and shows the Switch's icons"""
+    missing = [m for m in PROMPT_MODULES if importlib.util.find_spec(m) is None]
+    if missing:
+        print("button prompts: not made (%s not installed; nx2/prompt_requirements.txt): the game shows the Switch's buttons"
+              % ", ".join(missing), flush=True)
+        return
+    r = run(PY + ["nx2/kirby_prompts.py", romfs, "all", os.path.join(out, "prompts")], check=False)
+    if r:
+        print("button prompts: not made (kirby_prompts.py stopped): the game shows the Switch's buttons", flush=True)
+
+
+def game_name(out, work, nup=None, exefs=None):
     """The game's own name and icon (nx2/game_title.py): read from the .nup when there is one and kept in the folder, then, on
     Windows, made into the exe's icon and the name Windows shows for it (work/inhale_game.res, linked by nx2/build.py). A
-    folder built from an unpacked dump has neither: the game stays "Inhale". Nothing here stops a build"""
+    folder built from an unpacked dump has no icon, and its name is the one its program id has (exefs: npdm_name), else the
+    game stays "Inhale". Nothing here stops a build"""
+    name = npdm_name(exefs) if exefs else None
+    if name:
+        game_title.keep(out, name, None)
     if nup:
         try:
             got = game_title.from_nup(nup)
@@ -1779,13 +1824,24 @@ def copy_writable(src, dst):
     shutil.copyfile(src, dst)
 
 
-# What a romfs must hold for the build and the game's start, each as (any one of its names, test): the build reads
-# Pack/ZsDic.pack.zs and System/Resource (prompt_assets.py, shader_census.py), and the game cannot start without its heap
-# definition, which it opens as Product. then Default. (#689 and a v3.0.0-rc.4 player: a romfs with no System folder crashed
-# at boot every time, "write 0x100000000000, guest 0", its heaps set up without their sizes; that file alone missing does too)
-ROMFS_NEEDED = ((("Pack/ZsDic.pack.zs",), os.path.isfile), (("System/Resource",), os.path.isdir),
-                (("System/HeapSize/Product.Nin_Ounce_NVN2.HeapDef.byml.zs",
-                  "System/HeapSize/Default.Nin_Ounce_NVN2.HeapDef.byml.zs"), os.path.isfile))
+def data_romfs(romfs, aoc):
+    """(inhale) The romfs that holds the game's data, of a romfs folder and an add-on folder (the one that holds
+    <title id>/romfs; either may be None or missing): romfs when it has files, else the first add-on title's that has, as
+    nx2/kit.py data_romfs answers for the one folder holding both. This game's code title has an empty romfs, and all its
+    files are a data title of their own"""
+    if romfs and os.path.isdir(romfs) and os.listdir(romfs):
+        return romfs
+    for title in sorted(os.listdir(aoc)) if aoc and os.path.isdir(aoc) else ():
+        other = os.path.join(aoc, title, "romfs")
+        if os.path.isdir(other) and os.listdir(other):
+            return other
+    return romfs or aoc
+
+
+# What the romfs that holds the data (data_romfs) must have, each as (any one of its names, test). (inhale) This game's: a
+# folder the first stage loads from, and a folder and a file of two other parts of a whole copy. A romfs without them is not
+# this game's files (another tool's packed copy, the code title's empty romfs alone, another game), and no game starts from it
+ROMFS_NEEDED = ((("ubin/Step/Map",), os.path.isdir), (("gfx/Common",), os.path.isdir), (("fdg/Archive.dat",), os.path.isfile))
 
 
 def romfs_missing(romfs):
@@ -1796,15 +1852,16 @@ def romfs_missing(romfs):
 
 
 def check_romfs_folder(romfs):
-    """A chosen romfs folder holds what the build and the game's start need (ROMFS_NEEDED), said before the game folder is
-    made. Issue 467: another tool's packed copy (index.json and one romfs.bin) was built for 15 minutes into 27 GB, and the
-    game stopped at boot without its system files"""
+    """The chosen folders' data romfs (data_romfs) holds what the game's start needs (ROMFS_NEEDED), said before the game folder
+    is made. Issue 467: another tool's packed copy (index.json and one romfs.bin) was built for 15 minutes into 27 GB, and the
+    game stopped at boot without its files"""
     folder = long_path(romfs)
     missing = romfs_missing(romfs)
     if missing:
         packed = (" It holds a romfs.bin, a packed copy of the game's files: extract it first."
                   if os.path.isfile(os.path.join(folder, "romfs.bin")) else "")
-        fail("The romfs folder %s does not hold the game's files (no %s): choose the extracted RomFS.%s" % (romfs, missing, packed))
+        fail("The folder %s does not hold the game's files (no %s): choose the extracted dump's aoc folder (--aoc), where this "
+             "game's files are.%s" % (romfs, missing, packed))
 
 
 def check_unpacked_romfs(romfs, source):
@@ -1812,8 +1869,8 @@ def check_unpacked_romfs(romfs, source):
     a game built from it could not start. Before the build, as for a chosen folder"""
     missing = romfs_missing(romfs)
     if missing:
-        fail("%s does not hold all of the game's files (no %s): a game built from it could not start. Dump the game again and "
-             "choose the complete dump in Inhale Builder." % (source, missing))
+        fail("%s does not hold all of the game's files (no %s): a game built from it could not start. Build again "
+             "from a complete copy of the game's files." % (source, missing))
 
 
 def refuse_dump_links(folder):
@@ -1961,7 +2018,8 @@ COMPILE_ONLY_ENV = ("RX_HOT_OPT", "RX_PGO", "RX_VK_PGO", "RX_VK_PGO_FILE")
 # tests/test_lift_cache.py checks that every variable the lift's sources read is one of these, a path, or in LIFT_ENV_NOT_OUTPUT
 LIFT_ENV_PREFIXES = ("A64_", "SUYU_RECOMP_")
 LIFT_ENV_NAMES = ("RX_TARGET",)   # (toolchain.py: the target the emitter and its tables are made for)
-LIFT_PATH_ENV = ("OOT_WORK", "OOT_EXEFS", "OOT_ROMFS", "OOT_DUMP", "A64_HOT_FUNCS")
+LIFT_PATH_ENV = ("OOT_WORK", "OOT_EXEFS", "OOT_ROMFS", "OOT_DUMP", "A64_HOT_FUNCS",
+                 "INHALE_WORK", "INHALE_EXEFS", "INHALE_ROMFS", "INHALE_DUMP")   # (nx2/kit.py reads these first)
 LIFT_ENV_NOT_OUTPUT = {   # (read by the lift's sources, and no change to what it writes)
     "INHALE_LIFT_JOBS": "how many processes", "INHALE_LIFT_NO_FORK": "how they are started", "RX_JOBS": "how many processes",
     "EMSDK": "where the compiler is", "LONGSHOT_MINGW": "where the compiler is",
@@ -2445,6 +2503,8 @@ def parse_args():
     p.add_argument("--nup")
     p.add_argument("--romfs")
     p.add_argument("--exefs")
+    p.add_argument("--aoc", help="with --exefs: the dump's aoc folder, the one that holds <title id>/romfs (this game's files are a "
+                                 "data title of their own; --romfs is not needed with it)")
     p.add_argument("--out")
     p.add_argument("--work", default=os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
                                                   "inhale-builder-windows" if CROSS else "inhale-builder")   # (the objects apart)
@@ -2455,7 +2515,8 @@ def parse_args():
     p.add_argument("--language", help="the game's language: a code from LANGUAGES, written to language.txt. Not given: the one the "
                                       "folder has; else the system's with --prepare; else en-US")
     p.add_argument("--check", action="store_true")
-    p.add_argument("--game", help="your copy: a .nup file, or a folder with romfs and exefs in it (the same as --nup, or --romfs and --exefs)")
+    p.add_argument("--game", help="your copy: a .nup file, or a dump folder with exefs and aoc (or romfs) in it (the same as --nup, or "
+                                  "--exefs with --aoc and --romfs)")
     p.add_argument("--prepare", action="store_true", help="for RecompLauncher: no window, progress lines, --out ~/Games/Inhale unless given")
     p.add_argument("--update", help="a game folder built before: built again from the game files it keeps (the game's update offer)")
     p.add_argument("--romfs-from", default=os.environ.get("INHALE_ROMFS_FROM") or None, metavar="FOLDER",
@@ -2491,9 +2552,11 @@ def parse_args():
                           os.environ.get("INHALE_SETUP_BASE") else os.path.join(os.path.expanduser("~"), "Games", "Inhale"))
     if a.game:   # (a path from a launcher: said plainly before any folder is made, not as a traceback halfway in)
         if os.path.isdir(a.game):
-            a.romfs, a.exefs = os.path.join(a.game, "romfs"), os.path.join(a.game, "exefs")
-            if not (os.path.isdir(a.romfs) and os.path.isdir(a.exefs)):
-                fail("The folder %s needs both a romfs and an exefs folder in it." % a.game)
+            # (inhale) this game's dump: exefs and aoc, with an empty romfs or none
+            a.romfs, a.aoc, a.exefs = (os.path.join(a.game, n) for n in ("romfs", "aoc", "exefs"))
+            a.romfs, a.aoc = (a.romfs if os.path.isdir(a.romfs) else None), (a.aoc if os.path.isdir(a.aoc) else None)
+            if not ((a.romfs or a.aoc) and os.path.isdir(a.exefs)):
+                fail("The folder %s needs an exefs folder and an aoc or a romfs folder in it." % a.game)
         elif os.path.isfile(a.game):
             a.nup = a.game
         else:
@@ -2674,10 +2737,10 @@ def main(a=None):
         return check(a, a.work)
     if a.update:
         a.out = a.update
-    if not a.out or not (a.update or a.nup or (a.romfs and a.exefs)):
-        fail("needs --out, and --nup or --romfs with --exefs")
+    if not a.out or not (a.update or a.nup or ((a.romfs or a.aoc) and a.exefs)):
+        fail("needs --out, and --nup or --exefs with --aoc or --romfs")
     if not (a.update or a.nup):
-        check_romfs_folder(a.romfs)
+        check_romfs_folder(data_romfs(a.romfs, a.aoc))
     out = os.path.abspath(a.out)
     work = os.path.abspath(a.work)
     lock_work(work)   # (before anything is read or cleared in it: stop_stray_compilers, drop_stale_objects, the lift)
@@ -2714,6 +2777,7 @@ def main(a=None):
         print("--fetch-xess-runtime: Intel publishes no XeSS library for Linux, so a Linux build has no XeSS", flush=True)
     exefs = os.path.join(work, "exefs")
     romfs = os.path.join(out, "romfs")
+    aoc = os.path.join(out, "aoc")   # (inhale) the data titles, each in <title id>/romfs: this game's files; its romfs is empty
 
     say("stage", "read", "Reading your game files")
     clear_folder(exefs)
@@ -2722,8 +2786,9 @@ def main(a=None):
         if not os.path.isdir(kept) or not os.path.isdir(romfs):
             fail("This game folder has no copy of the game files to update from: it was built before updates came in. Choose your game files "
                  "in Inhale Builder and build into the same folder once; updates after that work by themselves.")
-        check_cache_paths(out, (kept, romfs))
-        check_unpacked_romfs(romfs, "This game folder's copy of the game files (%s)" % romfs)
+        check_cache_paths(out, (kept, romfs, aoc))
+        data = data_romfs(romfs, aoc)
+        check_unpacked_romfs(data, "This game folder's copy of the game files (%s)" % data)
         shutil.copytree(kept, exefs)
         check_modules(exefs)
         stand_in_damaged_files(out, romfs)   # (a folder unpacked by an earlier builder from a 23.3 GB dump)
@@ -2732,7 +2797,7 @@ def main(a=None):
         # they lay, so a folder they left held broken game data, and the game crashed at start over its empty dictionaries)
         game = os.path.join(out, ".game")
         good = os.path.join(out, ".inhale_romfs")
-        check_cache_paths(out, (game, good, kept, romfs))
+        check_cache_paths(out, (game, good, kept, romfs, aoc))
         # (an update of the builder over the same .nup: nothing to read again, only what the build needs. Issues 21 and 28)
         try:
             st = os.stat(a.nup)
@@ -2745,7 +2810,7 @@ def main(a=None):
             same = read_stamp(good).strip() == stamp
         if same:
             print("the game was read from this .nup before: reading it again is skipped", flush=True)
-            check_unpacked_romfs(romfs, "Your .nup file %s" % a.nup)   # (unpacked by a builder before this check)
+            check_unpacked_romfs(data_romfs(romfs, aoc), "Your .nup file %s" % a.nup)   # (unpacked by a builder before this check)
             shutil.copytree(kept, exefs)
         elif romfs_from_build(a.romfs_from, out, stamp, romfs, kept, exefs):
             shutil.rmtree(game, ignore_errors=True)
@@ -2759,9 +2824,10 @@ def main(a=None):
                 run(PY + ["nx2/nup.py", a.nup, "--extract", game])
                 check_modules(staged_exefs)
                 check_supported_build(staged_exefs)
-                if not os.path.isdir(os.path.join(game, "romfs")):
-                    fail("The package did not contain a romfs folder.")
-                check_unpacked_romfs(os.path.join(game, "romfs"), "Your .nup file %s" % a.nup)
+                # (inhale) nup.py makes no romfs folder for a code title without files, and each data title's in aoc
+                if not (os.path.isdir(os.path.join(game, "romfs")) or os.path.isdir(os.path.join(game, "aoc"))):
+                    fail("The package did not contain the game's files (no romfs and no data title).")
+                check_unpacked_romfs(data_romfs(os.path.join(game, "romfs"), os.path.join(game, "aoc")), "Your .nup file %s" % a.nup)
             except (OSError, SystemExit):
                 try:
                     shutil.rmtree(game)
@@ -2770,9 +2836,12 @@ def main(a=None):
                 except OSError as e:
                     print("Could not remove the incomplete extraction at %s (%s)." % (game, e), flush=True)
                 raise
-            if os.path.exists(romfs):
-                shutil.rmtree(romfs)
-            shutil.move(os.path.join(game, "romfs"), romfs)
+            for name, final in (("romfs", romfs), ("aoc", aoc)):
+                if os.path.exists(final):
+                    shutil.rmtree(final)
+                if os.path.isdir(os.path.join(game, name)):
+                    shutil.move(os.path.join(game, name), final)
+            os.makedirs(romfs, exist_ok=True)   # (inhale) empty for this game: the folder is what says the unpack is here
             keep_heads(out, game, stamp)
             shutil.move(staged_exefs, exefs)
             shutil.rmtree(game, ignore_errors=True)
@@ -2783,16 +2852,20 @@ def main(a=None):
         # (also when the .nup was read before: a folder built from a 23.3 GB dump by an earlier builder gets them too)
         stand_in_damaged_files(out, romfs)
     else:
-        check_cache_paths(out, (kept, romfs))
+        check_cache_paths(out, (kept, romfs, aoc))
         refuse_dump_links(a.exefs)
-        refuse_dump_links(a.romfs)
+        for folder in filter(None, (a.romfs, a.aoc)):
+            refuse_dump_links(folder)
         shutil.copytree(a.exefs, exefs)   # (unpacked in place: the user's copy stays as it is)
         run(PY + ["nx2/unpack.py", exefs])
-        link_or_copy(a.romfs, romfs)
+        os.makedirs(romfs, exist_ok=True)   # (inhale) empty, or not given, when the files are a data title's: --aoc
+        for src, dst in ((a.romfs, romfs), (a.aoc, aoc)):
+            if src:
+                link_or_copy(src, dst)
         shutil.rmtree(kept, ignore_errors=True)
         shutil.copytree(exefs, kept)
     check_supported_build(exefs)
-    game_name(out, work, None if a.update else a.nup)
+    game_name(out, work, None if a.update else a.nup, None if a.update or a.nup else exefs)
 
     # (made once on the development PC: lists of addresses and counts, no game code)
     # (inhale_vk.profdata: the renderer's own profile, counts over Inhale's own code)
@@ -2806,7 +2879,9 @@ def main(a=None):
     src = os.path.join(ROOT, "work", "image", "chunks.txt")   # (where the lifted code's files begin: addresses)
     if os.path.exists(src):
         copy_writable(src, os.path.join(work, "image", "chunks.txt"))
-    env = {"OOT_WORK": work, "OOT_EXEFS": exefs, "OOT_ROMFS": romfs, "OOT_DUMP": out, "RX_RELEASE": "1", "A64_HOT_CHUNK": "1"}
+    # (inhale) the names nx2/kit.py reads first: one left set in the shell is not taken for this build's. The romfs: the data's
+    env = {"INHALE_WORK": work, "INHALE_EXEFS": exefs, "INHALE_ROMFS": data_romfs(romfs, aoc), "INHALE_DUMP": out,
+           "RX_RELEASE": "1", "A64_HOT_CHUNK": "1"}
     if os.path.exists(os.path.join(work, "hot_funcs.txt")):
         env["A64_HOT_FUNCS"] = os.path.join(work, "hot_funcs.txt")
     if os.path.exists(os.path.join(work, "inhale_pieces.prof")) and profile_readable(os.path.join(work, "inhale_pieces.prof")):
@@ -3048,6 +3123,8 @@ def main(a=None):
     if getattr(a, "fetch_xess_runtime", False):
         place_xess_runtime(out)
     PHASES.part("swap and runtimes")
+    make_prompts(out, data_romfs(romfs, aoc))
+    PHASES.part("button prompts")
     # every shader of the game, for its first start to translate (gpu/vk/vk_shader.cpp seed_open). Without it the game still runs, compiling them
     # as it meets them: not worth stopping a finished build for
     # (made again only when the game's shader files, the census or the list itself changed: 4 s and 514 MB written at every update)
@@ -3058,24 +3135,6 @@ def main(a=None):
     else:
         note_shader_list(work, romfs, os.path.join(out, "inhale_shaders.bin"))
     PHASES.part("shader list")
-    # (longshot) the text that names the console, reworded for a PC in every language (host/texts.c serves them; a mod's own wins)
-    texts = os.path.join(out, "texts")
-    if run(PY + [os.path.join(HERE, "text_assets.py"), "--romfs", romfs, "--out", texts], check=False, output=sys.stderr):
-        print("the texts were not reworded for a PC: the game shows its own", flush=True)
-        shutil.rmtree(texts, ignore_errors=True)
-    # (longshot) the button prompts of other controllers (host/prompts.c): the game's icon font redrawn per controller, with fontTools.
-    # Without it the game shows its own icons
-    prompts = os.path.join(out, "prompts")
-    if importlib.util.find_spec("fontTools") is None:
-        shutil.rmtree(prompts, ignore_errors=True)
-        print("the button prompts of other controllers were not made (no fontTools): the game shows its own", flush=True)
-    # (kept when nothing they are made from changed, in a packaged builder too: the stamp has the builder's release, so the
-    # first build after a builder update draws them again)
-    elif run(PY + [os.path.join(HERE, "prompt_assets.py"), "--romfs", romfs, "--out", prompts, "--incremental"],
-             check=False, output=sys.stderr):
-        print("the button prompts of other controllers were not made: the game shows its own", flush=True)
-        shutil.rmtree(prompts, ignore_errors=True)
-    PHASES.part("button prompts")
     icon = os.path.join(ROOT, "assets", "inhale.png")
     if LINUX and not game_title.write_png(out, os.path.join(out, "inhale.png")) and os.path.exists(icon):   # (the window's icon: host/posix/display_sdl.c; the game's own when its .nup had one)
         copy_writable(icon, os.path.join(out, "inhale.png"))   # (a second build overwrites the first's)

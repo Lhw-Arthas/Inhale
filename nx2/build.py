@@ -1654,6 +1654,13 @@ def main():
         jobs += zstd_jobs(cc, target() + THIRD_PARTY_CPU + ["-O2", "-g0", "-DNDEBUG", "-Wno-everything", "-DZSTD_DISABLE_ASM",
                                                             "-DZSTD_LEGACY_SUPPORT=0", "-DZSTD_MULTITHREAD=0"], obj_dir, "zstd_",
                           tp_deps)
+    # (inhale) the console's built-in fonts, which this game waits for at boot (nn::pl, host/kirby_hle.c): the bundled
+    # Libertinus again (nx2/ui_fonts.py), in the program this time, since the back end does not export its copy. Compiled as
+    # C (the file is valid C too), so the names are the plain ones under every ABI
+    if host_srcs:
+        host_fonts = os.path.join(gen_dir, "ui_fonts.cpp")
+        ui_fonts.write(host_fonts)
+        jobs.append((cc, host_fonts, os.path.join(obj_dir, "host_ui_fonts.o"), target() + ["-O0", "-g0", "-w", "-x", "c"], b""))
     # the Vulkan back end, a DLL of its own (the only renderer): CPM cache, INHALE_*_HEADERS, or system includes
     vk_jobs = []
     vk_headers, spirv_headers, vma_headers = vulkan_headers()

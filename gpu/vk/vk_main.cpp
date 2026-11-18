@@ -1655,8 +1655,8 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
         logf("vk: this GPU has no mesh shaders: the game's foliage, grass and many effects cannot be drawn");
 #ifdef _WIN32
         std::thread([name = std::string(dev.props.deviceName)] {
-            const std::string text = "Your graphics card (" + name + ") or its driver has no mesh shader support, which Ocarina of Time "
-                "uses for foliage, grass and many effects, so parts of the picture will be missing or broken.\n\nInhale needs a GPU "
+            const std::string text = "Your graphics card (" + name + ") or its driver has no mesh shader support, which the game "
+                "uses for part of what it draws, so parts of the picture will be missing or broken.\n\nInhale needs a GPU "
                 "with mesh shaders: NVIDIA GeForce RTX 20 series or newer, AMD Radeon RX 6000 series or newer, or Intel Arc. If your "
                 "card is one of those, update its driver.";
             MessageBoxA(nullptr, text.c_str(), "Inhale: graphics card", MB_OK | MB_ICONWARNING | MB_TOPMOST);

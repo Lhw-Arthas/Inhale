@@ -40,6 +40,10 @@ class MenuI18nTests(unittest.TestCase):
         self.tables, self.langs = tables()
         menu = (VK / "vk_menu.cpp").read_text(encoding="utf-8")
         self.menu = set(c_strings(menu))
+        # (inhale) the texts this fork's menu no longer has: their rows stay, so that menu_i18n.h is upstream's as it is
+        # (menu_i18n_inhale.h kRetired; tests/test_menu_i18n_inhale.py checks the list and this fork's own rows)
+        own = (VK / "menu_i18n_inhale.h").read_text(encoding="utf-8")
+        self.menu |= set(c_strings(re.search(r'kRetired\[\] = \{\n(.*?)\n\};', own, re.S).group(1)))
 
     def test_languages(self):
         self.assertEqual(self.langs[0][:3], ("en", "English", "nullptr"))
@@ -188,7 +192,9 @@ class MenuI18nTests(unittest.TestCase):
         for table, pairs in self.tables.items():
             keys = [en for en, _ in pairs]
             self.assertEqual(len(keys), len(set(keys)), "%s: a text twice" % table)
-            self.assertEqual(keys, sorted(keys), "%s: not sorted (menu_i18n.h is written sorted)" % table)
+            # (inhale) sorted as upstream wrote it: the tracker's host here does not sort where upstream's does
+            order = [en.replace("tracker.inhale.invalid", "git.magicbean.dev/MagicBeanDev/Longshot") for en in keys]
+            self.assertEqual(order, sorted(order), "%s: not sorted (menu_i18n.h is written sorted)" % table)
             for en, text in pairs:
                 self.assertTrue(text, "%s: %r has an empty translation" % (table, en))
                 self.assertEqual(conversions(en), conversions(text), "%s: %r and %r" % (table, en, text))

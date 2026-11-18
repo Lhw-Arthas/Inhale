@@ -25,7 +25,9 @@ SUFFIX = " (Inhale)"
 ICON, NAME = 3, 5
 # (the names in a .nup are fit for a file name: its dumper drops what Windows refuses in one, so the colon of the name the game
 # itself shows is gone. These are the names as the games write them, by title id)
-NAMES = {0x0400486024DEC000: "The Legend of Zelda: Ocarina of Time"}
+NAMES = {0x0400486024DEC000: "The Legend of Zelda: Ocarina of Time",
+         # (this package's metadata has no name record at all)
+         0x04004D300C5AE001: "Kirby and the Forgotten Land - Nintendo Switch 2 Edition + Star-Crossed World"}
 
 
 def records(blob):

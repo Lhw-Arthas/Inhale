@@ -153,6 +153,9 @@ bool scene_tonemap_on();
 bool resolution_auto();       // (the game's dynamic resolution: Resolution Auto)
 int resolution_scale();       // (the fixed path's scale in 1/10000: the Resolution row's, as a twelfth of the output)
 void menu_option_set(int id, int value);   // (from the game's side: 7 the mouse's sensitivity, the - and = keys)
+/// (inhale) With another game than the one the hidden rows are for: those rows' settings at their defaults again (a preset
+/// may have set one since), and true; false with that game, where nothing is held
+bool menu_hold_oot_rows();
 int menu_setting(int index, MkwVkSetting* out);   // (the control bridge, host/control.c: the rows with a value)
 int menu_setting_set(const char* key, int value, MkwVkSetting* out);
 int menu_heart_protection();

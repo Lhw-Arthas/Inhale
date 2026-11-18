@@ -247,6 +247,9 @@ HLE(_ZN2nn2fs8MountRomEPKc) {
     RET(mount(gstr(ARG(0)), hos_romfs_dir, 0) ? 0 : R_NOT_MOUNTED);
 }
 
+/* (inhale) a read-only mount under the name the game gave, for the add-on content's (nn_aoc.c): 0 when the table is full */
+int hos_fs_mount_readonly(uint64_t guest_name, const char *root) { return mount(gstr(guest_name), root, 0); }
+
 /* (longshot) the folder the game's saves are mounted from, for the control bridge's saves (host/control.c) */
 static char save_root[HOS_FS_PATH];
 int hos_fs_save_root(char *out, size_t cap) {

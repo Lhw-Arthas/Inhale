@@ -1,9 +1,10 @@
-/* nn::codec: the hardware Opus decoder, on libopus (third_party/opus).
+/* nn::codec: the hardware and the software Opus decoders, both on libopus (third_party/opus).
 
    Input packets come as on the hardware decoder: an 8-byte header {u32 big-endian payload size, u32 big-endian
-   final range} then the Opus packet. DecodeOpusInterleavedWithHardware decodes one packet into interleaved
-   16-bit PCM and says how many bytes it consumed (header + payload) and how many samples (per channel) it made.
-   Each HardwareOpusDecoderType gets our handle in its first 8 bytes. */
+   final range} then the Opus packet. DecodeOpusInterleavedWithHardware (and DecodeOpusInterleaved, the software
+   one, same arguments) decodes one packet into interleaved 16-bit PCM and says how many bytes it consumed
+   (header + payload) and how many samples (per channel) it made. Each HardwareOpusDecoderType or OpusDecoderType
+   gets our handle in its first 8 bytes. */
 #include "hos.h"
 #include <stdio.h>
 #include <string.h>
@@ -39,7 +40,7 @@ HLE(_ZN2nn5codec36GetHardwareOpusDecoderWorkBufferSizeEiii) { RET(0x1000); }
 
 /* InitializeHardwareOpusDecoder(HardwareOpusDecoderType*, int sampleRate, int channelCount, void* workBuffer,
                                  size_t workBufferSize, int option) -> Result */
-HLE(_ZN2nn5codec29InitializeHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeEiiPvmi) {
+static void opus_init(Ctx *c) {
     const int rate = (int)ARG(1), channels = (int)ARG(2);
     int err = 0;
     OpusDecoder *d = opus_decoder_create(rate, channels, &err);
@@ -66,7 +67,7 @@ HLE(_ZN2nn5codec29InitializeHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeEi
     if (logged++ < 8) hos_log_at(HOS_LOG_DEBUG, "codec: Opus decoder %d: %d Hz, %d channels", i, rate, channels);
     RET(0);
 }
-HLE(_ZN2nn5codec27FinalizeHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeE) {
+static void opus_fini(Ctx *c) {
     dlock();
     Dec *d = dec_of(ARG(0));
     if (d) {
@@ -76,16 +77,16 @@ HLE(_ZN2nn5codec27FinalizeHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeE) {
     }
     dunlock();
 }
-HLE(_ZN2nn5codec24ResetHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeE) {
+static void opus_reset(Ctx *c) {
     Dec *d = dec_of(ARG(0));
     if (d) opus_decoder_ctl(d->dec, OPUS_RESET_STATE);
     RET(0);
 }
-HLE(_ZN2nn5codec32GetHardwareOpusDecoderSampleRateEPKNS0_23HardwareOpusDecoderTypeE) {
+static void opus_rate(Ctx *c) {
     Dec *d = dec_of(ARG(0));
     RET(d ? d->rate : 48000);
 }
-HLE(_ZN2nn5codec34GetHardwareOpusDecoderChannelCountEPKNS0_23HardwareOpusDecoderTypeE) {
+static void opus_channels(Ctx *c) {
     Dec *d = dec_of(ARG(0));
     RET(d ? d->channels : 2);
 }
@@ -103,7 +104,7 @@ HLE(_ZN2nn5codec17GetOpusPacketSizeEPKhm) {
 
 /* DecodeOpusInterleavedWithHardware(HardwareOpusDecoderType*, size_t* consumed, int* sampleCount, int16* out,
                                      size_t outSize, const void* in, size_t inSize) -> Result */
-HLE(_ZN2nn5codec33DecodeOpusInterleavedWithHardwareEPNS0_23HardwareOpusDecoderTypeEPmPiPsmPKvm) {
+static void opus_decode_one(Ctx *c) {
     Dec *d = dec_of(ARG(0));
     const uint64_t out_size = ARG(4), in_size = ARG(6);
     /* (longshot) both buffers in guest memory, and the frame count an int (a 64-bit size was cut to any int) */
@@ -124,3 +125,21 @@ HLE(_ZN2nn5codec33DecodeOpusInterleavedWithHardwareEPNS0_23HardwareOpusDecoderTy
     if (ARG(2)) G32(ARG(2)) = (uint32_t)n;
     RET(0);
 }
+
+/* Both decoder families share the bodies above: the arguments are laid out the same. */
+HLE(_ZN2nn5codec29InitializeHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeEiiPvmi) { opus_init(c); }
+HLE(_ZN2nn5codec27FinalizeHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeE) { opus_fini(c); }
+HLE(_ZN2nn5codec24ResetHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeE) { opus_reset(c); }
+HLE(_ZN2nn5codec32GetHardwareOpusDecoderSampleRateEPKNS0_23HardwareOpusDecoderTypeE) { opus_rate(c); }
+HLE(_ZN2nn5codec34GetHardwareOpusDecoderChannelCountEPKNS0_23HardwareOpusDecoderTypeE) { opus_channels(c); }
+HLE(_ZN2nn5codec33DecodeOpusInterleavedWithHardwareEPNS0_23HardwareOpusDecoderTypeEPmPiPsmPKvm) { opus_decode_one(c); }
+
+/* The software decoder: the one this game's sound engine decodes its Opus streams with (the background music of
+   most stages and of the scenes in the engine). With these as stubs a stream started and stayed silent. */
+HLE(_ZN2nn5codec28GetOpusDecoderWorkBufferSizeEii) { RET(0x1000); }
+HLE(_ZN2nn5codec21InitializeOpusDecoderEPNS0_15OpusDecoderTypeEiiPvm) { opus_init(c); }
+HLE(_ZN2nn5codec19FinalizeOpusDecoderEPNS0_15OpusDecoderTypeE) { opus_fini(c); }
+HLE(_ZN2nn5codec16ResetOpusDecoderEPNS0_15OpusDecoderTypeE) { opus_reset(c); }
+HLE(_ZN2nn5codec24GetOpusDecoderSampleRateEPKNS0_15OpusDecoderTypeE) { opus_rate(c); }
+HLE(_ZN2nn5codec26GetOpusDecoderChannelCountEPKNS0_15OpusDecoderTypeE) { opus_channels(c); }
+HLE(_ZN2nn5codec21DecodeOpusInterleavedEPNS0_15OpusDecoderTypeEPmPiPsmPKvm) { opus_decode_one(c); }

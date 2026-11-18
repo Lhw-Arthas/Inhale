@@ -151,6 +151,7 @@ static int cur_tab, tab_selected[2];
 static bool changed, tune_mode;   // (tune_mode: the compact bar, open; it opens when its key is held as the menu opens)
 static bool compact_key_held;     // (menu_tick's tune_down: Right Shift, or Right Ctrl, held)
 static bool restart_ask() { return false; }
+static bool oot_rows() { return true; }   // (the game the debug tools are for runs: their overlay opens)
 static int detect_pad_layout() { return 0; }
 static void dlss_probe() {}
 static void dlss_fg_probe() {}

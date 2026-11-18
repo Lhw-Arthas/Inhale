@@ -22,6 +22,8 @@ constexpr int kMaxMult = 8;
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #x); std::exit(1); } } while (0)
 /* ACTUAL_STATE */
 struct { int framegen = 2, hdr_white = 200, hdr_peak = 1000, hdr_contrast = 100; } opts;
+// (inhale) blit_crop_to_rect asks the host for the window origin: the upper left here, the rows as they are
+struct { int (*origin_lower_left)(); } host_table{[] { return 0; }}, *host = &host_table;
 struct { bool push_descriptor = true; std::mutex present_mu; } dev;
 constexpr bool vkCmdPushDescriptorSetKHR = true;
 constexpr uint32_t HDR_ENCODE_COMP_SPV[] = {0};

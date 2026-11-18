@@ -2,7 +2,8 @@
 
 python -I -B tests/test_prompt_skip.py
 INHALE_PROMPT_TEST_SOURCE=/path/to/main/nx2 python -I -B tests/test_prompt_skip.py
-The unchanged-build case also runs against old make_game.py: it fails because the drawing runs twice.
+(inhale) The build makes no prompts for this game (nx2/make_game.py: it has none of the archives they are drawn from), so the
+call its finish stage made is kept here (finish), and prompt_assets' keeping and clean-up are checked through it as before.
 """
 import ast
 import contextlib
@@ -10,6 +11,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import time
@@ -23,18 +25,14 @@ sys.path.insert(0, str(SOURCE))
 spec = importlib.util.spec_from_file_location("prompt_assets", SOURCE / "prompt_assets.py")
 P = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(P)
-spec = importlib.util.spec_from_file_location("prompt_make_game", SOURCE / "make_game.py")
-M = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(M)
 
-# The actual finish-stage call site, including its no-fontTools fallback.
-main = next(n for n in ast.parse((SOURCE / "make_game.py").read_text(encoding="utf-8")).body
-            if isinstance(n, ast.FunctionDef) and n.name == "main")
-start = next(i for i, n in enumerate(main.body) if isinstance(n, ast.Assign) and
-             any(isinstance(t, ast.Name) and t.id == "prompts" for t in n.targets))
-end = next(i for i in range(start + 1, len(main.body)) if isinstance(main.body[i], ast.Assign) and
-           any(isinstance(t, ast.Name) and t.id == "icon" for t in main.body[i].targets))
-FINISH = compile(ast.Module(body=main.body[start:end], type_ignores=[]), str(SOURCE / "make_game.py"), "exec")
+
+def finish(run, romfs, out):
+    """The call a build's finish stage made for the prompts: kept ones asked for, and none left when the drawing failed"""
+    prompts = os.path.join(out, "prompts")
+    if run([sys.executable, str(SOURCE / "prompt_assets.py"), "--romfs", romfs, "--out", prompts, "--incremental"]):
+        print("the button prompts of other controllers were not made: the game shows its own", flush=True)
+        shutil.rmtree(prompts, ignore_errors=True)
 
 
 class PromptSkipTests(unittest.TestCase):
@@ -67,11 +65,9 @@ class PromptSkipTests(unittest.TestCase):
         self.stack.enter_context(mock.patch.dict(os.environ, {}, clear=True))
         self.stack.enter_context(contextlib.redirect_stdout(self.log))
         self.stack.enter_context(mock.patch.multiple(P, HERE=str(self.here), KENNEY=str(self.kenney), KENNEY_KEYBOARD=str(self.keyboard)))
-        self.stack.enter_context(mock.patch.object(M.importlib.util, "find_spec", return_value=object()))
         if hasattr(P, "make_prompts"):
             self.stack.enter_context(mock.patch.object(P, "generate", side_effect=self.draw))
             self.stack.enter_context(mock.patch.object(P, "prompt_packages", side_effect=lambda: self.packages.copy()))
-        self.stack.enter_context(mock.patch.object(M, "run", side_effect=self.child))
 
     def draw(self, a):
         self.calls += 1
@@ -101,8 +97,7 @@ class PromptSkipTests(unittest.TestCase):
         return 0
 
     def build(self):
-        env = dict(vars(M), romfs=str(self.romfs), out=str(self.out.parent), launcher=None)
-        exec(FINISH, env)
+        finish(self.child, str(self.romfs), str(self.out.parent))
 
     def stamp(self):
         return self.out / getattr(P, "PROMPT_KEY", ".prompt_key")
@@ -559,15 +554,6 @@ class PromptSkipTests(unittest.TestCase):
         self.assertEqual(self.calls, 2)
         self.assertIn("regenerated (forced)", self.log.getvalue())
 
-    def test_every_build_asks_for_kept_prompts(self):
-        # (a packaged builder's too, the launcher's: #2698 had them drawn every time there)
-        commands = []
-        self.stack.enter_context(mock.patch.object(M, "run", side_effect=lambda c, **k: commands.append(c) or self.child(c, **k)))
-        for launcher in (None, "packaged launcher"):
-            exec(FINISH, dict(vars(M), romfs=str(self.romfs), out=str(self.out.parent), launcher=launcher))
-        self.assertEqual(len(commands), 2)
-        self.assertTrue(all("--incremental" in c for c in commands))
-
     def test_malformed_and_empty_manifest(self):
         self.build()
         for text in ("{", "[]", '{"inputs": {}, "outputs": {}}'):
@@ -596,14 +582,6 @@ class PromptSkipTests(unittest.TestCase):
             self.build()
         self.assertFalse(self.out.exists())
         self.assertFalse(self.stamp().exists())
-
-    def test_no_fonttools_keeps_original_fallback(self):
-        self.build()
-        with mock.patch.object(M.importlib.util, "find_spec", return_value=None):
-            self.build()
-        self.assertEqual(self.calls, 1)
-        self.assertFalse(self.out.exists())
-
 
     def test_unreadable_reason_is_printed_even_if_forced_generation_fails(self):
         os.environ["INHALE_FORCE_PROMPTS"] = "1"

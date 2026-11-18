@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "menu_i18n.h"
+#include "menu_i18n_inhale.h"   // (inhale: this fork's own rows)
 #include "vk_menu.h"
 #include "vk_paths.h"
 
@@ -114,8 +115,9 @@ const Table& table(int lang) {
     std::call_once(made[lang], [lang] {
         t[lang] = std::make_unique<Table>();
         const menu_i18n::Lang& l = menu_i18n::kLangs[lang];
-        for (int i = 0; i < l.count; i++) {
-            const menu_i18n::Entry& e = l.entries[i];
+        const menu_i18n::Lang& own = menu_i18n::inhale::kLangs[lang];   // (inhale: upstream's rows, then this fork's)
+        for (int i = 0; i < l.count + own.count; i++) {
+            const menu_i18n::Entry& e = i < l.count ? l.entries[i] : own.entries[i - l.count];
             t[lang]->exact.emplace(e.en, e.text);
             for (const char* p = strchr(e.en, '%'); p; p = strchr(p + 1, '%')) {
                 char kind = 0;
@@ -136,10 +138,11 @@ struct GameLang {
     const char* code;
     const char* name;
 };
+// (inhale: the 13 languages the game has texts for, as host/nn_applet.c's list)
 constexpr GameLang kGameLangs[] = {
     {"en-US", "English (US)"}, {"en-GB", "English (UK)"}, {"fr", "Français (France)"}, {"fr-CA", "Français (Canada)"},
     {"de", "Deutsch"}, {"it", "Italiano"}, {"es", "Español (España)"}, {"es-419", "Español (Latinoamérica)"},
-    {"pt-BR", "Português (Brasil)"}, {"nl", "Nederlands"}, {"pl", "Polski"}, {"ru", "Русский"}, {"ja", "日本語"},
+    {"nl", "Nederlands"}, {"ja", "日本語"},
     {"ko", "한국어"}, {"zh-Hans", "简体中文"}, {"zh-Hant", "繁體中文"}};
 constexpr int kGameLangCount = sizeof kGameLangs / sizeof kGameLangs[0];
 bool same_code(const std::string& a, const char* b) {   // (as host/nn_applet.c: pt-br is pt-BR)

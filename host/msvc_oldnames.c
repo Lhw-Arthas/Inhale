@@ -10,6 +10,12 @@
 #pragma comment(linker, "/alternatename:fdopen=_fdopen")
 #pragma comment(linker, "/alternatename:isatty=_isatty")
 #pragma comment(linker, "/alternatename:tempnam=_tempnam")
+/* (the FFmpeg libraries built against the DLL runtime import these three, as __imp_<name>: a pointer variable each) */
+#include <io.h>
+#include <stdio.h>
+void *__imp_fdopen = (void *)_fdopen;
+void *__imp_isatty = (void *)_isatty;
+void *__imp_tempnam = (void *)_tempnam;
 #else
 typedef int msvc_oldnames_unused;   /* (a translation unit with something in it) */
 #endif

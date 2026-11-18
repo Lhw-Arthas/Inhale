@@ -25,7 +25,7 @@ def source_contracts():
     assert 'if (open_now.load()) refresh_outputs();' in tick, 'Refresh on explicit menu opening'
     assert 'r.value != &output_pick' in menu and 'audio_output_device_id=%s' in menu
     assert 'output_forced()' in menu and 'audio_output_device_name' in menu
-    assert '#define MKWVK_API_VERSION 25' in api
+    assert '#define MKWVK_API_VERSION 26' in api
     assert api.index('int (*take_text)') < api.index('int (*audio_output_count)')
     backend = (ROOT / 'host/rx_backend.c').read_text(encoding='utf-8')
     check_host_callbacks(api, backend)
@@ -58,7 +58,7 @@ def check_host_callbacks(api, backend):
     expected = {'take_text': 'host_take_text', 'options_path': 'hos_options_file',
                 'audio_output_count': 'hos_audio_output_count', 'audio_output_info': 'hos_audio_output_info',
                 'audio_output_select': 'hos_audio_output_select', 'audio_output_state': 'hos_audio_output_state',
-                'mic_test': 'hos_mic_test'}
+                'mic_test': 'hos_mic_test', 'origin_lower_left': 'nvn_origin_lower_left'}
     assert len(fields) == len(table), 'Host interface/initializer lengths differ'
     assert fields[-len(expected):] == list(expected), 'Mic test must follow playback, take_text and options_path'
     for field, value in expected.items():
@@ -71,7 +71,7 @@ PARSER = r'''
 #include <stddef.h>
 #include "audio_output_devices.h"
 #include "gpu/vk/vk_api.h"
-_Static_assert(MKWVK_API_VERSION == 25, "microphone test needs a new ABI version");
+_Static_assert(MKWVK_API_VERSION == 26, "microphone test needs a new ABI version");
 _Static_assert(offsetof(MkwVkHost, options_path) == offsetof(MkwVkHost, take_text) + sizeof(((MkwVkHost *)0)->take_text),
                "keep the version-23 settings path after text input");
 _Static_assert(offsetof(MkwVkHost, audio_output_count) == offsetof(MkwVkHost, options_path) + sizeof(((MkwVkHost *)0)->options_path),

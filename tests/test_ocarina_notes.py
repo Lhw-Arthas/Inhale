@@ -127,7 +127,7 @@ int main(int argc, char **argv) {
     binds_load();
     /* (unset) rows the player never bound change nothing: the game's own note buttons play on */
     hos_oc_wait = 1, hos_oc_beat++;
-    release(), held['Q'] = held['E'] = 1;   /* the l and a rows' own keys */
+    release(), held[VK_SHIFT] = held[VK_SPACE] = 1;   /* the l and a rows' own keys */
     oc_notes();
     CHECK(hos_oc_note_bits == 0);
     const uint64_t own = switch_bits();
@@ -157,14 +157,14 @@ int main(int argc, char **argv) {
     CHECK((hos_oc_note_bits & (1ULL << 1)) != 0);
     CHECK(!bound_down(HOS_KEY_MOVE_LEFT, 0));
     /* (c) the (L) note's pad input is the l row's (both HOS_PAD_LSHOULDER by default): during the wait the pad
-       gives the note, not L, while l's own key 'Q' still gives L */
+       gives the note, not L, while l's own key (Shift) still gives L */
     hos_oc_wait = 1;
     release();
     pad_raw_now = 1 << HOS_PAD_LSHOULDER;
     oc_notes();
     CHECK((hos_oc_note_bits & 1ULL) != 0);
     CHECK((pad_bits(1ULL << HOS_PAD_LSHOULDER) & (1ULL << HOS_SW_L)) == 0);
-    held['Q'] = 1;
+    held[VK_SHIFT] = 1;
     oc_notes();
     CHECK((switch_bits() & (1ULL << HOS_SW_L)) != 0);
     pad_raw_now = 0;
@@ -183,7 +183,7 @@ int main(int argc, char **argv) {
        else; native presses of A/X/Y/L/R cannot reach the game's note code */
     hos_oc_wait = 1;
     release();
-    held[VK_NUMPAD2] = held['Q'] = held['E'] = 1;   /* the (R) note; keys of the l and a rows */
+    held[VK_NUMPAD2] = held[VK_SHIFT] = held[VK_SPACE] = 1;   /* the (R) note; keys of the l and a rows */
     oc_notes();
     const uint64_t raww = switch_bits();
     CHECK((raww & (1ULL << HOS_SW_L)) && (raww & (1ULL << HOS_SW_A)));   /* the physical presses are real */
@@ -208,7 +208,7 @@ int main(int argc, char **argv) {
     CHECK(hos_binding(HOS_BIND_KEY, HOS_SW_Y, 0) == VK_LBUTTON);
     /* (j) the note window shares read_input's own gates: Insert menu open, or the game behind another window, and
        the word the game reads is the player's own; a pad input still held since the menu plays no note */
-    release(), held[VK_NUMPAD2] = held['Q'] = held['E'] = 1;
+    release(), held[VK_NUMPAD2] = held[VK_SHIFT] = held[VK_SPACE] = 1;
     hos_oc_wait = 1;
     oc_notes();
     const uint64_t raw2 = switch_bits();

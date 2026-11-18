@@ -4978,6 +4978,10 @@ void dynamic_state(VkCommandBuffer cmd, const NvnState& s, const Targets& at, Vk
     float vx = s.viewport[0][0], vy = s.viewport[0][1], vw = s.viewport[0][2], vh = s.viewport[0][3];
     if (vw == 0.0f && vh == 0.0f) vx = 0, vy = 0, vw = (float)at.width, vh = (float)at.height;
     d.vp = {vx, vy + vh, vw, -vh, std::clamp(s.depth_near, 0.0f, 1.0f), std::clamp(s.depth_far, 0.0f, 1.0f)};
+    // (inhale) a lower-left window origin: +y is the higher row, as in Vulkan's own viewport. Flipping these targets too
+    // turned every picture drawn into a texture and sampled from it upside down (Kirby's text panes)
+    const bool lower_left = host->origin_lower_left() != 0;
+    if (lower_left) d.vp.y = vy, d.vp.height = vh;
     d.sc = {{0, 0}, {at.width, at.height}};
     if (s.scissor[2] > 0 && s.scissor[3] > 0) {
         const int32_t x0 = std::max(0, s.scissor[0]), y0 = std::max(0, s.scissor[1]);
@@ -5030,6 +5034,8 @@ void dynamic_state(VkCommandBuffer cmd, const NvnState& s, const Targets& at, Vk
     // The viewport is flipped (negative height), which reverses the screen-space winding, so NVN's front face maps
     // straight across: telling Vulkan the opposite is what culled every triangle (the frame was black).
     d.front = s.poly.front == NVN_FRONT_FACE_CCW ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+    // (inhale) no flip with a lower-left origin: the winding Vulkan sees is the other one
+    if (lower_left) d.front = d.front == VK_FRONT_FACE_CLOCKWISE ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
     if (fp) d.cull = VK_CULL_MODE_NONE;
     d.topo = mesh ? VK_PRIMITIVE_TOPOLOGY_MAX_ENUM : topo;
     d.restart = !mesh && s.restart && topo != VK_PRIMITIVE_TOPOLOGY_POINT_LIST && topo != VK_PRIMITIVE_TOPOLOGY_LINE_LIST &&

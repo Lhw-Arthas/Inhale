@@ -4397,6 +4397,8 @@ void blit_crop_to_rect(VkCommandBuffer cmd, VkImage src, uint32_t sw, uint32_t s
     b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     b.srcOffsets[0] = {(int)source.x, (int)source.y, 0};
     b.srcOffsets[1] = {(int)(source.x + source.w), (int)(source.y + source.h), 1};
+    // (inhale) a lower-left window origin (vk_api.h): the source's row 0 is the picture's bottom row
+    if (host->origin_lower_left()) std::swap(b.srcOffsets[0].y, b.srcOffsets[1].y);
     b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     b.dstOffsets[0] = {(int)rect.x, (int)rect.y, 0};
     b.dstOffsets[1] = {(int)(rect.x + rect.w), (int)(rect.y + rect.h), 1};
@@ -4749,7 +4751,8 @@ void log_frame_stats() {
         {   // (issue 109: the movie networks too slow on this card: left out from now on, vk_draw.cpp movie_networks_slow)
             static const bool keep_all = getenv("RX_VK_NETWORK_KEEP") && !strcmp(getenv("RX_VK_NETWORK_KEEP"), "all");
             const double gpu_ms = (st_gpu_ns - l_gpu) / 120.0 / 1e6, draws = (d - l_d) / 120.0;
-            menu_auto_tune(gpu_ms, draws, 120.0 / secs);   // (the Quality preset Auto (this PC): measured in play)
+            // (inhale: not with a game whose Render resolution row is hidden: nothing of it to tune; its hidden rows held instead)
+            if (!menu_hold_oot_rows()) menu_auto_tune(gpu_ms, draws, 120.0 / secs);   // (the Quality preset Auto (this PC): measured in play)
             if (!keep_all && gpu_ms > 40.0 && draws < 40.0 && !movie_networks_slow.exchange(true))
                 logf("vk: %.0f ms of GPU time a frame for %.0f draws (a movie): its upscaler networks are left out from now on "
                      "(a linear upscale; RX_VK_NETWORK_KEEP=all keeps them)", gpu_ms, draws);
@@ -4959,6 +4962,18 @@ void frame_info(int64_t* replayed, int64_t* draws, int* width, int* height) {
     if (height) *height = (int)dev.swap_extent.height;
 }
 
+// The window texture's picture as a sampled view for frame generation. A game that
+// presents an sRGB format (this one: RGBA8_SRGB over an RGBA8 image) wrote bytes that
+// are already encoded; the sRGB view would decode them to linear, and its passes store
+// that into UNORM images shown as if encoded: a darker, more contrasty picture than the
+// direct present's blit of the image's bytes. The image's own (UNORM) format reads them
+// as they are.
+VkImageView present_view(Texture* tex, const nvn_tex* t) {
+    const bool raw8 = tex->format == VK_FORMAT_R8G8B8A8_UNORM || tex->format == VK_FORMAT_B8G8R8A8_UNORM;
+    return texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample, nullptr,
+                        raw8 ? tex->format : VK_FORMAT_UNDEFINED);
+}
+
 uint64_t present_value = 0;   // (the present job's value, handed out as it came; 0: the next one)
 struct PendingShot {
     bool on = false;
@@ -5051,7 +5066,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
         static const bool fg_inline = env_on("RX_VK_SHOT_MADE");
         const bool fg_after = framegen_on() && tex && !fg_inline;
         interpolated = framegen_on() && tex && fg_inline &&
-                       framegen_record(r.cmd, texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample), sw,
+                       framegen_record(r.cmd, present_view(tex, t), sw,
                                        sh, crop, present_native_pq.load(std::memory_order_relaxed));
         texture_frame(completed());
         full_barrier(r.cmd);
@@ -5153,7 +5168,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
         if (fg_after) {
             // (its slot is free again once the next submit's value is reached: that one comes after it)
             Recording& g = begin_recording(value + 1);
-            interpolated = framegen_record(g.cmd, texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample),
+            interpolated = framegen_record(g.cmd, present_view(tex, t),
                                            sw, sh, crop, present_native_pq.load(std::memory_order_relaxed));
             submit_recording(g, false);
         }
@@ -6221,8 +6236,11 @@ void gate_need_value(uint64_t f) {
     std::lock_guard lk(q_mu);
     for (const auto& [value, number] : gate_values) {
         if (value < f) continue;
-        // (the frame before's, the usual one, has its present handed over: nothing to let on)
-        if (number > gate_upto && number > q_done && !q_presents) gate_upto = number, gate_st.fences++, q_cv.notify_all();
+        // (the frame before's, the usual one, has its present handed over: nothing to let on. Not skipped while a present
+        // is queued: a game that submits once more after its present and waits for that submit's fence asked while the
+        // present was still being replayed, the submit then stood alone at the gate, and each frame took
+        // RX_VK_FRAME_GATE_MS wherever the present was replayed at once, as with a shot of every present)
+        if (number > gate_upto && number > q_done) gate_upto = number, gate_st.fences++, q_cv.notify_all();
         break;
     }
 }

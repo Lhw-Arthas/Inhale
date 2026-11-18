@@ -819,7 +819,7 @@ const char* tx_damage_taken(int v) {
 const char* tx_fov(int v) { return v == 100 ? "100% (original)" : tx_percent(v); }
 // (longshot) Walk mode: how the Walk key (the Controls page) makes Link walk with the movement keys (host/nn_hid.c walk_held)
 const char* tx_walk_mode(int v) { return v == 1 ? "Toggle" : "Hold"; }
-MENU_HINTS(hn_walk_mode, 0, "Link walks while the Walk key is held.", "One press of the Walk key walks, the next runs again.")
+MENU_HINTS(hn_walk_mode, 0, "The character walks while the Walk key is held.", "One press of the Walk key walks, the next runs again.")
 /// Shadow resolution: the sun's cascades at the game's own sizes (host/oot_shadow.c). Auto, the default, takes the size
 /// for the card's memory (menu_shadow_res)
 const char* tx_shadow_res(int v) {
@@ -1074,6 +1074,21 @@ MENU_HINTS(hn_preset, 0, "Each row as you set it. Changing most rows yourself co
            "Resolution 100% (with DLSS its nearest mode), Lanczos, Sharpness 50%.",
            "Chosen for this PC from its graphics card, video memory and screen, and chosen again when they change. The log's "
            "\"Auto (this PC)\" line says why.")
+// (inhale) the same where the other game's rows are hidden (oot_rows): what a preset sets of the rows left, and the Quality
+// preset's and the weak laptop row's help without the Render resolution, the Upscaler and the Shadow resolution. The rows
+// take them when the host says which game runs (menu_option_set)
+MENU_HINTS(hn_preset_plain, 0, "Each row as you set it. Changing most rows yourself comes back to Custom.",
+           "Lanczos, Sharpness 30%, the Handheld Profile.", "Lanczos, Sharpness 30%, the Handheld Profile.",
+           "Catmull-Rom, Sharpness 30%.", "Lanczos, Sharpness 40%.", "Lanczos, Sharpness 50%.",
+           "Chosen for this PC from its graphics card, video memory and screen, and chosen again when they change. The log's "
+           "\"Auto (this PC)\" line says why.")
+const char* const kPresetHelpPlain =
+    "Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays "
+    "yours.";
+const char* const kLaptopHelpPlain =
+    "For integrated graphics with 4 CPU threads or fewer (an i3 laptop's UHD Graphics): the plain window scale without "
+    "sharpening, the handheld profile, smaller textures, Intel's shaders one at a time and quick compute builds. The "
+    "handheld profile applies after a restart.";
 MENU_HINTS(hn_gpu, 0, "The best dedicated GPU.")
 /// Frame generation: how many frames are made for each of the game's
 const char* hn_framegen(int v, int variant) {
@@ -1336,7 +1351,7 @@ const char* hn_intel_compiles(int v, int variant) {
 MENU_HINTS(hn_robust, 0, "On, on every card.", "Can be faster on some NVIDIA cards.", "Always on.")
 MENU_HINTS(hn_fps, 0, nullptr, "The frame rate. With frame generation on, the game's own rate too.",
            "And the game's frame time, with its 1% low: the mean time of its slowest 1% of frames over the last 10 seconds.",
-           "And a graph of the last 4 seconds' frame times, with a line at the Game frame rate cap's.",
+           "And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.",
            "And where each frame's time goes, as colours in the graph: the game, the renderer, its waits on the render thread "
            "and the GPU, pacing (frame rate cap, vsync); with threaded rendering, a lane for the render thread's time; the "
            "GPU's own time; red marks where shaders were built or draws left out.",
@@ -1504,7 +1519,7 @@ Row rows[] = {
      "Filters the finished picture, including the game's HUD, after window effects. Inhale's menu and overlays stay "
      "clean. Changes at once; quality presets leave it alone.", hn_crt_filter, false, true},
     {TAB_GRAPHICS, "CRT lines", &opts.crt_lines, 0, 2, 1, tx_crt_lines,
-     "Virtual CRT raster, not Render resolution. Capped at half the destination height (at least one line); width follows "
+     "Virtual CRT raster, not the game's resolution. Capped at half the destination height (at least one line); width follows "
      "its aspect. Non-integer scaling can cause moire.", hn_crt_lines, false, true},
     {TAB_GRAPHICS, "Ultrawide menus", &opts.wide_menus, 0, 2, 1, tx_wide_menus,
      "With the Aspect ratio at the monitor's shape: the pause, item and map menus, and what shows beside them. Loading "
@@ -1556,7 +1571,7 @@ Row rows[] = {
     {TAB_AUDIO, "Speaker layout", &opts.audio_output, 0, 3, 1, tx_audio_output,
      "The speakers the game mixes for. Mono/Stereo changes live on stereo output; channel layout changes need a restart.", hn_audio_output, true, true},
     {TAB_AUDIO, "Microphone", &opts.mic, 0, 2 + kMaxMics, 1, tx_mic,
-     "What the ocarina hears when the game's microphone option is on (playing an instrument, or humming).", hn_mic, false,
+     "The microphone the game listens to, when it uses one.", hn_mic, false,
      true},
     {TAB_AUDIO, "Microphone gain", &opts.microphone_gain, 0, 400, 10, tx_percent,
      "Adjust capture for Inhale only; system volume is unchanged. Use the microphone test to see live levels while adjusting gain. "
@@ -1675,10 +1690,10 @@ Row rows[] = {
      "The button icons the game shows, in its texts and menus: those of this controller, for the buttons your controls "
      "put each action on.", hn_prompts, true, true},
     {TAB_CONTROLS, "Walk mode", &opts.walk_mode, 0, 1, 1, tx_walk_mode,
-     "How the Walk key makes Link walk with the movement keys: while it is held, or from one press to the next. It is Caps "
+     "How the Walk key makes the character walk with the movement keys: while it is held, or from one press to the next. It is Caps "
      "Lock unless the Controls page changes it.", hn_walk_mode, false, true},
     {TAB_CONTROLS, "Walk speed", &opts.walk_speed, 15, 90, 5, tx_percent,
-     "How far the movement keys tilt the stick while Link walks, in percent of the whole way. Controllers, the mouse and "
+     "How far the movement keys tilt the stick while the character walks, in percent of the whole way. Controllers, the mouse and "
      "the camera keys are not changed.", nullptr, false, true},
     {TAB_CONTROLS, "Controls", nullptr, 0, 0, 0, nullptr,   // (longshot: opens its page)
      "The layout preset, the button prompts, and which gamepad button and which keys press each of the Switch's "
@@ -2049,9 +2064,34 @@ bool intel_compiler_row() {
 }
 bool laptop_row() { return dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU; }   // (Set up for a weak laptop)
 bool is_laptop_row(const Row& r) { return !r.value && r.tab == TAB_DEBUG && !strcmp(r.name, "Set up for a weak laptop"); }
+// (inhale) The rows made for the other game: what they set is read only by that game's hooks and lift-time patches
+// (host/oot_*.c, nx2/oot_*.py, host/nn_vi.c's limiter and time step, which need its graphics module, vk_temporal.cpp's
+// stand-in for its upscale network), so with another game they change nothing, or what little is left of them is wrong
+// (the 30 FPS cap without the time step is half speed). The host says once which game runs (HOS_OPT_OOT_GAME,
+// menu_option_set): 0 hides them, here and so in the tabs' counts and the control bridge; until it says (-1: a menu built
+// alone) they all show. The microphone rows are the other game's ocarina input streams (host/nn_audio_in.c): this game
+// imports the SDK's input-stream API but no game code calls it, and the Test row is the only way a stream starts
+std::atomic<int> oot_game{-1};
+bool oot_rows() { return oot_game.load(std::memory_order_relaxed) != 0; }
+bool is_oot_row(const Row& r) {
+    const int* v = r.value;
+    return r.cheat >= 0 || v == &opts.mic || v == &opts.microphone_gain ||
+           (r.tab == TAB_AUDIO && !v && !strcmp(r.name, "Test microphone")) ||
+           v == &opts.debug_tools || v == &opts.transition_autosave || v == &opts.damage_taken ||
+           v == &opts.fov || v == &opts.shadow_res || v == &opts.wide_menus || v == &opts.hud_layout ||
+           v == &opts.text_speed || v == &opts.text_size || v == &opts.camera_speed || v == &opts.skip_title ||
+           v == &opts.skip_opening || v == &opts.resolution || v == &opts.dlss || v == &opts.dlss_model ||
+           v == &opts.fps_cap || v == &opts.realtime || v == &opts.disable_camera_centering ||
+           v == &opts.ultrawide ||   // (the Aspect ratio: host/hos_main.c keeps another game at 16:9)
+           // (Frame generation by: DLSS FG makes its frames from the temporal Upscaler's picture, which only the other game has)
+           v == &opts.framegen_by;
+}
+bool is_share_row(const Row& r);   // (defined with share_pipeline_list below)
 bool row_shown(int i) {
     const int* v = rows[i].value;
-    return ((rows[i].cheat < 0 && v != &opts.damage_taken) || cheats_on()) && (v != &opts.reflex || reflex_available()) &&
+    // (inhale: Save my pipeline list is hidden, its issue's tracker does not exist: pipeline_share.h kIssueUrl)
+    return (oot_rows() || !is_oot_row(rows[i])) && !is_share_row(rows[i]) &&
+           ((rows[i].cheat < 0 && v != &opts.damage_taken) || cheats_on()) && (v != &opts.reflex || reflex_available()) &&
            (v != &opts.antilag || antilag_available()) && (v != &opts.intel_compiles || intel_compiler_row()) &&
            (v != &opts.intel_quick || intel_compiler_row()) &&
            (!is_laptop_row(rows[i]) || laptop_row()) &&
@@ -2105,7 +2145,7 @@ struct EnvOverride {
     int* value;
     int saved, forced;
 };
-EnvOverride env_overrides[16];
+EnvOverride env_overrides[40];   // (inhale: 40, room for each hidden row held at its default too: oot_rows_hold)
 int env_override_count = 0;
 void env_override(int* value, int v) {
     for (int i = 0; i < env_override_count; i++)
@@ -2453,6 +2493,8 @@ void prompts_at_once(const Row& r) {
 namespace ps = pipeline_share;
 std::string share_said;    // (the help box's line after a save: where the zip went and what to do, or why there is none)
 std::string share_value;   // (the row's value after a save: Saved, or Not saved)
+// (the address here and in share_finish: Inhale has no tracker yet, a name that never resolves, so no list goes to upstream's;
+// pipeline_share.h kIssueUrl)
 constexpr const char* kShareSaidLongest = "Saved inhale-pipelines-2026-12-31.zip (123456 pipelines) in Downloads. The report "
     "is in the zip. Open tracker.inhale.invalid/issues/14 and attach the zip to a comment, then paste the report and say "
     "where you played.";   // (measure_help: the help box's room)
@@ -3048,6 +3090,13 @@ const Control controls[] = {{HOS_SW_A, "A"}, {HOS_SW_B, "B"}, {HOS_SW_X, "X"}, {
                             {HOS_KEY_OC_NOTE_R, "Ocarina note (R)"}, {HOS_KEY_OC_NOTE_A, "Ocarina note (A)"},
                             {HOS_KEY_OC_NOTE_Y, "Ocarina note (Y)"}, {HOS_KEY_OC_NOTE_X, "Ocarina note (X)"}};
 constexpr int kControls = sizeof controls / sizeof controls[0];   // (then "Reset to defaults")
+// (inhale) the controls the page lists, then "Reset to defaults": all of them, or without the ocarina's notes, the table's
+// last, when the game that runs is not theirs (oot_rows)
+int controls_shown() {
+    int n = kControls;
+    while (!oot_rows() && n > 0 && controls[n - 1].button >= HOS_KEY_OC_NOTE_L && controls[n - 1].button <= HOS_KEY_OC_NOTE_X) n--;
+    return n;
+}
 // (the stick's and camera's directions and Walk: keys only; the ocarina's note rows take a gamepad input too, host/nn_hid.c)
 bool keys_only(int i) {
     return i < kControls && ((controls[i].button >= HOS_KEY_MOVE_UP && controls[i].button <= HOS_KEY_CAM_RIGHT) ||
@@ -3596,7 +3645,9 @@ void draw_debug_rows(ui::Ctx& c, float cx0, float cx1, float top, float bottom, 
     // (where each goes: a row number of the layout and a column)
     int vrow[64] = {}, vcol[64] = {}, head_row[kDebugGroups] = {}, head_col[kDebugGroups] = {};
     vrow[1] = 1;
-    int next_row[2] = {kDebugGeneralRows, kDebugGeneralRows};
+    // (inhale: none of the general rows where the other game's rows are hidden: the Developer rows start at the top then)
+    const int general = std::min(dev, kDebugGeneralRows);
+    int next_row[2] = {general, general};
     const bool tools = dev > kDebugGeneralRows;
     for (int g = 0; tools && g < kDebugGroups; ++g) {
         const int col = two && g > 0 ? 1 : 0;
@@ -3754,6 +3805,7 @@ const char* bug_report_cell() {
 }
 /// Under its help once saved: where the report is and what to do with it (the game opens nothing: no browser or file manager is
 /// sure to be there, as on a Steam Deck in Game Mode)
+/// (Inhale has no tracker yet: a name that never resolves, so no report goes to upstream's; vk_bug_report.cpp kIssues)
 std::string bug_report_saved_text(const std::string& folder) {
     return "Saved in the game folder as " + folder + ". To send it, open tracker.inhale.invalid/issues, choose New issue and "
            "Game problem, copy report.txt's answers into the form and drag the folder's files into it: on Windows from File "
@@ -4032,17 +4084,18 @@ void draw_controls(ui::Ctx& c) {
     bool narrow;
     columns(c, &cx0, &cx1, &hx0, &hx1, &narrow);
     column(c, cx0, cx1, hh);
-    const int n = kTop + kControls + 1, sel_i = csel - kTop;   // (sel_i: the control's, kControls Reset; negative: a page row)
+    const int shown_n = controls_shown();   // (inhale: the controls listed, then Reset)
+    const int n = kTop + shown_n + 1, sel_i = csel - kTop;   // (sel_i: the control's, shown_n Reset; negative: a page row)
     const ui::Prompt idle[] = {{ui::kUpDown, "Choose"}, {ui::kLeftRight, "Column"}, {ui::kConfirm, "Bind"}, {ui::kKey, "Clear", "Del"},
                                {ui::kBack, "Back"}};
     const ui::Prompt option[] = {{ui::kUpDown, "Choose"}, {ui::kLeftRight, "Change"}, {ui::kBack, "Back"}};
     const ui::Prompt wait[] = {{ui::kBack, "Cancel"}};
     const float bar_top = ui::prompt_bar_top(c);   // (the strip itself drawn last, over all: below)
     const Row* page_row = sel_i < 0 ? &rows[tab_row_to_global(TAB_PAGE, csel)] : nullptr;
-    const char* title = page_row ? page_row->name : sel_i < kControls ? controls[sel_i].name : "Reset to defaults";
+    const char* title = page_row ? page_row->name : sel_i < shown_n ? controls[sel_i].name : "Reset to defaults";
     const char* help = listening ? (listening == 1 ? "Press the gamepad button to use. Esc cancels." : "Press the key to use. Esc cancels.")
                        : page_row ? page_row->help
-                       : sel_i < kControls && controls[sel_i].button < HOS_SW_N && controls[sel_i].button != HOS_SW_PLUS &&
+                       : sel_i < shown_n && controls[sel_i].button < HOS_SW_N && controls[sel_i].button != HOS_SW_PLUS &&
                          controls[sel_i].button != HOS_SW_MINUS && ccol == kCtlToggle
                            ? "Hold-to-toggle: press once to hold this Switch button, again to release it. Either gamepad input or a "
                              "bound key works. Opening Insert, pressing Plus or Minus, focus loss or rebinding releases it. Off by default."
@@ -4050,6 +4103,7 @@ void draw_controls(ui::Ctx& c) {
                              "selected input and Delete clears it. A button's only gamepad input stays with it: it does not move into "
                              "another's empty Input 2. The game's button icons follow after a restart.";
     const char* hint = page_row ? (page_row->hint ? page_row->hint(*page_row->value, -1) : nullptr)
+                       : !oot_rows() ? "Gamepad: the D-pad moves, A binds, B goes back."   // (inhale: no note rows to speak of)
                                 : "Gamepad: the D-pad moves, A binds, B goes back. Ocarina note keys are only notes while "
                                   "the ocarina waits for one; away from it they do their other jobs.";
     float bottom = std::min(c.h - c.safe, bar_top) - 10 * s;   // (the rows end above the prompts)
@@ -4091,7 +4145,7 @@ void draw_controls(ui::Ctx& c) {
             hits.add(rx0, y0, rx1, y1, menu_hit::kCtlOption, j, opt_x, rx1);
             continue;
         }
-        if (i == kControls) {
+        if (i == shown_n) {
             ui::button(c, ImVec2(rx0, y), ImVec2(pad_x - 8 * s, y + rh), "Reset to defaults", sel);
             hits.add(rx0, y0, pad_x - 8 * s, y1, menu_hit::kCtlRow, i);
             continue;
@@ -5510,7 +5564,48 @@ bool fps_take(int64_t now, int64_t shown, int64_t game, int64_t* next, int64_t* 
 // (the game's) and the control bridge's menu_setting and menu_setting_set (its own thread). Recursive: a setter reached from
 // inside menu_tick's frame on the same thread does not lock itself out
 std::recursive_mutex menu_mu;
+// (inhale) While the other game's rows are hidden (oot_rows), what they set is held at its default, the value of a file
+// without the row: the player can neither see nor undo a saved one there, and a few still reach this game (a frame rate cap
+// of 30 is half speed without the other game's time step; an Upscaler chosen moves the textures' LOD bias). For this run
+// only, as the environment's switches (env_override): save() goes on writing the file's own value, which is the other
+// game's. Frame generation by is held at Built-in FG. Not the Aspect ratio: host/hos_main.c reads it itself, and keeps
+// another game at 16:9. A restart row held is what the run started with, so no restart is asked for it. Called when the
+// host says which game runs, before the first frame, and again at each of the replay's windows (menu_hold_oot_rows): a
+// preset chosen since sets the Upscaler and the Render resolution among its rows
+void oot_rows_hold() {
+    static const Options defaults{};
+    for (Row& r : rows) {
+        if (!r.value || !is_oot_row(r) || r.value == &opts.ultrawide) continue;
+        const int d = r.value == &opts.framegen_by ? 1
+                                                   : *(const int*)((const char*)&defaults + ((const char*)r.value - (const char*)&opts));
+        if (*r.value == d) continue;
+        EnvOverride* place = nullptr;   // (a place let go, taken again: a preset chosen many times does not fill the table)
+        for (int i = 0; i < env_override_count && !place; i++)
+            if (!env_overrides[i].value && !env_holds(r.value)) place = &env_overrides[i];
+        if (place) *place = {r.value, *r.value, d}, *r.value = d;
+        else env_override(r.value, d);
+        if (r.restart) restart_state.restart_value(restart_slot_of(r), row_restart_value(r));
+        if (r.value == &opts.dlss || r.value == &opts.resolution) samplers_changed();   // (their LOD bias, as when the row is set)
+    }
+}
+bool menu_hold_oot_rows() {
+    if (oot_rows()) return false;
+    std::lock_guard lk(menu_mu);
+    oot_rows_hold();
+    return true;
+}
 void menu_option_set(int id, int value) {
+    if (id == HOS_OPT_OOT_GAME) {   // (inhale: which game runs, once, before the first frame: row_shown's oot_rows)
+        oot_game.store(value != 0, std::memory_order_relaxed);
+        if (value) return;
+        std::lock_guard lk(menu_mu);
+        for (Row& r : rows) {   // (the help that spoke of the rows now hidden)
+            if (r.value == &opts.preset) r.help = kPresetHelpPlain, r.hint = hn_preset_plain;
+            else if (is_laptop_row(r)) r.help = kLaptopHelpPlain;
+        }
+        oot_rows_hold();
+        return;
+    }
     if (id == OOT_CHEAT_AGE_ID) {   // (Link's age: the Switch age row shows it)
         if (link_age.exchange(value, std::memory_order_relaxed) != value && page == 0 && cur_tab == TAB_DEBUG) menu_refresh = true;
         return;
@@ -6032,7 +6127,8 @@ void menu_tick() {
     const bool esc_opens = opts.menu_shortcut == 2 && press[5] && !open_now.load();
     if (esc_opens) press[5] = false;
     const bool home_debug = press[15] && (!open_now.load() || (quick_debug && page == 0));
-    if ((press[17] || home_debug) && !editing && !listening && !debug_warning && page != 5) {
+    // (inhale: not where the other game's rows are hidden: the tools' overlay would open empty)
+    if ((press[17] || home_debug) && oot_rows() && !editing && !listening && !debug_warning && page != 5) {
         if (home_debug) press[15] = false;
         if (open_now.load() && quick_debug && page == 0) press[5] = true;
         else {
@@ -6179,13 +6275,14 @@ void menu_tick() {
                 }
                 if (ptr.pressed & HOS_MOUSE_LEFT) {
                     if (option) press[hit.side < 0 ? 3 : 4] = true;   // (a value's halves: Left and Right; the name: Right)
-                    else if (hit.part == menu_hit::kCtlCell || (hit.part == menu_hit::kCtlRow && hit.index == kControls))
+                    else if (hit.part == menu_hit::kCtlCell || (hit.part == menu_hit::kCtlRow && hit.index == controls_shown()))
                         press[7] = true;   // (as Enter)
                 }
                 if (ptr.pressed & HOS_MOUSE_RIGHT) press[5] = true;
                 if (ptr.wheel) wheel_rows[kControlsSlot] += ptr.wheel, changed = true;   // (scrolls; the selection stays)
             }
-            const int n = kTop + kControls + 1;
+            const int shown_n = controls_shown();   // (inhale: the controls listed, then Reset)
+            const int n = kTop + shown_n + 1;
             if (press[1]) csel = (csel + n - 1) % n, changed = true;
             if (press[2]) csel = (csel + 1) % n, changed = true;
             const int i = csel - kTop;   // (i: the control's, or reset's)
@@ -6195,16 +6292,16 @@ void menu_tick() {
                 set_row(r, *r.value + (press[3] ? -r.step : r.step), press[3] ? -1 : 1);
                 changed = true;
             } else if (i >= 0) {
-                const int columns = i < kControls && controls[i].button < HOS_SW_N &&
+                const int columns = i < shown_n && controls[i].button < HOS_SW_N &&
                                     controls[i].button != HOS_SW_PLUS && controls[i].button != HOS_SW_MINUS ? kCtlColumns : kCtlToggle;
                 if (ccol >= columns) ccol = kCtlKeyboard;   // (no toggle on pause, map, stick directions or ocarina notes)
-                if ((press[3] || press[4]) && i < kControls && !keys_only(i)) {
+                if ((press[3] || press[4]) && i < shown_n && !keys_only(i)) {
                     ccol = (ccol + columns + (press[3] ? -1 : 1)) % columns;
                     changed = true;
                 }
                 const int col = keys_only(i) ? kCtlKeyboard : ccol;
                 if (press[7]) {
-                    if (i == kControls) {
+                    if (i == shown_n) {
                         host->bind(HOS_BIND_PAD, -1, 0, 0);
                         opts.pad_layout = 0;
                         opts.hold_toggle = 0;
@@ -6217,7 +6314,7 @@ void menu_tick() {
                     else listening = col == kCtlKeyboard ? 2 : 1, listen_armed = false, listen_end = prof_now() + 6000000000LL;
                     changed = true;
                 }
-                if ((press[8] || press[9]) && i < kControls) {
+                if ((press[8] || press[9]) && i < shown_n) {
                     if (col == kCtlToggle) opts.hold_toggle &= ~(1 << controls[i].button);
                     else if (col != kCtlKeyboard) {
                         host->bind(HOS_BIND_PAD, controls[i].button, col, -1);

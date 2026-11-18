@@ -17,12 +17,13 @@ static int64_t boot_ns;
 HLE(_ZN2nn2oe10InitializeEv) { if (!boot_ns) boot_ns = hos_now_ns(); }
 HLE(_ZN2nn2oe17FinishStartupLogoEv) { hos_log("oe: startup logo finished"); }
 /* GetDesiredLanguage() -> settings::LanguageCode (char[8]) by value: the language the game shows. HOS_LANGUAGE, or language.txt
-   beside the exe: its first line that is not blank or a comment. The file is written on the first start, with the choices: the 16
-   languages in romfs/Mals. After SkyboundTotk PR 16 by sardigital. */
+   beside the exe: its first line that is not blank or a comment. The file is written on the first start, with the choices: the 13
+   languages the game has texts for (inhale: the folders of romfs/msg/Kirby15, US_English to TW_Chinese; the other game's
+   Portuguese, Polish and Russian are not among them). After SkyboundTotk PR 16 by sardigital. */
 static const struct { const char *code, *name; } languages[] = {
     {"en-US", "English (US)"},       {"en-GB", "English (UK)"},       {"fr", "French (France)"},     {"fr-CA", "French (Canada)"},
     {"de", "German"},                {"it", "Italian"},               {"es", "Spanish (Spain)"},     {"es-419", "Spanish (Latin America)"},
-    {"pt-BR", "Portuguese (Brazil)"}, {"nl", "Dutch"},                {"pl", "Polish"},              {"ru", "Russian"},
+    {"nl", "Dutch"},
     {"ja", "Japanese"},              {"ko", "Korean"},                {"zh-Hans", "Chinese (Simplified)"}, {"zh-Hant", "Chinese (Traditional)"},
 };
 static const char *desired_language(void) {

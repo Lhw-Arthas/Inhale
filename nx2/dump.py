@@ -130,7 +130,7 @@ def main():
     if not a.dump:
         raise SystemExit("give --dump <folder with exefs/ and romfs/>")
     exefs = os.path.join(a.dump, "exefs")
-    romfs = os.path.join(a.dump, "romfs")
+    romfs = kit.data_romfs(a.dump)   # (romfs/, or the data title's aoc/<title id>/romfs)
     if not os.path.isdir(exefs):
         raise SystemExit("%s: no exefs/" % a.dump)
     if a.set:
@@ -191,7 +191,8 @@ def main():
                 print("%s middleware strings: %s" % (m.name, "; ".join(sdkv[:12])))
     if not a.no_romfs and os.path.isdir(romfs):
         files, size, top, shaders = romfs_summary(romfs)
-        print("romfs: %s files, %.2f GiB; biggest folders: %s" % ("{:,}".format(files), size / 2 ** 30, ", ".join(
+        print("romfs (%s): %s files, %.2f GiB; biggest folders: %s" % (
+            os.path.relpath(romfs, a.dump).replace(os.sep, "/"), "{:,}".format(files), size / 2 ** 30, ", ".join(
             "%s %.2f GiB" % (k, v / 2 ** 30) for k, v in top.most_common(8))))
         print("romfs names: " + ", ".join("%s %d" % kv for kv in shaders.most_common()))
         if shaders["Nin_NX_NVN"] or shaders["Nin_Ounce_NVN2"] or shaders["NVN2"]:

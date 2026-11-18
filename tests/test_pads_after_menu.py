@@ -51,6 +51,8 @@ typedef struct { DWORD dwPacketNumber; XINPUT_GAMEPAD Gamepad; } XINPUT_STATE;
 typedef DWORD(WINAPI *XInputGetStateFn)(DWORD, XINPUT_STATE *);
 static XInputGetStateFn xinput_get;   /* (no XInput: SDL has the pads) */
 static HMODULE LoadLibraryA(const char *name) { (void)name; return NULL; }
+static HMODULE LoadLibraryExA(const char *name, void *file, DWORD flags) { (void)name; (void)file; (void)flags; return NULL; }
+#define LOAD_LIBRARY_SEARCH_SYSTEM32 0   /* (host/nn_hid.c loads XInput with it on Windows) */
 static void *GetProcAddress(HMODULE m, const char *name) { (void)m; (void)name; return NULL; }
 static LONG InterlockedExchange(volatile LONG *p, LONG v) { LONG o = *p; *p = v; return o; }
 typedef int SRWLOCK;

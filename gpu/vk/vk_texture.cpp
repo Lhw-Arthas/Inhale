@@ -152,6 +152,11 @@ VkFormat storage_view_format(VkFormat f) {
 /// (longshot) The format of the image made for a texture of this Vulkan format (vk_format's, widened): depth as it is, decoded ASTC as
 /// RGBA8, the rest as their UNORM twin. create's choice, and the pipeline state list's (attachment_format): one rule for both
 VkFormat image_format_of(VkFormat vf, bool astc_decoded) {
+    // (24-bit depth is no format at all on AMD: such an image got no sampled usage, and the passes that read the scene's
+    // depth got the dummy. Its 32-bit float twin there)
+    if ((vf == VK_FORMAT_D24_UNORM_S8_UINT || vf == VK_FORMAT_X8_D24_UNORM_PACK32) &&
+        !(format_props(vf).optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))
+        return vf == VK_FORMAT_D24_UNORM_S8_UINT ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT;
     return is_depth_format(vf) ? vf : astc_decoded ? VK_FORMAT_R8G8B8A8_UNORM : linear_twin(vf);
 }
 /// (longshot) The format a view of an image takes for a use: the view's NVN format as this device has it (widened), the image's own
@@ -170,6 +175,9 @@ VkFormat view_format_of(VkFormat image, bool astc_decoded, bool bc, int view_nvn
         else
             f = srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
     }
+    // (a sampled view in a format asked for: the window's picture through its raw twin, see present_view in vk_replay.cpp)
+    if (use == ViewUse::Sample && force_format != VK_FORMAT_UNDEFINED && !astc_decoded && !bc && !is_depth_format(image))
+        f = force_format;
     if (use == ViewUse::Storage) f = force_format != VK_FORMAT_UNDEFINED ? force_format : storage_view_format(f);
     if (use == ViewUse::Attachment && (is_astc(f) || is_bc(f))) return VK_FORMAT_UNDEFINED;
     return f;

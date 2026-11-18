@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 RUN_ALL_ARGS = ["--cxx", "g++"]
+RUN_ALL_SKIP = {"windows": "the fixture sets the switch with POSIX setenv: checked on Linux"}
 
 ROOT = Path(__file__).resolve().parents[1]
 

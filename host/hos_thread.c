@@ -1360,7 +1360,7 @@ static int present_poll(Ctx *c, int64_t ns) {
     static int on = -1;
     static uint64_t fn_ok, fn_bad;
     if (on < 0) on = getenv("HOS_PRESENT_POLL") && atoi(getenv("HOS_PRESENT_POLL")) != 0;
-    if (!on || c->x[30] != 0x80590520 || ns <= 0 || ns > 20000000) return 0;
+    if (!on || c->x[30] != 0x80590520 || !hos_game_is_oot() || ns <= 0 || ns > 20000000) return 0;
     const uint64_t fp = G64(c->x[24]);
     if (fp != fn_ok) {
         if (fp == fn_bad) return 0;
@@ -1395,13 +1395,13 @@ _Thread_local int64_t hos_slept_ns[2];
 static void slept_since(uint64_t lr, int64_t t0) {
     if (!t0) return;
     const int64_t d = hos_now_ns() - t0;
-    if ((lr & ~1ull) == 0x80590520) InterlockedAdd64(&hos_poll_slept_ns, d);
+    if ((lr & ~1ull) == 0x80590520 && hos_game_is_oot()) InterlockedAdd64(&hos_poll_slept_ns, d);
     else hos_slept_ns[1] += d;
 }
 HLE(_ZN2nn2os11SleepThreadENS_8TimeSpanE) {
     const int64_t t0 = hos_fps_timing ? hos_now_ns() : 0;
     if (present_poll(c, (int64_t)ARG(0))) { slept_since(c->x[30], t0); return; }
-    if (c->x[30] == 0x80590520 && env_on("HOS_SLEEP_LOG")) {   /* (longshot, diagnostic: OoT's present poll) */
+    if (c->x[30] == 0x80590520 && hos_game_is_oot() && env_on("HOS_SLEEP_LOG")) {   /* (longshot, diagnostic: OoT's present poll) */
         static int logged;
         if (logged++ < 3) {
             const char *hos_hostcall_name(uint64_t addr);
@@ -1465,7 +1465,7 @@ HLE(_ZN2nn2os13GetSystemTickEv) {
     if (on) tick_log(c->x[30]);
     /* (longshot) The graphics module: x19 at its frame-end clock read (main+0x346c770 is after the bl), for nn_vi.c's
        real-time step */
-    if (c->x[30] == 0x8348c770) hos_gfx_module = c->x[19];
+    if (c->x[30] == 0x8348c770 && hos_game_is_oot()) hos_gfx_module = c->x[19];
     RET(hos_ticks());
 }
 HLE(_ZN2nn2os22GetSystemTickFrequencyEv) { RET(HOS_TICK_HZ); }

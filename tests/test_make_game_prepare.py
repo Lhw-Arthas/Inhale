@@ -51,7 +51,22 @@ class PrepareTests(unittest.TestCase):
         os.mkdir(os.path.join(d, "romfs"))
         os.mkdir(os.path.join(d, "exefs"))
         a = self.parse("--game", d, "--out", "o")
-        self.assertEqual((a.nup, a.romfs, a.exefs), (None, os.path.join(d, "romfs"), os.path.join(d, "exefs")))
+        self.assertEqual((a.nup, a.romfs, a.exefs, a.aoc), (None, os.path.join(d, "romfs"), os.path.join(d, "exefs"), None))
+
+    def test_game_folder_is_exefs_and_aoc(self):
+        # (this game's dump: the files are a data title's, in aoc/<title id>/romfs, and the romfs folder is empty or not there)
+        d = self.dir.name
+        os.mkdir(os.path.join(d, "aoc"))
+        os.mkdir(os.path.join(d, "exefs"))
+        a = self.parse("--game", d, "--out", "o")
+        self.assertEqual((a.nup, a.romfs, a.exefs, a.aoc), (None, None, os.path.join(d, "exefs"), os.path.join(d, "aoc")))
+        os.mkdir(os.path.join(d, "romfs"))
+        a = self.parse("--game", d, "--out", "o")
+        self.assertEqual((a.romfs, a.exefs, a.aoc), tuple(os.path.join(d, n) for n in ("romfs", "exefs", "aoc")))
+
+    def test_the_folders_one_by_one(self):
+        a = self.parse("--exefs", "e", "--aoc", "a", "--out", "o")
+        self.assertEqual((a.nup, a.romfs, a.exefs, a.aoc), (None, None, "e", "a"))
 
     def test_prepare_defaults_the_out_folder(self):
         a = self.parse("--game", self.nup, "--prepare")
@@ -64,9 +79,13 @@ class PrepareTests(unittest.TestCase):
         self.assertEqual(self.fails("--game", missing, "--prepare"), ["error Your copy of the game was not found: " + missing])
 
     def test_folder_without_romfs_and_exefs_is_an_error_line(self):
+        said = ["error The folder %s needs an exefs folder and an aoc or a romfs folder in it." % self.dir.name]
         os.mkdir(os.path.join(self.dir.name, "exefs"))
         lines = self.fails("--game", self.dir.name, "--prepare", "--out", os.path.join(self.dir.name, "out"))
-        self.assertEqual(lines, ["error The folder %s needs both a romfs and an exefs folder in it." % self.dir.name])
+        self.assertEqual(lines, said)
+        os.rmdir(os.path.join(self.dir.name, "exefs"))
+        os.mkdir(os.path.join(self.dir.name, "aoc"))
+        self.assertEqual(self.fails("--game", self.dir.name, "--prepare", "--out", os.path.join(self.dir.name, "out")), said)
         self.assertFalse(os.path.exists(os.path.join(self.dir.name, "out")))
 
     def test_without_prepare_a_missing_game_is_the_app_line(self):
@@ -132,7 +151,7 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(self.language("--game", self.nup, "--prepare", system="fr_FR.UTF-8"), "de")
 
     def test_a_first_launcher_build_takes_the_systems_language(self):
-        self.assertEqual(self.language("--game", self.nup, "--prepare", system="pt_BR.UTF-8"), "pt-BR")
+        self.assertEqual(self.language("--game", self.nup, "--prepare", system="it_IT.UTF-8"), "it")
         self.assertEqual(self.language("--game", self.nup, "--prepare", system="C"), "en-US")
         self.folder_says("not a code")
         self.assertEqual(self.language("--game", self.nup, "--prepare", system="ja_JP.UTF-8"), "ja")
@@ -157,15 +176,15 @@ class LanguageTests(unittest.TestCase):
     def test_the_systems_language_is_the_closest_the_game_has(self):
         for name, code in (("de_DE.UTF-8", "de"), ("de-AT", "de"), ("en_GB.UTF-8", "en-GB"), ("en_AU.UTF-8", None), ("fr_CA", "fr-CA"),
                            ("fr_BE.UTF-8@euro", "fr"), ("es_ES.UTF-8", "es"), ("es", "es"), ("es_MX.UTF-8", "es-419"), ("es-419", "es-419"),
-                           ("pt_PT.UTF-8", "pt-BR"), ("zh_CN.UTF-8", "zh-Hans"), ("zh_TW.UTF-8", "zh-Hant"), ("zh-Hant-HK", "zh-Hant"),
+                           ("pt_PT.UTF-8", None), ("zh_CN.UTF-8", "zh-Hans"), ("zh_TW.UTF-8", "zh-Hant"), ("zh-Hant-HK", "zh-Hant"),
                            ("zh_SG", "zh-Hans"), ("ja_JP.eucJP", "ja"), ("sv_SE.UTF-8", None), ("C", None), ("POSIX", None), ("", None)):
             self.assertEqual(make_game.system_language(name), code, name)
 
     @unittest.skipIf(os.name == "nt", "the environment's names: Linux")
     def test_the_systems_language_is_read_as_gettext_reads_it(self):
-        for env, code in (({"LANG": "nl_NL.UTF-8"}, "nl"), ({"LANG": "nl_NL.UTF-8", "LC_MESSAGES": "pl_PL.UTF-8"}, "pl"),
-                          ({"LANG": "nl_NL.UTF-8", "LC_MESSAGES": "pl_PL.UTF-8", "LC_ALL": "ko_KR.UTF-8"}, "ko"),
-                          ({"LANG": "ru_RU.UTF-8", "LC_ALL": ""}, "ru"), ({}, None),
+        for env, code in (({"LANG": "nl_NL.UTF-8"}, "nl"), ({"LANG": "nl_NL.UTF-8", "LC_MESSAGES": "it_IT.UTF-8"}, "it"),
+                          ({"LANG": "nl_NL.UTF-8", "LC_MESSAGES": "it_IT.UTF-8", "LC_ALL": "ko_KR.UTF-8"}, "ko"),
+                          ({"LANG": "ja_JP.UTF-8", "LC_ALL": ""}, "ja"), ({}, None),
                           # (LANGUAGE's first entry over them, as GNOME's language setting leaves it; not under the C locale)
                           ({"LANG": "en_US.UTF-8", "LANGUAGE": "de:en"}, "de"), ({"LC_ALL": "fr_FR.UTF-8", "LANGUAGE": "it"}, "it"),
                           ({"LANG": "C.UTF-8", "LANGUAGE": "de:en"}, None), ({"LANGUAGE": "de"}, None),
@@ -180,13 +199,13 @@ class LanguageTests(unittest.TestCase):
             pass
         args = []
         real = make_game.parse_args
-        self.folder_says("ru")
+        self.folder_says("ko")
         argv = ["make_game.py", "--game", self.nup, "--prepare", "--out", self.out, "--work", os.path.join(self.dir.name, "work")]
         with mock.patch.object(sys, "argv", argv), mock.patch.object(make_game, "warn_slow_disk", side_effect=Stop), \
              mock.patch.object(make_game, "parse_args", side_effect=lambda: args.append(real()) or args[0]), \
              contextlib.redirect_stdout(io.StringIO()), self.assertRaises(Stop):
             make_game.main()
-        self.assertEqual(args[0].language, "ru")
+        self.assertEqual(args[0].language, "ko")
 
 
 if __name__ == "__main__":

@@ -96,7 +96,7 @@ with tempfile.TemporaryDirectory() as top:
         (w / "hot_funcs.txt").write_text("80001000\n")
 
     def env(w, out):
-        return {"OOT_WORK": str(w), "OOT_EXEFS": str(w / "exefs"), "OOT_ROMFS": str(out / "romfs"), "OOT_DUMP": str(out),
+        return {"INHALE_WORK": str(w), "INHALE_EXEFS": str(w / "exefs"), "INHALE_ROMFS": str(out / "romfs"), "INHALE_DUMP": str(out),
                 "RX_RELEASE": "1", "A64_HOT_CHUNK": "1", "A64_HOT_FUNCS": str(w / "hot_funcs.txt")}
     out_a, out_b = top / "a" / "game", top / "b" / "game"
     with mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith(("A64_", "OOT_", "RX_"))}, clear=True):

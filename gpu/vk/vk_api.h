@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 25
+#define MKWVK_API_VERSION 26
 enum { HOS_OPT_CHEAT_HEARTS = 32, HOS_OPT_CHEAT_FLIGHT, HOS_OPT_CHEAT_ACTION, HOS_OPT_CHEAT_CAMERA, HOS_OPT_CHEAT_SPEED };
 /* (longshot) the Gameplay tab's Text size (host/oot_text_size.c): 0 the game's, 1 110%, 2 125%, 3 150%, 4 175% */
 enum { HOS_OPT_TEXT_SIZE = 10 };
@@ -82,6 +82,11 @@ enum { HOS_OPT_MOUSE_INVERT_X = 61 };
    screen fitted to its width, as the menus). HOS_WIDE_UI, when set, stands over it. The existing option callback: no new
    member. 62 to 70, 80, 88 and 90 are taken by open pull requests.) */
 enum { HOS_OPT_HUD_LAYOUT = 71 };
+/* (inhale) HOS_OPT_OOT_GAME, 72: told to the menu once, before the renderer starts (host/rx_backend.c rx_start): 1 when the
+   running game is the one the menu's game-specific rows were written for (host/hos_main.c hos_game_is_oot), 0 when it is
+   another. At 0 gpu/vk/vk_menu.cpp row_shown hides those rows and the Controls page its ocarina notes; never told (a menu
+   built alone), they all show. The existing option_set callback: no new member. */
+enum { HOS_OPT_OOT_GAME = 72 };
 
 /* (longshot) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of inhale_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position (the bottom face button first:
@@ -255,6 +260,10 @@ typedef struct MkwVkHost {
        Call every menu tick (enabled=0 releases only the test reference). Does not play or save capture.
        Result: 1 testing, 2 capture open, 4 default fallback, 8 fresh samples, 16 clipping, 32 mic Off. */
     int (*mic_test)(int enabled, int gain, int *levels);
+    /* Version 26 (inhale): the device's window origin is the lower left, NVN's default (no
+       nvnDeviceSetWindowOriginMode(UPPER_LEFT)): +y of clip space is the higher row of every target, and row 0 of the
+       presented texture is the picture's bottom row. 0: the upper left, +y the lower row, row 0 the top. */
+    int (*origin_lower_left)(void);
 } MkwVkHost;
 
 /* One completed temporal-upscale sample; all zero while inactive. */

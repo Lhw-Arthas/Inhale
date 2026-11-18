@@ -3,14 +3,15 @@
 
    (longshot) What presses each button, on a gamepad and on the keyboard, is the player's: the Insert menu's Controls
    page (gpu/vk/vk_menu.cpp) changes it, kept in inhale_options.ini (binds_load). The defaults:
-   Keyboard (totk-pc-recomp's layout): WASD left stick, arrows or IJKL right stick (camera), Space X (jump), E A
-   (action), Shift B (run/cancel), Q L (abilities), R R, Z ZL, X or F ZR (bow), Ctrl left-stick click (crouch), C
-   right-stick click (first person), Tab or Enter Plus, M Minus (map), 1 2 3 4 d-pad left, up, right, down, Caps Lock
+   Keyboard (inhale: laid out for Kirby and the Forgotten Land's default controls, Type A; upstream's were
+   totk-pc-recomp's): WASD left stick, arrows or IJKL right stick (camera), Space or Enter A (jump, hover; confirm), E B
+   (inhale, attack; cancel), F X (the stocked item), Q Y (held: drop the ability), Shift L (guard), R R, Z ZL, X ZR, Ctrl
+   left-stick click, C right-stick click, Tab Plus, M Minus, 1 2 3 4 d-pad left, up, right, down, Caps Lock
    walk (walk_held: the movement keys tilt the stick less). Only while the game's window is in front (the key state is
    global).
    Mouse (after a click in the window, display.c; Esc releases): its motion is the right stick (mouse panning,
    mouse_stick), or with the Insert menu's "Mouse camera" set to Native (HOS_MOUSE_NATIVE=1 or 0 overrides it) turns
-   the camera itself (mouse_native.c); left button Y (attack), right button ZL (shield, lock on). - and = change its sensitivity (x0.8 /
+   the camera itself (mouse_native.c); left button B (attack), right button L (guard). - and = change its sensitivity (x0.8 /
    x1.25, shown in the title bar, kept by the Insert menu's Mouse sensitivity row); HOS_MOUSE_SENS=<x> sets it,
    HOS_MOUSE_INVERT_Y=1 (or the menu's Invert mouse vertical) flips up/down, HOS_MOUSE_INVERT_X=1 (or its Invert mouse
    horizontal) left/right.
@@ -534,12 +535,14 @@ static int has_pad(int i) { return i < HOS_SW_N || is_note_row(i); }
 /* (a mouse button bound to a note row would be seen by nobody: oc_notes never reads the mouse) */
 static int is_mouse_vk(int vk) { return vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON ||
                                         vk == VK_XBUTTON1 || vk == VK_XBUTTON2; }
-/* (the keys of totk-pc-recomp's docs/controls.md, github.com/valentderah/totk-pc-recomp, MIT; plus Enter for Plus; the
-   mouse's left button Y, attack, and right button ZL, shield and lock-on, as before; WASD the left stick, the arrows or
-   IJKL the camera; Caps Lock walk, beside the movement keys and no other control's) */
+/* (inhale: this game's actions on the keys a player looks for them on. A jump on Space, and on Enter since A also
+   confirms; B attack on E and the mouse's left button; X the stocked item on F; Y, held to drop the ability, on Q, away
+   from the mouse; L guard on Shift and the mouse's right button. Upstream's table was totk-pc-recomp's
+   docs/controls.md, github.com/valentderah/totk-pc-recomp, MIT, for another game's actions: Space was X, E was A, the
+   left button Y. WASD the left stick, the arrows or IJKL the camera, Caps Lock walk, as upstream) */
 static const unsigned char key_default[HOS_KEY_N][2] = {
-    {'E'}, {VK_SHIFT}, {VK_SPACE}, {VK_LBUTTON}, {VK_CONTROL}, {'C'}, {'Q'}, {'R'}, {'Z', VK_RBUTTON}, {'X', 'F'},
-    {VK_TAB, VK_RETURN}, {'M'}, {'1'}, {'2'}, {'3'}, {'4'}, {'W'}, {'S'}, {'A'}, {'D'}, {VK_UP, 'I'}, {VK_DOWN, 'K'},
+    {VK_SPACE, VK_RETURN}, {'E', VK_LBUTTON}, {'F'}, {'Q'}, {VK_CONTROL}, {'C'}, {VK_SHIFT, VK_RBUTTON}, {'R'}, {'Z'}, {'X'},
+    {VK_TAB}, {'M'}, {'1'}, {'2'}, {'3'}, {'4'}, {'W'}, {'S'}, {'A'}, {'D'}, {VK_UP, 'I'}, {VK_DOWN, 'K'},
     {VK_LEFT, 'J'}, {VK_RIGHT, 'L'}, {0}, {0}, {0}, {0}, {0}, {VK_CAPITAL}};   /* (the five note rows start unset: oc_pad_word) */
 static volatile LONG toggle_reset;
 static HoldToggle toggles;

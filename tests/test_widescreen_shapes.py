@@ -41,6 +41,7 @@ float hos_aspect_ratio;
 static unsigned out_w, out_h = 1440;
 uint32_t hos_output_size(int height) { return height ? out_h : out_w; }
 static void hos_log(const char *f, ...) { (void)f; }
+static int hos_game_is_oot(void) { return 1; }   /* (the game these sizes are for: any other keeps 16:9) */
 
 static void wide(float want) {
 ''' + block() + r'''

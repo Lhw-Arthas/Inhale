@@ -28,7 +28,7 @@ def main():
         (exefs / "main").write_bytes(b"NSO0 one")
         (work / "hot_funcs.txt").write_text("f_80000000\n")
         (work / "image" / "chunks.txt").write_text("80001000\n")
-        env = {"A64_HOT_CHUNK": "1", "OOT_WORK": str(work)}
+        env = {"A64_HOT_CHUNK": "1", "INHALE_WORK": str(work)}
         with mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith(("A64_", "OOT_", "RX_"))}, clear=True):
             key = make_game.lift_key(str(exefs), str(work), env)
             check("the same inputs give the same key", key == make_game.lift_key(str(exefs), str(work), dict(env)))
@@ -206,8 +206,8 @@ def check_lift_env():
             (d / top / "exefs" / "main").write_bytes(b"NSO0 one")
             (d / top / "work" / "hot_funcs.txt").write_text("f_80000000\n")
         exefs, work = str(d / "a" / "exefs"), str(d / "a" / "work")
-        env = lambda top: {"A64_HOT_CHUNK": "1", "OOT_WORK": str(d / top / "work"), "OOT_EXEFS": str(d / top / "exefs"),
-                           "OOT_ROMFS": str(d / top / "romfs"), "OOT_DUMP": str(d / top), "RX_RELEASE": "1",
+        env = lambda top: {"A64_HOT_CHUNK": "1", "INHALE_WORK": str(d / top / "work"), "INHALE_EXEFS": str(d / top / "exefs"),
+                           "INHALE_ROMFS": str(d / top / "romfs"), "INHALE_DUMP": str(d / top), "RX_RELEASE": "1",
                            "A64_HOT_FUNCS": str(d / top / "work" / "hot_funcs.txt")}
         clean = {k: v for k, v in os.environ.items() if not k.startswith(("A64_", "OOT_", "RX_", "SUYU_"))}
         with mock.patch.dict(os.environ, clean, clear=True):
@@ -251,7 +251,7 @@ def check_hot_list_override():
         for path, text in ((mine, "f_80000000\n"), (same, "f_80000000\n"), (other, "f_80000040\n")):
             path.write_text(text)
         exefs, work, out = str(d / "exefs"), str(d / "work"), str(d / "out")
-        env = {"A64_HOT_CHUNK": "1", "OOT_WORK": work}   # (no <work>/hot_funcs.txt: the build sets no A64_HOT_FUNCS)
+        env = {"A64_HOT_CHUNK": "1", "INHALE_WORK": work}   # (no <work>/hot_funcs.txt: the build sets no A64_HOT_FUNCS)
         clean = {k: v for k, v in os.environ.items() if not k.startswith(("A64_", "OOT_", "RX_", "SUYU_"))}
 
         def key(hot, share=False, given=env):

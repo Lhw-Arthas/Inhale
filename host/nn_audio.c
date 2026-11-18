@@ -82,6 +82,7 @@ typedef struct {
 
 typedef struct {
     int used, released, rate, channels, format, state;
+    int state_set;   /* the state the game set last (GetVoicePlayState's answer; state follows at the next update) */
     uint64_t guest, param;                     /* the VoiceType; AdpcmParameter */
     int16_t coefs[16];                         /* ADPCM coefficients, copied when acquired (the game reuses the
                                                   parameter memory) */
@@ -1439,6 +1440,125 @@ static void audio_mono(int16_t *pcm, int frames, int channels, int enabled) {
     }
 }
 
+/* ---- AudioOut -------------------------------------------------------------------------------------------------- */
+/* nn::audio::AudioOut: the game queues PCM buffers itself, beside the renderer (a movie player's sound). One output:
+   48 kHz, 16 bit, 2 or 6 channels as the game asks. The renderer thread plays the queue, 240 frames each 5 ms, added
+   to its own frame: the sound is taken in real time with the device off too, and not at all while the game's renderer
+   is stopped. A buffer played to its end goes to the released list and the game's event is signalled; the signal is
+   repeated at every tick while a released buffer waits, because a player may take one buffer per signal and skip a
+   signal that comes when it has no sound decoded.
+   Layouts in the game's memory, as the SDK's own functions have them: AudioOut = sample rate (i32) at 0, channel
+   count at 4, sample format at 8, name at 0x10; AudioOutBuffer = data pointer at 8, buffer size at 0x10, data size
+   at 0x18; AudioOutParameter = sample rate (i32) at 0, channel count (u16) at 4. */
+#define AO_QUEUE 32
+static uint64_t ao_event, ao_queue[AO_QUEUE], ao_released[AO_QUEUE], ao_pos;   /* ao_pos: bytes played of ao_queue[0] */
+static int ao_queued, ao_nreleased, ao_channels = 2, ao_started;
+static float ao_volume = 1.0f;
+
+static int16_t ao_add(int16_t d, float s) {
+    const int v = d + (int)(s * ao_volume);
+    return (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+}
+/* (with the lock held) adds 240 frames of the queue to pcm; returns whether the game's event is due */
+static int audio_out_mix(int16_t *pcm, int channels) {
+    if (!ao_started) return 0;
+    const uint64_t step = 2 * (uint64_t)ao_channels;
+    for (int i = 0; i < FRAME && ao_queued;) {
+        const uint64_t b = ao_queue[0], size = G64(b + 0x18);
+        const char *data = hos_guest_range(G64(b + 8), size);
+        for (; data && ao_pos + step <= size && i < FRAME; ao_pos += step, i++) {
+            const int16_t *s = (const int16_t *)(data + ao_pos);
+            int16_t *d = pcm + i * channels;
+            if (ao_channels == channels) {
+                for (int k = 0; k < channels; k++) d[k] = ao_add(d[k], s[k]);
+            } else if (ao_channels == 2) {   /* stereo on a 5.1 device: the front pair */
+                d[0] = ao_add(d[0], s[0]);
+                d[1] = ao_add(d[1], s[1]);
+            } else {   /* 5.1 (FL FR FC LFE BL BR) on a stereo device */
+                d[0] = ao_add(d[0], s[0] + 0.707f * (s[2] + s[4]));
+                d[1] = ao_add(d[1], s[1] + 0.707f * (s[2] + s[5]));
+            }
+        }
+        if (data && ao_pos + step <= size) break;   /* (the frame is full) */
+        memmove(ao_queue, ao_queue + 1, (size_t)--ao_queued * sizeof ao_queue[0]);
+        ao_released[ao_nreleased++] = b;
+        ao_pos = 0;
+    }
+    return ao_nreleased > 0;
+}
+
+HLE(_ZN2nn5audio27InitializeAudioOutParameterEPNS0_17AudioOutParameterE) { G64(ARG(0)) = 0xCAFE000000000000ULL; }
+/* ListAudioOuts(AudioOutInfo*, int): AudioOutInfo is a name of 0x100 bytes */
+HLE(_ZN2nn5audio13ListAudioOutsEPNS0_12AudioOutInfoEi) {
+    if ((int)ARG(1) < 1) { RET(0); return; }
+    strcpy(GP(ARG(0)), "DeviceOut");
+    RET(1);
+}
+/* OpenAudioOut(AudioOut*, os::SystemEvent*, char const*, AudioOutParameter const&) */
+HLE(_ZN2nn5audio12OpenAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventEPKcRKNS0_17AudioOutParameterE) {
+    const uint64_t out = ARG(0);
+    const int channels = *(uint16_t *)GP(ARG(3) + 4) == 6 ? 6 : 2;
+    G32(out) = RATE;
+    G32(out + 4) = (uint32_t)channels;
+    G32(out + 8) = 2;   /* SampleFormat_PcmInt16 */
+    strcpy(GP(out + 0x10), "DeviceOut");
+    hos_system_event_init(ARG(1), 0);   /* (manual clear: the game clears it in its handler) */
+    au_lock();
+    ao_event = ARG(1);
+    ao_channels = channels;
+    ao_queued = ao_nreleased = ao_started = 0;
+    ao_pos = 0;
+    ao_volume = 1.0f;
+    au_unlock();
+    hos_log("audio: AudioOut opened, %d channels", channels);
+    RET(0);
+}
+HLE(_ZN2nn5audio23GetAudioOutChannelCountEPKNS0_8AudioOutE) { RET(G32(ARG(0) + 4)); }
+HLE(_ZN2nn5audio23GetAudioOutSampleFormatEPKNS0_8AudioOutE) { RET(G32(ARG(0) + 8)); }
+HLE(_ZN2nn5audio21GetAudioOutSampleRateEPKNS0_8AudioOutE) { RET(G32(ARG(0))); }
+HLE(_ZN2nn5audio13StartAudioOutEPNS0_8AudioOutE) { ao_started = 1; RET(0); }
+/* StopAudioOut: the buffers not played yet are released */
+HLE(_ZN2nn5audio12StopAudioOutEPNS0_8AudioOutE) {
+    au_lock();
+    ao_started = 0;
+    for (int i = 0; i < ao_queued; i++) ao_released[ao_nreleased++] = ao_queue[i];
+    ao_queued = 0;
+    ao_pos = 0;
+    au_unlock();
+}
+HLE(_ZN2nn5audio13CloseAudioOutEPNS0_8AudioOutE) {
+    au_lock();
+    ao_started = ao_queued = ao_nreleased = 0;
+    ao_event = 0;
+    au_unlock();
+}
+HLE(_ZN2nn5audio17SetAudioOutVolumeEPNS0_8AudioOutEf) { ao_volume = farg(c, 0); }
+/* SetAudioOutBufferInfo(AudioOutBuffer*, void*, unsigned long buffer size, unsigned long data size) */
+HLE(_ZN2nn5audio21SetAudioOutBufferInfoEPNS0_14AudioOutBufferEPvmm) {
+    G64(ARG(0) + 8) = ARG(1);
+    G64(ARG(0) + 0x10) = ARG(2);
+    G64(ARG(0) + 0x18) = ARG(3);
+}
+HLE(_ZN2nn5audio28GetAudioOutBufferDataPointerEPKNS0_14AudioOutBufferE) { RET(G64(ARG(0) + 8)); }
+HLE(_ZN2nn5audio25GetAudioOutBufferDataSizeEPKNS0_14AudioOutBufferE) { RET(G64(ARG(0) + 0x18)); }
+HLE(_ZN2nn5audio20AppendAudioOutBufferEPNS0_8AudioOutEPNS0_14AudioOutBufferE) {
+    au_lock();
+    const int room = ao_queued + ao_nreleased < AO_QUEUE;
+    if (room) ao_queue[ao_queued++] = ARG(1);
+    au_unlock();
+    RET(room);
+}
+HLE(_ZN2nn5audio25GetReleasedAudioOutBufferEPNS0_8AudioOutE) {
+    uint64_t b = 0;
+    au_lock();
+    if (ao_nreleased) {
+        b = ao_released[0];
+        memmove(ao_released, ao_released + 1, (size_t)--ao_nreleased * sizeof ao_released[0]);
+    }
+    au_unlock();
+    RET(b);
+}
+
 /* ---- the renderer thread --------------------------------------------------------------------------------------- */
 static uint64_t renderer_event;
 static volatile int renderer_running;
@@ -1461,7 +1581,10 @@ static DWORD WINAPI renderer_main(void *p) {
         au_lock();
         if (ncmds && hos_now_ns() - last_update_ns > 50000000) commit();   /* (no update came: see "parameter updates") */
         render_frame(pcm, out_channels);
+        const int ao_due = audio_out_mix(pcm, out_channels);
+        const uint64_t ao_signal = ao_due ? ao_event : 0;
         au_unlock();
+        if (ao_signal) hos_system_event_signal(ao_signal);
         if (gain_frames-- <= 0) gain_want = audio_player_gain(), gain_frames = 20;   /* (the menu read every 100 ms) */
         gain = audio_apply_gain(pcm, FRAME, out_channels, gain, gain_want);
         int rx_option(int id, int otherwise);
@@ -1562,7 +1685,7 @@ HLE(_ZN2nn5audio17GetSampleByteSizeENS0_12SampleFormatE) {
 /* (mkw-recomp) a MemoryPoolType is one pointer in the SDK: the pool's address and size live here, the object holds
    a handle only. The three words written into it before overwrote the 16 bytes after it: MKW keeps pool objects
    where those bytes are a heap's links (its "Sound" heap's free list broke). */
-static struct { uint64_t addr, size; int used; } au_pools[1024];
+static struct { uint64_t addr, size; int used; int detached; } au_pools[1024];   /* (detached: inhale, GetMemoryPoolState) */
 /* (longshot) the handle lives in the game's MemoryPoolType (guest memory): its index is checked against the table */
 static int pool_index(uint64_t obj) {
     const int i = get_handle(obj, K_POOL);
@@ -1572,7 +1695,7 @@ HLE(_ZN2nn5audio17AcquireMemoryPoolEPNS0_19AudioRendererConfigEPNS0_14MemoryPool
     au_lock();
     int i = 0;
     while (i < 1024 && au_pools[i].used) i++;
-    if (i < 1024) au_pools[i].used = 1, au_pools[i].addr = ARG(2), au_pools[i].size = ARG(3);
+    if (i < 1024) au_pools[i].used = 1, au_pools[i].detached = 1, au_pools[i].addr = ARG(2), au_pools[i].size = ARG(3);
     au_unlock();
     if (i == 1024) { RET(0); return; }
     put_handle(ARG(1), K_POOL, i);
@@ -1583,8 +1706,23 @@ HLE(_ZN2nn5audio17ReleaseMemoryPoolEPNS0_19AudioRendererConfigEPNS0_14MemoryPool
     if (i >= 0) au_pools[i].used = 0;
     G64(ARG(1)) = 0;
 }
-HLE(_ZN2nn5audio23RequestAttachMemoryPoolEPNS0_14MemoryPoolTypeE) { RET(1); }
-HLE(_ZN2nn5audio23RequestDetachMemoryPoolEPNS0_14MemoryPoolTypeE) { RET(1); }
+HLE(_ZN2nn5audio23RequestAttachMemoryPoolEPNS0_14MemoryPoolTypeE) {
+    const int i = pool_index(ARG(0));
+    if (i >= 0) au_pools[i].detached = 0;
+    RET(1);
+}
+HLE(_ZN2nn5audio23RequestDetachMemoryPoolEPNS0_14MemoryPoolTypeE) {
+    const int i = pool_index(ARG(0));
+    if (i >= 0) au_pools[i].detached = 1;
+    RET(1);
+}
+/* (inhale) GetMemoryPoolState(MemoryPoolType const*) -> MemoryPoolType::State: RequestAttach 0, Attached 1, RequestDetach 2,
+   Detached 3. A request is granted at once here, so only the two settled states are answered. Kirby and the Forgotten Land
+   sleeps 5 ms at a time until an attached pool says 1 (main+0x5684e4); the stub's 0 kept its main thread there for good. */
+HLE(_ZN2nn5audio18GetMemoryPoolStateEPKNS0_14MemoryPoolTypeE) {
+    const int i = pool_index(ARG(0));
+    RET(i >= 0 && !au_pools[i].detached ? 1 : 3);
+}
 HLE(_ZN2nn5audio20IsMemoryPoolAttachedEPKNS0_14MemoryPoolTypeE) { RET(1); }
 HLE(_ZN2nn5audio20GetMemoryPoolAddressEPKNS0_14MemoryPoolTypeE) {
     const int i = pool_index(ARG(0));
@@ -1780,7 +1918,7 @@ HLE(_ZN2nn5audio16AcquireVoiceSlotEPNS0_19AudioRendererConfigEPNS0_9VoiceTypeEii
     if (v->param && ARG(7) >= 32) memcpy(v->coefs, GP(v->param), 32);
     v->volume = 1.0f;
     v->pitch = 1.0f;
-    v->state = PLAY_STOPPED;
+    v->state = v->state_set = PLAY_STOPPED;
     put_handle(ARG(1), K_VOICE, i);
     static int logged;
     if (logged++ < 12 || au_trace > 0)
@@ -1893,8 +2031,18 @@ HLE(_ZN2nn5audio17SetVoicePlayStateEPNS0_9VoiceTypeENS1_9PlayStateE) {
         if (v->state != s) AUT("audio: voice %d %s", (int)(v - voices), s == 0 ? "start" : s == 1 ? "stop" : "pause");
         const Cmd k = {.op = OP_VOICE_STATE, .idx = (int)(v - voices), .i0 = s};
         submit(&k);
+        v->state_set = s;
     }
     au_unlock();
+}
+/* GetVoicePlayState(VoiceType const*): as a stub it answered 0, Started, for every voice, and a sound engine that
+   starts the voices it reads as stopped never started one (no AppendWaveBuffer, no SetVoicePlayState: silence) */
+HLE(_ZN2nn5audio17GetVoicePlayStateEPKNS0_9VoiceTypeE) {
+    au_lock();
+    const Voice *v = voice_of(ARG(0));
+    const int s = v ? v->state_set : PLAY_STOPPED;
+    au_unlock();
+    RET(s);
 }
 HLE(_ZN2nn5audio16AppendWaveBufferEPNS0_9VoiceTypeEPKNS0_10WaveBufferE) {
     au_lock();

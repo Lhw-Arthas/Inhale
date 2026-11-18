@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
     CHECK(hos_binding(HOS_BIND_KEY, HOS_KEY_MOVE_UP, 0) == 'Z');   /* from the file */
     CHECK(hos_binding(HOS_BIND_KEY, HOS_KEY_MOVE_LEFT, 0) == 'A');   /* the default */
     CHECK(hos_binding(HOS_BIND_PAD, HOS_KEY_MOVE_UP, 0) == -1);   /* no gamepad input for a keys-only control */
-    CHECK(hos_binding(HOS_BIND_KEY, HOS_SW_Y, 0) == VK_LBUTTON && hos_binding(HOS_BIND_KEY, HOS_SW_ZL, 1) == VK_RBUTTON);
+    CHECK(hos_binding(HOS_BIND_KEY, HOS_SW_B, 1) == VK_LBUTTON && hos_binding(HOS_BIND_KEY, HOS_SW_L, 1) == VK_RBUTTON);
     release(), held['Z'] = 1;
     CHECK(bound_down(HOS_KEY_MOVE_UP, 0));
     release(), held[VK_LEFT] = 1;
@@ -121,20 +121,20 @@ int main(int argc, char **argv) {
     /* the mouse's left button: held when the capture begins, it counts only after it was let go */
     release(), held[VK_LBUTTON] = 1;
     mouse_buttons_arm(1);
-    CHECK(!bound_down(HOS_SW_Y, 1));
+    CHECK(!bound_down(HOS_SW_B, 1));
     release(), mouse_buttons_arm(1), held[VK_LBUTTON] = 1, mouse_buttons_arm(1);
-    CHECK(bound_down(HOS_SW_Y, 1));
-    CHECK(!bound_down(HOS_SW_Y, 0));   /* not while the mouse is not captured */
+    CHECK(bound_down(HOS_SW_B, 1));
+    CHECK(!bound_down(HOS_SW_B, 0));   /* not while the mouse is not captured */
     mouse_buttons_arm(0);
-    CHECK(!bound_down(HOS_SW_Y, 1));   /* a new capture arms again */
+    CHECK(!bound_down(HOS_SW_B, 1));   /* a new capture arms again */
     /* a key bound to a keys-only control is taken from the button that had it */
-    hos_bind(HOS_BIND_KEY, HOS_KEY_CAM_UP, 0, 'E');
-    CHECK(hos_binding(HOS_BIND_KEY, HOS_SW_A, 0) == 0 && hos_binding(HOS_BIND_KEY, HOS_KEY_CAM_UP, 0) == 'E');
+    hos_bind(HOS_BIND_KEY, HOS_KEY_CAM_UP, 0, 'F');
+    CHECK(hos_binding(HOS_BIND_KEY, HOS_SW_X, 0) == 0 && hos_binding(HOS_BIND_KEY, HOS_KEY_CAM_UP, 0) == 'F');
     hos_bind(HOS_BIND_PAD, HOS_KEY_CAM_UP, 0, HOS_PAD_SOUTH);   /* no gamepad input for it: ignored */
     CHECK(hos_binding(HOS_BIND_PAD, HOS_SW_B, 0) == HOS_PAD_SOUTH);
-    /* Enter with Alt is fullscreen, not Plus */
+    /* Enter with Alt is fullscreen, not A */
     release(), held[VK_RETURN] = held[VK_MENU] = 1;
-    CHECK(!bound_down(HOS_SW_PLUS, 0));
+    CHECK(!bound_down(HOS_SW_A, 0));
     const uint64_t face = 1ULL << HOS_PAD_EAST, paddle = 1ULL << HOS_PAD_RPADDLE1, a = 1ULL << HOS_SW_A;
     CHECK(hos_binding(HOS_BIND_PAD, HOS_SW_A, 0) == HOS_PAD_EAST);
     CHECK(hos_binding(HOS_BIND_PAD, HOS_SW_A, 1) == HOS_PAD_RPADDLE1);
@@ -173,7 +173,7 @@ int main(int argc, char **argv) {
     CHECK(hos_binding(HOS_BIND_PAD, HOS_SW_B, 1) == HOS_PAD_EAST);
     CHECK(hos_binding(HOS_BIND_PAD, HOS_SW_A, 0) == HOS_PAD_RPADDLE1 && hos_binding(HOS_BIND_PAD, HOS_SW_A, 1) == -1);
     hos_bind(HOS_BIND_KEY, -1, 0, 0);
-    CHECK(hos_binding(HOS_BIND_KEY, HOS_KEY_MOVE_UP, 0) == 'W' && hos_binding(HOS_BIND_KEY, HOS_SW_A, 0) == 'E');
+    CHECK(hos_binding(HOS_BIND_KEY, HOS_KEY_MOVE_UP, 0) == 'W' && hos_binding(HOS_BIND_KEY, HOS_SW_A, 0) == VK_SPACE);
     CHECK(hos_binding(HOS_BIND_PAD, HOS_SW_A, 1) == -1 && bound_pad_buttons(face) == a);
     CHECK(toggle_reset);
     if (!fails) printf("PASS\n");

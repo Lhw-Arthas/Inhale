@@ -45,6 +45,15 @@ int rx_option(int id, int otherwise);   /* rx_backend.c: the Insert menu's rows 
 #define TEXTURES_PATH "ui/layout2archive/common.product.100.nin_ounce_nvn2.bntx.zs"
 #define LAYOUTS_PATH "ui/layout2archive/common.product.100.nin_ounce_nvn2.blarc.zs"
 #define SIZES_PATH "system/resource/resourcesizetable."   /* (then the version, ".rsizetable.zs") */
+/* Kirby's button-icon layout (nx2/kirby_prompts.py): its labels redrawn for each face, in prompts/<face>/ under the path below */
+#define ICONS_PATH "lyt/cmn/btnicon/parts.arc.cmp"
+#define ICONS_FILE "lyt/Cmn/BtnIcon/Parts.arc.cmp"
+#define ICONS_VAR "lyt/Cmn/BtnIcon/Parts.arc.var"   /* (each label's texture with the icon of every pad input: kirby_prompts.redraw) */
+/* the text font holding the inline button icons (nx2/kirby_prompts.py FONT), likewise in prompts/<face>/ */
+#define TEXT_FONT_PATH "font/region/std/ext-operation.bffnt.cmp"
+#define TEXT_FONT_FILE "font/Region/STD/Ext-Operation.bffnt.cmp"   /* (its variants beside it, .bffnt.var) */
+#define FONT_DATA (0x1000 + 4096)   /* (the font sheet's pixels: its BNTX at 0x1000, the BNTX's data 4096 in) */
+#define FONT_ENTRIES 64   /* (the most cells the variants name) */
 #define MAGIC 0x18029a7fu
 #define PAD_BASE 0xF700
 #define FACE_CODES 32   /* (each face's code points: its pad icons, then at STATIC_AT its d-pad icons; nx2/prompt_assets.py) */
@@ -1433,6 +1442,112 @@ static int build(char *out, size_t cap) {
 
 /* mods.c: the file for a RomFS path the prompts replace (key: lower case, '/'), 1 with one. mod: a mod's file for it, or NULL.
    A mod's own wins, but for the size table: that gets our entries merged in (sizes) */
+/* a stored .cmp (nx2/kirby_prompts.py wrap): its size, 7 bytes of frame header, then 64 KiB blocks each behind 4 bytes, so byte d of
+   its data is at ICONS_HEAD + (d >> 16) * (ICONS_BLOCK + 4) + 4 + (d & 0xFFFF) */
+#define ICONS_HEAD 11
+#define ICONS_BLOCK 65536
+
+/* the face's button-icon layout for the controls now: the file the build made (the icons of the default controls), with the
+   texture of each label whose Switch button the player bound to another pad input (the keyboard face: another key) written over
+   by that one's icon (ICONS_VAR: nx2/kirby_prompts.py redraw). A file for each set of controls is kept in cache/prompts/.
+   out: the file to serve; 0: the game's own */
+/* a block (8 bytes) of the font's sheet, at column x and row y of blocks (nx2/prompt_assets.py gob_offset: 1024x1024 BC4, 16 GOBs
+   high blocks): its place in the sheet's bytes */
+static uint32_t sheet_block(uint32_t x, uint32_t y) {
+    const uint32_t bx = x * 8, gobs = 16, pitch = 32;
+    return (y / (8 * gobs)) * 512 * gobs * pitch + (bx / 64) * 512 * gobs + (y % (8 * gobs) / 8) * 512 + (((bx & 63) >> 5) << 8 | ((y & 7) >> 2) << 7 | ((bx & 31) >> 4) << 6 | ((y >> 1) & 1) << 5 | (y & 1) << 4 | (bx & 15));
+}
+
+/* font: the text font's file and variants (nx2/kirby_prompts.py redraw_font: a cell of blocks for each of the buttons' icons) in
+   place of the button-icon layout's */
+static int icons_file(const char *dir, int face, int font, char *out, size_t cap) {
+    char var[MAX_PATH];
+    snprintf(out, cap, "%sprompts/%s/%s", dir, faces[face], font ? TEXT_FONT_FILE : ICONS_FILE);
+    if (GetFileAttributesA(out) == INVALID_FILE_ATTRIBUTES) return 0;
+    if (font) {
+        snprintf(var, sizeof var, "%s", out);
+        memcpy(var + strlen(var) - 3, "var", 3);
+    } else
+        snprintf(var, sizeof var, "%sprompts/%s/%s", dir, faces[face], ICONS_VAR);
+    FILE *vf = fopen(var, "rb");
+    uint8_t head[12], *ent = NULL;
+    if (!vf) return 1;   /* (no variants: the default controls' file) */
+    uint32_t n = 0, nsel = 0;
+    if (fread(head, 1, 12, vf) == 12 && !memcmp(head, "KBIV", 4)) n = rd32le(head + 4), nsel = rd32le(head + 8);
+    int ok = n && n <= (font ? FONT_ENTRIES : HOS_SW_N) && nsel && nsel <= 256 && (ent = (uint8_t *)malloc(20 * (size_t)n)) &&
+             fread(ent, 1, 20 * (size_t)n, vf) == 20 * (size_t)n;
+    int sel[FONT_ENTRIES + 1] = {0}, changed = 0;   /* (each label's selector now, -1 its default's) */
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (uint32_t i = 0; ok && i < n; i++) {
+        const uint32_t sw = rd32le(ent + 20 * i);
+        ok = sw < HOS_SW_N;
+        if (!ok) break;
+        /* (the pad input, or the first key; a paddle, or no key: the default's icon) */
+        const int p = face == HOS_PROMPT_KEYBOARD ? first_key((int)sw) : hos_binding(HOS_BIND_PAD, (int)sw, 0);
+        const int valid = p >= (face == HOS_PROMPT_KEYBOARD ? 1 : 0) && (uint32_t)p < nsel;
+        sel[i] = valid && (uint32_t)p != rd32le(ent + 20 * i + 16) ? p : -1;
+        if (sel[i] >= 0) changed = 1, h = fnv(fnv(h, &sw, sizeof sw), &sel[i], sizeof sel[i]);
+    }
+    char cache[MAX_PATH], tmp[MAX_PATH + 8], made[MAX_PATH];
+    if (!ok || !changed || !made_dir(cache, sizeof cache)) {
+        fclose(vf);
+        free(ent);
+        return 1;
+    }
+    snprintf(made, sizeof made, "%s%s-%s-%016llx.cmp", cache, font ? "textfont" : "btnicon", faces[face], (unsigned long long)h);
+    if (GetFileAttributesA(made) != INVALID_FILE_ATTRIBUTES) {
+        fclose(vf);
+        free(ent);
+        snprintf(out, cap, "%s", made);
+        return 1;
+    }
+    long bn = 0;
+    uint8_t *b = read_all(out, NULL, &bn), *tex = (uint8_t *)malloc(1 << 16);
+    ok = b && tex && bn > ICONS_HEAD + 4 && !memcmp(b + 4, "\x04\x22\x4d\x18", 4) && (rd32le(b + ICONS_HEAD) & 0x80000000u);
+    for (uint32_t i = 0; ok && i < n; i++) {
+        if (sel[i] < 0) continue;
+        const uint32_t off = rd32le(ent + 20 * i + 4), len = rd32le(ent + 20 * i + 8), tab = rd32le(ent + 20 * i + 12);
+        uint8_t at4[4];
+        ok = fseek(vf, (long)(tab + 4 * (uint32_t)sel[i]), SEEK_SET) == 0 && fread(at4, 1, 4, vf) == 4;
+        const uint32_t at = ok ? rd32le(at4) : 0;
+        if (!at) continue;   /* (the selector has no icon: the default's stays) */
+        if (font) {   /* (the cell's blocks, row by row: off = column | row << 16, len = width | height << 16) */
+            const uint32_t bx = off & 0xFFFF, by = off >> 16, bw = len & 0xFFFF, bh = len >> 16;
+            uint8_t row[8 * 256];
+            for (uint32_t r = 0; ok && r < bh; r++) {
+                ok = bw <= 256 && fseek(vf, (long)(at + 8 * bw * r), SEEK_SET) == 0 && fread(row, 1, 8 * bw, vf) == 8 * bw;
+                for (uint32_t c = 0; ok && c < bw; c++) {
+                    const uint32_t d = FONT_DATA + sheet_block(bx + c, by + r);
+                    const uint64_t pos = ICONS_HEAD + (uint64_t)(d >> 16) * (ICONS_BLOCK + 4) + 4 + (d & (ICONS_BLOCK - 1));
+                    ok = pos + 8 <= (uint64_t)bn;
+                    if (ok) memcpy(b + pos, row + 8 * c, 8);
+                }
+            }
+            continue;
+        }
+        for (uint32_t k = 0; ok && k < len;) {
+            const uint32_t d = off + k, room = ICONS_BLOCK - (d & (ICONS_BLOCK - 1)), part = len - k < room ? len - k : room;
+            const uint64_t pos = ICONS_HEAD + (uint64_t)(d >> 16) * (ICONS_BLOCK + 4) + 4 + (d & (ICONS_BLOCK - 1));
+            ok = pos + part <= (uint64_t)bn && fseek(vf, (long)(at + k), SEEK_SET) == 0 && fread(tex, 1, part, vf) == part;
+            if (ok) memcpy(b + pos, tex, part);
+            k += part;
+        }
+    }
+    snprintf(tmp, sizeof tmp, "%s.tmp", made);
+    FILE *o = ok ? fopen(tmp, "wb") : NULL;
+    ok = o && fwrite(b, 1, (size_t)bn, o) == (size_t)bn;
+    if (o) ok &= fclose(o) == 0;
+    ok = ok && MoveFileExA(tmp, made, MOVEFILE_REPLACE_EXISTING);
+    if (!ok && o) DeleteFileA(tmp);
+    fclose(vf);
+    free(b);
+    free(tex);
+    free(ent);
+    if (ok) snprintf(out, cap, "%s", made);
+    hos_log("prompts: %s for %s on these controls: %s", font ? "text icons" : "button icons", faces[face], ok ? "written" : "not written, the default controls'");
+    return 1;
+}
+
 int hos_prompts_romfs(const char *key, const char *mod, char *out, size_t cap) {
     volatile LONG *const state = romfs_state;
     static char path[3][MAX_PATH];
@@ -1444,6 +1559,18 @@ int hos_prompts_romfs(const char *key, const char *mod, char *out, size_t cap) {
         if (mod) return sizes(dir, mod, out, cap) > 0;
         snprintf(out, cap, "%sprompts/rsizetable.zs", dir);
         return GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES;
+    }
+    if (!strcmp(key, ICONS_PATH)) {   /* (the face's file where the build made one: the Switch's, a mod's own and a face with none: the game's) */
+        char dir[MAX_PATH];
+        int face;
+        if (mod || !setup(dir, sizeof dir, &face) || face == HOS_PROMPT_SWITCH) return 0;
+        return icons_file(dir, face, 0, out, cap);
+    }
+    if (!strcmp(key, TEXT_FONT_PATH)) {   /* (the face's text font with its icons in, where the build made one) */
+        char dir[MAX_PATH];
+        int face;
+        if (mod || !setup(dir, sizeof dir, &face) || face == HOS_PROMPT_SWITCH) return 0;
+        return icons_file(dir, face, 1, out, cap);
     }
     const int which = !strcmp(key, FONT_PATH) ? 0 : !strcmp(key, TEXTURES_PATH) ? 1 : !strcmp(key, LAYOUTS_PATH) ? 2 : -1;
     if (which < 0) return 0;

@@ -174,6 +174,10 @@ static volatile LONG depth_minus_w = 1;   /* (OoT's mode from the start: the sha
                                             translated without the depth conversion, and the menu's text and logo fell outside the depth range
                                             on a first start. d3zessete, Inhale PR 54) */
 int nvn_depth_minus_w(void) { return depth_minus_w != 0; }
+/* (inhale) NVN's window origin: the lower left unless the game asks for the upper left (the two games before this one
+   did; Kirby never calls nvnDeviceSetWindowOriginMode). The back end reads it at each draw and present (vk_api.h). */
+static volatile LONG origin_upper_left;
+int nvn_origin_lower_left(void) { return !origin_upper_left; }
 uint64_t nvn_native_proc(const char *name);
 
 NV(nvnDeviceBuilderSetDefaults) { memset(P(0), 0, sizeof(nvn_dev_builder)); }
@@ -246,6 +250,7 @@ NV(nvnDeviceGetSeparateSamplerHandle) { RET((uint64_t)I(1) << 20); }
 NV(nvnDeviceInstallDebugCallback) {}
 NV(nvnDeviceSetWindowOriginMode) {
     ((nvn_dev *)P(0))->origin = U32(1);
+    InterlockedExchange(&origin_upper_left, U32(1) != 0);
     hos_log("nvn: window origin %s", U32(1) ? "upper left" : "lower left");
 }
 NV(nvnDeviceSetDepthMode) {
@@ -1163,7 +1168,7 @@ NV(nvnEventGetValue) {
             now = e ? atoi(e) != 0 : rx_option(HOS_OPT_RENDER_THREAD, -1);
             if (now >= 0) nowait = now = now != 0;
         }
-        if (now > 0 && (c->x[30] == 0x805904a0 || c->x[30] == 0x80590530)) { RET(1); return; }
+        if (now > 0 && (c->x[30] == 0x805904a0 || c->x[30] == 0x80590530) && hos_game_is_oot()) { RET(1); return; }
     }
     uint32_t v = 0; nvn_gpu_read(((const nvn_event *)P(0))->gpu, &v, 4); RET(v);
     if (sync_log()) hos_log("nvn: EventGetValue %p = %u (lr %#llx)", P(0), v, (unsigned long long)c->x[30]);

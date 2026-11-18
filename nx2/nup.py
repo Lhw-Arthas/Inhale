@@ -3,6 +3,8 @@
     python -I nx2/nup.py <file.nup>                      list the titles and their trees
     python -I nx2/nup.py <file.nup> --verify            read-only hashes/extents and expected game .zs headers
     python -I nx2/nup.py <file.nup> --extract <dir> [--title <n|version>] [--only exefs|romfs]
+        (without --title: the newest title with code to <dir>/exefs and <dir>/romfs, and each title that has data and no
+        code to <dir>/aoc/<title id>/romfs)
 
 The layout (worked out from the file; little-endian):
     0x000  "NUP\\x01" header, u64 file size at +0x40
@@ -32,6 +34,7 @@ from time import monotonic
 
 
 ZSTD = b"\x28\xb5\x2f\xfd"
+NO_TREE = 0xffffffff   # (a title's exefs or romfs dir index when it has none: a data title has no exefs)
 WINDOWS_DEVICES = {"CON", "CONIN$", "CONOUT$", "PRN", "AUX", "NUL"} | {p + n for p in ("COM", "LPT") for n in "123456789¹²³"}
 
 
@@ -93,8 +96,8 @@ def unreadable(path, at, size, error, code=None):
                 "folder and build from the copy." % (where, said))
     if code in DRIVE_ERRORS or code is None and error.errno == errno.EIO:
         return ("Your drive could not read %s: %s%s. Copy the .nup to another drive and build from the copy. If Windows "
-                "cannot copy it either, that part of the drive is damaged: check the drive for errors, or dump the game "
-                "again onto another drive." % (where, DRIVE_ERRORS.get(code, "the drive reported an I/O error"), said))
+                "cannot copy it either, that part of the drive is damaged: check the drive for errors, and use a copy "
+                "of the file on another drive." % (where, DRIVE_ERRORS.get(code, "the drive reported an I/O error"), said))
     return ("The build could not read %s%s. Close any program that may be using the file and build again, or copy the "
             ".nup to another drive and build from the copy." % (where, said))
 
@@ -249,7 +252,9 @@ class Nup:
         return self.strings[off:off + n].decode("utf-8")
 
     def walk(self, d, prefix=""):
-        """(relative path, file record) for every file under dir d."""
+        """(relative path, file record) for every file under dir d; none for a tree the title does not have (NO_TREE)."""
+        if d == NO_TREE:
+            return
         no, nl, first, n = self.dirs[d]
         for k in self.kids[first:first + n]:
             if k < self.nd:
@@ -390,7 +395,7 @@ def verify(nup, titles=None, only=None):
     for title in nup.titles if titles is None else titles:
         parts = [(only, title[only])] if only else [("", title["root"])]
         for part, directory in parts:
-            if directory == 0xffffffff:
+            if directory == NO_TREE:
                 continue
             for name, record in nup.verify_walk(directory):
                 checked += 1
@@ -439,11 +444,17 @@ def verify(nup, titles=None, only=None):
 
 def pick_title(nup, want):
     if want is None:
-        return max(nup.titles, key=lambda t: t["version"])   # (the newest: the update over the base)
+        # (the newest title with code: the update over the base. A title with no exefs is a data title, data_titles)
+        return max([t for t in nup.titles if t["exefs"] != NO_TREE] or nup.titles, key=lambda t: t["version"])
     for t in nup.titles:
         if str(t["index"]) == want or str(t["version"]) == want or "%016x" % t["id"] == want.lower():
             return t
     raise SystemExit("no title %s" % want)
+
+
+def data_titles(nup):
+    """The titles with data and no code (an exefs-less title: the game's files as a title of their own, with a romfs)"""
+    return [t for t in nup.titles if t["exefs"] == NO_TREE and t["romfs"] != NO_TREE]
 
 
 def long_path(p):
@@ -847,6 +858,12 @@ def main():
         print("extracting title %d (v%d) to %s (%.0f GB free)" % (t["index"], t["version"], a.extract, free / 1e9))
         n, total = extract(nup, t, a.extract, a.only)
         print("done: %d files written, %.2f GB" % (n, total / 1e9))
+        # (the data titles beside the code title, each in aoc/<title id>/romfs: nx2/kit.py data_romfs finds it there)
+        for d in data_titles(nup) if a.title is None and a.only != "exefs" else ():
+            where = os.path.join(a.extract, "aoc", "%016x" % d["id"])
+            print("extracting data title %d (%016x) to %s" % (d["index"], d["id"], where))
+            n, total = extract(nup, d, where, "romfs")
+            print("done: %d files written, %.2f GB" % (n, total / 1e9))
         if a.only != "romfs":   # (main is ZBIC-compressed on firmware 22+: made a plain NSO for the tools)
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             import unpack

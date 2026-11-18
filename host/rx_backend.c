@@ -49,6 +49,7 @@ void nvn_tex_layout(const nvn_texdesc *d, nvn_texlayout *o);
 uint64_t nvn_tex_level_offset(const nvn_texdesc *d, unsigned level);
 int nvn_fmt_bpb(int format, int *bw, int *bh);
 int nvn_depth_minus_w(void);
+int nvn_origin_lower_left(void);
 int hos_gpu_pools(uint64_t (*out)[2], int max);
 uint32_t hos_gpu_maps_generation(void);
 uint32_t nvn_vmap_generation(void);
@@ -275,6 +276,7 @@ static const MkwVkHost vk_host = {
     host_take_text, hos_options_file,
     hos_audio_output_count, hos_audio_output_info, hos_audio_output_select, hos_audio_output_state,
     hos_mic_test,
+    nvn_origin_lower_left,
 };
 
 static const MkwVkRenderer *vk;   /* the Vulkan back end, when it was chosen and started */
@@ -385,6 +387,9 @@ int rx_start(void *hwnd) {
     /* (longshot: Vulkan, the only renderer; RX_BACKEND, which once picked the WebGPU one, is not read) */
     const char *dll = "inhale_vk.dll";
     const MkwVkRenderer *r = load_vulkan(dll);
+    /* (inhale) which game runs, for the Insert menu's rows made for the other one (HOS_OPT_OOT_GAME): before the start, so
+       that no frame of the menu shows them */
+    if (r && r->option_set) r->option_set(HOS_OPT_OOT_GAME, hos_game_is_oot());
     if (r && r->start(hwnd)) {
         vk = r;
         hos_log("rx: renderer: Vulkan (%s)", dll);

@@ -30,7 +30,7 @@ def main():
     backend = (ROOT/'host/rx_backend.c').read_text(encoding='utf-8')
     menu = (ROOT/'gpu/vk/vk_menu.cpp').read_text(encoding='utf-8')
     header = (ROOT/'gpu/vk/vk_menu.h').read_text(encoding='utf-8')
-    assert '#define MKWVK_API_VERSION 25' in api
+    assert '#define MKWVK_API_VERSION 26' in api
     assert api.index('int (*take_text)') < api.index('int (*audio_output_state)') < api.index('int (*mic_test)')
     initializer = block(backend, 'static const MkwVkHost vk_host =')
     assert initializer.index('host_take_text,') < initializer.index('hos_audio_output_state,') < initializer.index('hos_mic_test,')
