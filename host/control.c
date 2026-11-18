@@ -1,4 +1,4 @@
-/* (longshot) The control bridge: HOS_CONTROL=<socket path> lets a tool on the same PC (a test, a script, a coding agent)
+/* (longshot) The control bridge: HOS_CONTROL=<socket path> lets a tool on the same PC (a test or a script)
    drive the running game and read its state over a local socket, instead of a file the game polls (HOS_INPUT_LIVE) and its
    log scraped for the frame rate and draw counts. docs/control.md has the protocol; scripts/inhale_ctl.py is a client.
 

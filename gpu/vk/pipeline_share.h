@@ -15,7 +15,7 @@
 
 namespace mkwvk::pipeline_share {
 
-constexpr const char* kIssueUrl = "https://tracker.inhale.invalid/issues/14";
+constexpr const char* kIssueUrl = "https://tracker.inhale.invalid/issues/14";   // (Inhale has no tracker yet: nx2/pipeline_share.py ISSUE_URL)
 constexpr const char* kListName = "inhale_pipeline_states.bin";
 constexpr const char* kReportName = "inhale_pipeline_report.txt";
 // (the issue's template, its lines in its order: nx2/pipeline_share.py FIELDS, the same)

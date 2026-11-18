@@ -7,7 +7,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-ROOTS = ("nx2", "host", "gpu", "scripts", "builder", "docs", ".forgejo", "README.md", "CONTRIBUTING.md", "AGENTS.md")
+ROOTS = ("nx2", "host", "gpu", "scripts", "docs", "README.md", "CONTRIBUTING.md")
 SKIP = {"third_party", "build", "gen", "work", "node_modules", "__pycache__"}   # (third_party/a64-kit's comments: its tree hash)
 
 

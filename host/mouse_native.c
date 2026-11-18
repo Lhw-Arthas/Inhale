@@ -21,7 +21,7 @@
    The motion is added before the camera reads its input, so the game's own collision, lock-on and scripted cameras still
    follow. The camera is the mouse's only while the game gives it free control: the hook ran within the last 150 ms, the
    camera's state at +0x204 is 3 or 4, and the game holds none of the buttons that take the right stick for its own use
-   (ZR, the bow's aim; L, the item wheel; R — nn_hid.c says which with hos_mouse_native_free). Otherwise (a menu, an item
+   (ZR, the bow's aim; L, the item wheel; R - nn_hid.c says which with hos_mouse_native_free). Otherwise (a menu, an item
    wheel, a lock-on, the bow's aim, the pause menu, cutscenes with another camera, a build the patch did not find its
    place in) the motion is the right stick as before, so the game's own menus, selections and aiming still take it.
 

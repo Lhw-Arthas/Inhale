@@ -15,9 +15,14 @@ gamefile/
 *.nup
 *.nsz
 *.xcz
-# (saves: only the scrubbed ones in assets/saves, CONTRIBUTING.md)
 *.sav
-!/assets/saves/**/*.sav
+# (this game's data formats: compressed archives, movies, shader, sound and stream files)
+*.cmp
+*.cmpbin
+*.webm
+*.bfsha
+*.bfsar
+*.bfstm
 
 # ---- build output and caches ----
 build/
@@ -49,3 +54,6 @@ _deps/
 
 # ---- a link to <build>/compile_commands.json (nx2/build.py write_compdb), for clangd and clang-tidy ----
 /compile_commands.json
+
+# ---- the Python environment of the tools ----
+.venv/

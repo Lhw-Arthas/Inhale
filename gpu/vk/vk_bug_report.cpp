@@ -42,8 +42,9 @@ namespace {
 // (a log is copied whole up to 10 MB, well within what the issue tracker takes; a longer one keeps its first MB, where the start, the
 // device and the options are, and its last 9 MB, where the problem usually is: an hour of play logs about 10 MB)
 constexpr uint64_t kLogCap = 10ull << 20, kLogHead = 1ull << 20;
+// (Inhale has no tracker yet: a name that never resolves, so no report goes to upstream's)
 constexpr const char* kIssues = "https://tracker.inhale.invalid/issues/new/choose";
-constexpr const char* kForm = "https://tracker.inhale.invalid/issues/new?template=.forgejo/ISSUE_TEMPLATE/1-game-problem.yml";
+constexpr const char* kForm = "https://tracker.inhale.invalid/issues/new?template=game-problem";
 // (the link's longest: a player who is not signed in is sent to the sign-in page, and the address waits for them in a cookie,
 // about 4 KB at most; GitHub's sign-in page, where the form lived first, failed from links of 3500 characters of escaped text
 // on. 2000 passes both, and every browser and chat program takes it)

@@ -37,7 +37,7 @@ SPIR-V defines its instructions, not of a driver's results.
 
 Encoding reference: [Mesa NAK, pinned sm70_encode.rs](https://chromium.googlesource.com/external/gitlab.freedesktop.org/mesa/mesa/+/b1fe47e94409d81924c8663f58fac97e66ab4527/src/nouveau/compiler/nak/sm70_encode.rs#2134)
 (`OpF2I`, `encode_alu_base` and `encode_alu_imm`). The `0x105` base plus immediate
-form 4 in bits 9–11 gives `0x905`. Inputs or outputs wider than 32 bits use a
+form 4 in bits 9-11 gives `0x905`. Inputs or outputs wider than 32 bits use a
 different base, `0x111`. [NVIDIA PTX conversion documentation](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-cvt)
 describes rounding, FTZ, saturation and NaN results; it is not a SASS encoding
 specification.

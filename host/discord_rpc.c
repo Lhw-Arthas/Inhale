@@ -36,7 +36,7 @@
 
 #include "../gpu/vk/vk_api.h"
 
-#define INHALE_DISCORD_APP_ID_DEFAULT "1570559772111933578"   /* (the Inhale application's id, digits) */
+#define INHALE_DISCORD_APP_ID_DEFAULT ""   /* (Inhale has no Discord application: no id, the thread stays idle) */
 #define INHALE_DISCORD_IMAGE_DEFAULT "inhale"     /* (its large-image art asset key) */
 
 void hos_log(const char *fmt, ...);

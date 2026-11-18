@@ -439,10 +439,10 @@ def write_junit(path, checks, wall):
 
 def unicode_output():
     """A failed check's output is printed whole, and compilers and tests write quotes, arrows and U+FFFD (from the
-    "replace" decode). Into a pipe (CI's log, an agent's tool, `| more`) Windows' Python writes the ANSI code page,
+    "replace" decode). Into a pipe (CI's log, `| more`) Windows' Python writes the ANSI code page,
     cp1252, which has none of them: the run stopped with a UnicodeEncodeError at the first such failure, before the
     table, the summary and --write-times. A pipe gets UTF-8, as -X utf8 would give it; a console keeps its own encoding.
-    Either way a character it cannot show is replaced instead of ending the run (as scripts/team_chat.py does)."""
+    Either way a character it cannot show is replaced instead of ending the run."""
     for stream in (sys.stdout, sys.stderr):
         if not hasattr(stream, "reconfigure"):   # (a StringIO)
             continue

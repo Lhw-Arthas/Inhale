@@ -1,5 +1,5 @@
 // Frame dumps (diagnostics): RX_VK_DUMP=<present>[,<present>...] dumps the frame after each named present step by
-// step — every pass's colour targets as the pass ends and the storage images every dispatch wrote — scaled to at most
+// step - every pass's colour targets as the pass ends and the storage images every dispatch wrote - scaled to at most
 // RX_VK_DUMP_W wide (default 320), logged with their NaN and Inf counts and channel ranges, and written as PNGs to
 // <RX_VK_DUMP_DIR or RX_VK_SHOTS>/dump_<present>/ (NaN magenta, Inf green; float values above 1 tone mapped).
 #pragma once

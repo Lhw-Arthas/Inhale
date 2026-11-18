@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pipeline_states  # noqa: E402  (the list's checks: parse, strict)
 
 ISSUE = 14
-ISSUE_URL = "https://tracker.inhale.invalid/issues/%d" % ISSUE
+ISSUE_URL = "https://tracker.inhale.invalid/issues/%d" % ISSUE   # (Inhale has no tracker yet: a name that never resolves)
 LIST = "inhale_pipeline_states.bin"
 REPORT = "inhale_pipeline_report.txt"
 # (the issue's template, its lines in its order; gpu/vk/pipeline_share.h writes the same: tests/test_pipeline_share.py)

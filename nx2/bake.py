@@ -335,7 +335,7 @@ def verify_bank(bank_dir: str, strict: bool = False):
 
     SPIR-V validity is judged WITH --uniform-buffer-standard-layout: the
     shipping build creates its device with every Vulkan 1.2 feature the GPU
-    reports (gpu/vk/vk_main.cpp:253,256,360 — f12 chained into
+    reports (gpu/vk/vk_main.cpp:253,256,360 - f12 chained into
     VkDeviceCreateInfo, never cleared), which includes
     uniformBufferStandardLayout, and CI validates the back end's own modules
     the same way (.forgejo/workflows/ci.yml). Strict

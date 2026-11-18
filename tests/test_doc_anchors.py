@@ -1,7 +1,7 @@
 """Anchors from code to the docs that hold its rules (`// doc: docs/design.md#4-the-lessons-from-mkw-as-rules-here`): every
 anchor in our own code (host/, gpu/, nx2/, scripts/, builder/; not eden, sirit or third_party) names a file under docs/
 that exists and, after #, a heading in it (GitHub's anchor for it). The functions that enforce a documented rule keep
-theirs: an agent reading one sees where its rule is written before it "simplifies" a capture or a wait away.
+theirs: whoever reads one sees where its rule is written before a capture or a wait is "simplified" away.
 
     python -I -B tests/test_doc_anchors.py
 """

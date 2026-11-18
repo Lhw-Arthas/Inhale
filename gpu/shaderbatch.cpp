@@ -1,4 +1,4 @@
-// shaderbatch: the whole seed (HKSEED01 — nx2/shader_census.py writes it, nx2/bake_mimo.py reads it) through
+// shaderbatch: the whole seed (HKSEED01 - nx2/shader_census.py writes it, nx2/bake_mimo.py reads it) through
 // Eglantine's recompiler, offline and CPU-only: every stage it can lower goes to SPIR-V, and every program key is
 // computed exactly as gpu/vk/vk_shader.cpp computes it. No Vulkan device: nothing here calls vkCreateShaderModule
 // or vkCreate*Pipeline, so the pass runs where no GPU is (nx2/bake_mimo.py builds and runs this).
@@ -12,7 +12,7 @@
 // Shader::Stage an NVN stage number becomes, Profile/HostTranslateInfo, and the RuntimeInfo each stage's emit takes.
 // What it cannot know with no game running: the bound textures' answers (Program::answers, the variants of
 // seed_compute), the driver constant banks (ReadCbufValue is the program's own c1 only), and the device limits in
-// min_ssbo_alignment (16 here). Those are what a Vulkan machine fills in — docs/BAKE.md §3 (machine stop-lines).
+// min_ssbo_alignment (16 here). Those are what a Vulkan machine fills in - docs/BAKE.md §3 (machine stop-lines).
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -241,8 +241,8 @@ public:
     SeedEnv(const Pkg& p, const SeedStage& st, Shader::Stage s) : pkg{p}, stage_info{st} {
         stage = s;
         start_address = s == Shader::Stage::Compute ? HeaderSize : 0u;   // (mirror Env's ctor, vk_shader.cpp:361)
-        // (mirror Env's ctor :362-367: the program header goes into the Environment itself — Eden reads env.SPH()
-        //  for the mesh output lines and the geometry header fields — and the environment is a proprietary driver)
+        // (mirror Env's ctor :362-367: the program header goes into the Environment itself - Eden reads env.SPH()
+        //  for the mesh output lines and the geometry header fields - and the environment is a proprietary driver)
         if (s != Shader::Stage::Compute) std::memcpy(&sph, stage_info.sph, sizeof sph);
         is_proprietary_driver = true;
     }
@@ -261,7 +261,7 @@ public:
     }
     u32 ReadCbufValue(u32 index, u32 offset) override {
         // (mirror driver_bank_word vk_bank.cpp:405: one word of the vertex stage's bank is a constant, blank
-        //  state or not — 2047.9375f at c0+0x610; everything else a blank NvnState gives is 0)
+        //  state or not - 2047.9375f at c0+0x610; everything else a blank NvnState gives is 0)
         if (index == 0 && stage_info.stage == 0 && offset == 0x610) {
             u32 v;
             const float far_plane = 2047.9375f;
@@ -269,7 +269,7 @@ public:
             return v;
         }
         // (mirror vk_shader.cpp:381-399: c1 is the program's own constants; the driver banks are game state this pass
-        // has no game for, and they read as 0 — which is what makes IsCbufStorageBufferPointer false below)
+        // has no game for, and they read as 0 - which is what makes IsCbufStorageBufferPointer false below)
         if (index == 1 && (size_t)offset + 4 <= pkg.c1.size()) {
             u32 v;
             std::memcpy(&v, pkg.c1.data() + offset, 4);
@@ -630,7 +630,7 @@ int main(int argc, char** argv) {
     };
 
     // (the mesh emit, mirror translate_mesh_into :1354-1360: the task stage's stores, or every bit when the
-    //  program has no task stage — seed_program passes prim=null, so neither does this pass)
+    //  program has no task stage - seed_program passes prim=null, so neither does this pass)
     auto emit_mesh = [&](int idx, u64 for_program_key, const Translation* task) -> const EmitOut& {
         const EmitCtx ctx{idx, 4, for_program_key, 0};
         auto found = emit_cache.find(ctx);
@@ -747,8 +747,8 @@ int main(int argc, char** argv) {
             row(0, keys[idx], "compute", e.status, file, e.detail);
             e.ok ? translated++ : failed++;
         } else if (by_stage[7] >= 0) {   // ---- NVN2 mesh: task, mesh, and the fragment after them ----
-            // (mirror translate_mesh_into vk_shader.cpp:1328-1419 with prim=null — which is what the seed path
-            //  passes at seed_program :1945 — and mesh_registers_of :1311-1326 from the control sections)
+            // (mirror translate_mesh_into vk_shader.cpp:1328-1419 with prim=null - which is what the seed path
+            //  passes at seed_program :1945 - and mesh_registers_of :1311-1326 from the control sections)
             const int mesh = by_stage[7], task = by_stage[6], fs = by_stage[1];
             const u64 key = mesh_key(task, mesh, fs);
             std::string status = "OK", detail, spirv;

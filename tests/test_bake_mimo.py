@@ -74,7 +74,7 @@ def make_stages():
     fs_ctl = control_section(1, 128 + 2 * len(EXIT))
     fs_code = program_header(5) + EXIT + EXIT
     # (task and mesh: control +0x58 threads 15:0 / payload 31:16, +0x60 primitives 15:0 / vertices 31:16,
-    #  +0x5f the output topology in GL's numbers (3 = triangles) — parse_code vk_shader.cpp:164-172)
+    #  +0x5f the output topology in GL's numbers (3 = triangles) - parse_code vk_shader.cpp:164-172)
     task_ctl = bytearray(control_section(6, 128 + 2 * len(EXIT)))
     struct.pack_into("<I", task_ctl, 0x58, 32 | (128 << 16))
     mesh_ctl = bytearray(control_section(7, 128 + 2 * len(EXIT)))
@@ -197,7 +197,7 @@ def main(argv=None):
     if a.headers:
         os.environ["INHALE_SPIRV_HEADERS"] = a.headers
     # (a compiler and the SPIR-V headers are what the translate stage needs; without them the miner and the bank
-    #  still run — tests/run_all.py skips a check whose tool is missing the same way)
+    #  still run - tests/run_all.py skips a check whose tool is missing the same way)
     sys.path.insert(0, str(ROOT / "nx2"))
     import bake_mimo
     try:
