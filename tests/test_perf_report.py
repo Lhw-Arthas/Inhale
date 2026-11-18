@@ -59,14 +59,16 @@ class Relay:
 
             def do_POST(self):
                 relay.bodies.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                # (inhale) taken before the answer: after it, the client can be in the next case, which sets the flag for
+                # its own connection, and this one would spend it on a connection whose summaries are all sent
+                drop, relay.drop_after_first = relay.drop_after_first, False
                 code = relay.codes.pop(0) if relay.codes else 201
                 self.send_response(code)
                 for k, v in relay.headers.items():
                     self.send_header(k, v)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
-                if relay.drop_after_first:
-                    relay.drop_after_first = False
+                if drop:   # (inhale) the flag taken above
                     self.close_connection = True
 
             def log_message(self, *a):
