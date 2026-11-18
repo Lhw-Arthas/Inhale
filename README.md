@@ -9,8 +9,8 @@ It is a fork of [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot), whi
 (`PROVENANCE.md`, `CREDITS.md`). Most of the code is still Longshot's; its name was changed through the tree by a
 script (`scripts/rename_full.py`).
 
-**Status: early.** The opening, the title screen and the first stage run at full speed; nothing past them has been
-played. The stages of the work and what each has reached are in [docs/design.md](docs/design.md).
+**Status: early.** Played by hand through the first world's stages, its boss and several special stages, at full
+speed; nothing past them has been played. With frame generation on, the game sometimes hangs for a few seconds. The stages of the work and what each has reached are in [docs/design.md](docs/design.md).
 
 ## Play (no command line)
 

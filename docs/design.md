@@ -928,3 +928,11 @@ The first stage was played in a window, with sound, from `work/game/inhale`.
   its `--cli --check` in a clean `ubuntu:22.04` container accepts the package.
 - Not tried: the window clicked through on Windows; Cancel there.
 
+### 2026-11-18: played by hand past the first boss
+
+- The user played the AppImage's build (`~/Games/Inhale`, Linux, RX 7900 XTX, RADV, Mesa 26.2.6) through the first
+  world's stages, its boss and several special stages. Nothing else was seen to go wrong.
+- With frame generation on, the game hung now and then for a few seconds and then went on. The options file had
+  V-Sync on and Frame pacing on (`vsync=1`, `frame_pacing=1`); the multiplier was not noted, and frame generation is
+  now off there. No log was kept. Section 13's rules were measured by upstream on NVIDIA under Windows only; this
+  is the first report from RADV. Not looked into.
