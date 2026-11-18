@@ -12,6 +12,33 @@ script (`scripts/rename_full.py`).
 **Status: early.** The opening, the title screen and the first stage run at full speed; nothing past them has been
 played. The stages of the work and what each has reached are in [docs/design.md](docs/design.md).
 
+## Play (no command line)
+
+Download one file from the [Releases](https://github.com/mario-ttide/Inhale/releases) page: the newest `v*`
+release, or `nightly` for the latest commit. Each carries its own compiler and every other build tool, works offline,
+and holds nothing of the game.
+
+- **Linux:** `Inhale-x86_64.AppImage`. Make it executable (`chmod +x`, or the file's properties), then double-click
+  it. It needs FUSE 2 (`libfuse2`); without it, start it as `./Inhale-x86_64.AppImage --appimage-extract-and-run`.
+- **Windows:** `Inhale-Setup-x64.exe`. It installs for your user alone (no administrator rights) and adds
+  *Inhale Builder* to the Start menu and the desktop. The files are not signed: Windows SmartScreen says "Windows
+  protected your PC"; choose *More info*, then *Run anyway*. Check the file against the release's `SHA256SUMS` first
+  if you like (`Get-FileHash Inhale-Setup-x64.exe` in PowerShell).
+
+Then, in Inhale Builder:
+
+1. **Your game:** choose your `.nup` file, or a folder that holds the extracted `exefs/` and `aoc/` (see below). It
+   is checked to be the right game and version.
+2. **Where:** the game folder (default `~/Games/Inhale`, or `%USERPROFILE%\Games\Inhale`), about 12 GB.
+3. **Build:** it compiles the whole game on your PC, which takes a while (the window shows the time left). It can be
+   stopped; what it compiled is kept for the next build.
+4. **Play.** *Create shortcut* adds the game to the applications menu (Linux) or the desktop (Windows).
+
+After you update Inhale Builder, *Update an existing game folder* builds your folder again with the new version.
+
+To play you need a GPU and driver with Vulkan 1.3 and mesh shaders. `Inhale-x86_64.AppImage --cli <arguments>` runs
+`nx2/make_game.py` with the bundled tools, for the command line.
+
 ## You supply the game
 
 Inhale contains no game code, no game data and no keys, and nothing made from them. To build anything you need your
@@ -25,7 +52,7 @@ post them, or anything made from them (`CONTRIBUTING.md`).
 
 ## What you need
 
-- Linux, x86-64 (the only system tested so far; the Windows paths of Longshot are still in the tree, unverified).
+- Linux, x86-64. (Windows: use the installer above; building from a checkout there is Longshot's route, less tried.)
 - clang and lld, pkg-config, Python 3.12 or newer, git.
 - FFmpeg's development files (libavcodec, libavutil, libswscale, libswresample) and dav1d's.
 - The Vulkan, SPIR-V and Vulkan Memory Allocator headers. Distributions ship the first two; VMA is often not packaged:

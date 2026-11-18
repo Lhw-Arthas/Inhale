@@ -201,7 +201,8 @@ also name its method for rule 1 (its measure skill), which is not carried here.
   lifter fail only with MinGW's clang first on `PATH`; they pass with the Visual Studio environment), `nx2/build.py
   --standalone` links `inhale.exe` and `inhale_vk.dll`, and the game runs through the boot and the first scene on an
   RTX 2080 SUPER at 60 presents a second, with nothing in the log but the usual unimplemented imports. Not yet looked at
-  on screen: which scene that is, input, audio, the movie. The llvm-mingw route (`LONGSHOT_MINGW`) was not tried.
+  on screen: which scene that is, input, audio, the movie. The llvm-mingw route (`LONGSHOT_MINGW`) builds and runs too
+  (section 9, "the release packages").
   Slow in a window over Remote Desktop (21 to 25 presents a second, the main thread blocked 3.7 s of every 5 s in GPU sync
   waits while the GPU was busy 4 ms a frame): the same build run headless over ssh gives 60.0 with 0.1 s blocked. The
   remote display adapter paces FIFO presents (V-Sync On); the registry value `DWMFRAMEINTERVAL` = 15 (the RDP frame
@@ -230,6 +231,37 @@ also name its method for rule 1 (its measure skill), which is not carried here.
 Work after the two import commits is in five commits: the rename alone (what `scripts/rename_full.py --write` does
 to the tree before it, with the script, and nothing else); the fork's documents and the files changed at import
 (`PROVENANCE.md`); the stages S0 to S6; the sync script; the notes for coding agents.
+
+## 10. The release packages
+
+Two downloads, made by `.github/workflows/release.yml` on Linux runners (a `v*` tag: a release; a push to `main` or
+Run workflow: the rolling `nightly` prerelease, with `SHA256SUMS`, unsigned):
+
+- `Inhale-x86_64.AppImage` (`packaging/linux/`, built in an Ubuntu 22.04 container by `packaging/linux/docker.sh`).
+  Its AppDir: `usr/python` (CPython 3.12 with tkinter and `requirements.txt`), `usr/lib/inhale/{llvm,sysroot,ffmpeg,
+  sdl2,cpm}` (clang and lld, the glibc 2.35 sysroot, static FFmpeg with dav1d, `libSDL2-2.0.so.0`, the Vulkan, SPIR-V
+  and VMA headers), `usr/share/inhale` (the tracked sources, `VERSION`, `liba64emit.so`, zbic, the prebuilt
+  third-party objects, `packaging/gui`, `licenses/`). `AppRun` starts the window, `--cli` runs `make_game.py` and
+  `--play` the game, with the tools' variables (`EMSDK`, `INHALE_SYSROOT`, `INHALE_FFMPEG`, `INHALE_SDL2`, `RX_CPM`)
+  set as `packaging/gui/tools_env.py` sets them for the window's build.
+- `Inhale-Setup-x64.exe` (`packaging/windows/`, cross-built on Linux: `packaging/linux/docker.sh windows`). NSIS,
+  per user, into `%LOCALAPPDATA%\Programs\Inhale`: the sources beside `llvm-mingw\` (its Windows release, which
+  `make_game.py` `bundled_mingw()` finds), `python\` (with tkinter), `cpm\` (the headers, and FFmpeg and dav1d built
+  with llvm-mingw: FFmpeg's libraries named `<name>.lib`, as `nx2/build.py` links them), `third_party\sdl2\SDL2.dll`
+  (sdl2-compat) and `SDL3.dll`, `a64emit.dll` and the third-party objects prebuilt with `RX_TARGET=windows`, `gui\`.
+  The uninstaller removes only those names, so a folder chosen by hand keeps its other files; the game folders and
+  saves stay, and it asks about the work folder.
+
+Everything downloaded is in `packaging/pins.txt` (name, version, system, URL, SHA-256), fetched and checked by
+`packaging/fetch.py` into `work/pkg/dl`; the versions are upstream's at `9af4808f` (LLVM 23.1.5, llvm-mingw 20261104,
+Python 3.12.16, FFmpeg 9.0.2, dav1d 1.5.4, SDL 2.32.10 / 3.4.20 / sdl2-compat 2.32.74, Vulkan-Headers v1.4.345,
+SPIRV-Headers vulkan-sdk-1.4.341.0, VMA v3.3.0). The window (`packaging/gui/inhale_builder.py`) runs
+`python -I nx2/make_game.py` and reads its `@@` lines (`packaging/gui/protocol.py`); nothing in `nx2/` changed for it.
+
+The hot list (section 9, S6: CPU time 10% less) is tracked as `packaging/profiles/hot_funcs.txt`, 301 function names,
+and both packages put it in their `work/`, where `make_game.py` takes it; CI's packages have it too. The profiles
+(`work/inhale_pieces.prof`, `work/inhale_vk.profdata`) and `work/image/chunks.txt` stay untracked, since their gain over
+the hot list is not shown (section 7): a package built on a PC that has them carries them, one built by CI does not.
 
 ## 9. Findings
 
@@ -865,3 +897,29 @@ The first stage was played in a window, with sound, from `work/game/inhale`.
   played.
 - Not looked at: what Longshot's 66 commits change for this game beyond the checks and that run (the Insert menu's
   NFC tab and Rumble row, the log's redaction, long paths, the present queue and frame generation changes).
+
+### 2026-11-18: the release packages
+
+`packaging/` (section 10) built here at `eb25254` plus the packaging changes: `Inhale-x86_64.AppImage` 235 MB,
+`Inhale-Setup-x64.exe` 127 MB (its folder 1.1 GB). Each prebuilt its 316 third-party objects with 0 failures.
+`tests/run_all.py`: 560 passed, 0 failed, 79 skipped.
+
+- Linux, the AppImage in clean `ubuntu:22.04` and `fedora:latest` containers with no compiler: `--cli --check` on the
+  package says "Linux build prerequisites: OK" and accepts it. A whole build in the `ubuntu:22.04` container
+  (`--cli --game <.nup>`): `@@times 135 81 -1`, `@@done`. That folder, started on this PC through `--play` with
+  `PATH=/usr/bin:/bin` and a clean environment, ran at 60.0 presents a second for 60 s. No picture was looked at.
+- Windows, on aubox (Windows 11, RTX 2080 SUPER), as a normal user with no compiler on `PATH`: the silent install
+  (`/S`) into `%LOCALAPPDATA%\Programs\Inhale`, with its Start menu shortcut and its "Apps & features" entry. The window's
+  own runner (`gui/inhale_builder.Child`) with the installed Python: `--check --game <dump folder>` said "the
+  compiler: ...\llvm-mingw (no Visual Studio needed)" and ok. A whole build from the extracted folders (`--game` with
+  `exefs/` and `aoc/`) took 306 s, prepared the shaders and ended with `@@done`. This is the first run of both the
+  llvm-mingw route and the folder input on a real dump. Started as the window's Play button starts it, in the
+  disconnected desktop session, the game ran at 60.0 presents a second. No picture was looked at, because the console
+  session is another user's. The silent uninstall left the game folder and removed the install folder, both shortcuts
+  and the uninstall key.
+- Cancel: the runner's `kill()` during the compile took the build's session from 25 processes to 0 (Linux). The
+  Windows path (`taskkill /T`) was not tried.
+- Both builds print a traceback from `nx2/shader_census.py`, which reads `romfs/Pack/ZsDic.pack.zs` (the other game's
+  file), then "the shader list was not made". It is make_game's own and the build goes on. Not looked into.
+- Not tried: the window itself clicked through by a person on either system, the release workflow on GitHub.
+

@@ -26,6 +26,18 @@ With the same paths as in Longshot: `nx2/`, `host/`, `gpu/`, `third_party/`, `te
 `requirements.txt`, `.gitattributes`, `.gitignore`, and one document, `docs/compiler-memory-accounting.md` (a code
 comment in `nx2/build.py` points at it).
 
+## Adapted for this fork's release packages
+
+`packaging/` and `.github/workflows/release.yml` are this fork's own, under a path Longshot does not have, so a sync
+never touches them. Some of their scripts start from Longshot's, at `9af4808f`, and name that file in their head:
+`packaging/linux/Dockerfile` (from `scripts/linux/Dockerfile`), `packaging/linux/docker.sh` (`scripts/linux/docker.sh`),
+`packaging/linux/deps.sh` (`scripts/linux/deps.sh`, with its `tools` mode), `packaging/linux/appimage.sh`
+(`scripts/linux/appimage.sh`), `packaging/linux/AppRun` (`builder/linux/AppRun`) and `packaging/windows/deps.sh`
+(its dav1d build from `scripts/windows/dav1d.sh`). The versions in `packaging/pins.txt` are the ones Longshot's
+`scripts/linux/deps.sh`, `tools.lock` and `third_party/sdl2/` name at that commit. Longshot's builder, its launcher,
+`tools.lock`, `scripts/tools.py` and its release workflows are not carried: the packages here bring their tools
+inside instead of downloading them.
+
 ## What was left out
 
 Whole paths: `.forgejo/`, `.circleci/`, `.chunk/`, `.pre-commit-config.yaml`, `mise.toml`, `mise.lock`, `cliff.toml`,

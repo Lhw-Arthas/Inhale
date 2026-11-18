@@ -31,6 +31,21 @@ A screenshot of the running game in a report is fine when it shows the problem.
   and what it printed, in the commit message.
 - Stages, their exit checks and what is known about this game are in `docs/design.md`. Update it with what you find.
 
+## Bump a pin
+
+The release packages (`packaging/`, built by `.github/workflows/release.yml`) download only what
+`packaging/pins.txt` names, each checked by its SHA-256. To change one:
+
+1. Edit its line: the version, the URL and the new file's SHA-256 (`sha256sum` of the download, or the `digest` of a
+   GitHub release asset: `gh api repos/<owner>/<repo>/releases/tags/<tag> --jq '.assets[] | [.name, .digest]'`).
+2. `python -I -B tests/test_packaging_pins.py`.
+3. Build the package it is in (`packaging/linux/docker.sh`, or `packaging/linux/docker.sh windows`) and build and play
+   a game folder with it, as `docs/design.md`, section 10, says. A new licence or a changed one goes in
+   `packaging/licenses/`.
+
+Keep a version upstream also uses where there is one (its `scripts/linux/deps.sh`, `tools.lock`), so the game is built
+with the tools Longshot's players have.
+
 ## Licence
 
 Contributions are under the GPL, version 3 or later, as the rest (`LICENSE`, `CREDITS.md`).
