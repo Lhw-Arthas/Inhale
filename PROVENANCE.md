@@ -3,7 +3,7 @@
 Inhale is a modified version of Longshot, made by importing part of Longshot's tree once and changing it.
 
     upstream:       https://git.magicbean.dev/MagicBeanDev/Longshot.git
-    upstream-base:  544229a260c5f5008f241b9cf48ae6b01c1602b9
+    upstream-base:  9af4808f8b3e3a4ba1b45bb61cbd3d12a829121f
     imported:       2026-11-16
 
 `scripts/sync_upstream.py` reads the `upstream-base` line, brings Longshot's later changes over and rewrites the line.
@@ -53,11 +53,22 @@ Scripts of Longshot's releases, packaging, team workflow, and of the other game'
 `scripts/screenshots/menu.cpp`, `scripts/tested_configurations.py`, `scripts/tooling.py`, `scripts/tools.py`
 
 Tests and fixtures bound to something left out above, or to the text of the original `nx2/oot_patches.py`
-(110 files):
+(131 files):
 
 `tests/builder_cli/.gitignore`, `tests/builder_cli/BuilderCliTests.csproj`, `tests/builder_cli/NuGet.Config`,
-`tests/builder_cli/Program.cs`, `tests/dlss_feature_size_test.cpp`, `tests/fsr_uniform_ownership_test.cpp`,
-`tests/hold_gpu_test.cpp`, `tests/linux_pressure_test.cpp`, `tests/mesh_fallback_layout_ir.cpp`,
+`tests/builder_cli/Program.cs`, `tests/builder_workers/obj/BuilderWorkersTests.csproj.nuget.dgspec.json`,
+`tests/builder_workers/obj/BuilderWorkersTests.csproj.nuget.g.props`,
+`tests/builder_workers/obj/BuilderWorkersTests.csproj.nuget.g.targets`,
+`tests/builder_workers/obj/Debug/net8.0-windows/.NETCoreApp,Version=v8.0.AssemblyAttributes.cs`,
+`tests/builder_workers/obj/Debug/net8.0-windows/BuilderWorkersTests.AssemblyInfo.cs`,
+`tests/builder_workers/obj/Debug/net8.0-windows/BuilderWorkersTests.AssemblyInfoInputs.cache`,
+`tests/builder_workers/obj/Debug/net8.0-windows/BuilderWorkersTests.GeneratedMSBuildEditorConfig.editorconfig`,
+`tests/builder_workers/obj/Debug/net8.0-windows/BuilderWorkersTests.GlobalUsings.g.cs`,
+`tests/builder_workers/obj/Debug/net8.0-windows/BuilderWorkersTests.assets.cache`,
+`tests/builder_workers/obj/project.assets.json`, `tests/builder_workers/obj/project.nuget.cache`,
+`tests/dlss_feature_size_test.cpp`, `tests/draw_stream_visibility_test.cpp`, `tests/frame_overlap_test.cpp`,
+`tests/fsr_image_retirement_test.cpp`, `tests/fsr_uniform_ownership_test.cpp`, `tests/hold_gpu_test.cpp`,
+`tests/invalidate_quick_test.cpp`, `tests/linux_pressure_test.cpp`, `tests/mesh_fallback_layout_ir.cpp`,
 `tests/mesh_fallback_layout_model.cpp`, `tests/nonuniform_image_arrays_ir.cpp`, `tests/parallel_init_order_test.cpp`,
 `tests/portable_builder_home_test.cs`, `tests/portable_setup_home_test.c`, `tests/pr_description/good.md`,
 `tests/setup_tar_diagnostics_test.c`, `tests/test_appimage_headers.py`, `tests/test_appimage_licenses.py`,
@@ -67,27 +78,29 @@ Tests and fixtures bound to something left out above, or to the text of the orig
 `tests/test_camera_centering.py`, `tests/test_camera_speed.py`, `tests/test_check_pr_description.py`,
 `tests/test_commit_room.py`, `tests/test_cpu_report.py`, `tests/test_cpu_target.py`, `tests/test_crash_dialog.py`,
 `tests/test_crash_groups.py`, `tests/test_dev_build.py`, `tests/test_dev_packs.py`, `tests/test_driver_env_choose.py`,
-`tests/test_frame_rate_cap_step.py`, `tests/test_frame_whole.py`, `tests/test_free_view_anchor.py`,
-`tests/test_gpu_clock.py`, `tests/test_guide_screenshots.py`, `tests/test_hardware_report.py`,
-`tests/test_high_fps_fixes.py`, `tests/test_hle_stats.py`, `tests/test_hold_gpu.py`, `tests/test_hud_layout_row.py`,
-`tests/test_job_queue.py`, `tests/test_launcher_capture.py`, `tests/test_linux_deps_pins.py`,
-`tests/test_linux_docker_packages.py`, `tests/test_linux_downgrade.py`, `tests/test_linux_pressure.py`,
-`tests/test_linux_tools.py`, `tests/test_linux_update.py`, `tests/test_longshot_launch.py`,
-`tests/test_longshot_saves.py`, `tests/test_make_game_ngx.py`, `tests/test_mark_groups.py`,
-`tests/test_menu_hooks.py`, `tests/test_mesh_fallback_layout.py`, `tests/test_met_wait_capture.py`,
-`tests/test_movement_speed.py`, `tests/test_movie_frame_count.py`, `tests/test_no_release_lookup.py`,
-`tests/test_no_webgpu.py`, `tests/test_ocarina_wait.py`, `tests/test_oot_damage.py`, `tests/test_oot_heap_retry.py`,
+`tests/test_frame_overlap.py`, `tests/test_frame_rate_cap_step.py`, `tests/test_frame_whole.py`,
+`tests/test_free_view_anchor.py`, `tests/test_gpu_clock.py`, `tests/test_guide_screenshots.py`,
+`tests/test_hardware_report.py`, `tests/test_high_fps_fixes.py`, `tests/test_hle_stats.py`, `tests/test_hold_gpu.py`,
+`tests/test_horse_jump_step.py`, `tests/test_hud_layout_row.py`, `tests/test_job_queue.py`,
+`tests/test_launcher_capture.py`, `tests/test_linux_deps_pins.py`, `tests/test_linux_docker_packages.py`,
+`tests/test_linux_downgrade.py`, `tests/test_linux_pressure.py`, `tests/test_linux_tools.py`,
+`tests/test_linux_update.py`, `tests/test_longshot_launch.py`, `tests/test_longshot_saves.py`,
+`tests/test_make_game_ngx.py`, `tests/test_mark_groups.py`, `tests/test_menu_hooks.py`,
+`tests/test_mesh_fallback_layout.py`, `tests/test_met_wait_capture.py`, `tests/test_movement_speed.py`,
+`tests/test_movie_frame_count.py`, `tests/test_no_release_lookup.py`, `tests/test_no_webgpu.py`,
+`tests/test_ocarina_wait.py`, `tests/test_oot_damage.py`, `tests/test_oot_heap_retry.py`,
 `tests/test_oot_state_tap.py`, `tests/test_oot_voice_option.py`, `tests/test_opening_skip.py`,
 `tests/test_patch_hooks_defined.py`, `tests/test_pipeline_state_sources.py`, `tests/test_pipeline_tour.py`,
 `tests/test_portable_builder_home.py`, `tests/test_portable_builder_startup.py`, `tests/test_portable_setup_paths.py`,
 `tests/test_portable_setup_start.py`, `tests/test_portable_setup_transaction.py`, `tests/test_precompile_save.py`,
-`tests/test_prepare_at_build.py`, `tests/test_quick_pipelines.cpp`, `tests/test_quick_pipelines.py`,
-`tests/test_readme_menu_rows.py`, `tests/test_recomplauncher_json.py`, `tests/test_release.py`,
-`tests/test_saved_turn_rate.py`, `tests/test_scarecrow_timing.py`, `tests/test_scene_format.py`,
-`tests/test_setup_rename_retry.py`, `tests/test_setup_runtime.py`, `tests/test_setup_runtime_paths.py`,
-`tests/test_setup_tar_diagnostics.py`, `tests/test_setup_tool_merge.py`, `tests/test_ship_state_list.py`,
-`tests/test_skip_title.py`, `tests/test_split_before_draw.py`, `tests/test_stick_dead_zone.py`,
-`tests/test_tested_configurations.py`, `tests/test_text_size.py`, `tests/test_text_speed.py`,
+`tests/test_prepare_at_build.py`, `tests/test_present_queue_default.py`, `tests/test_quick_pipelines.cpp`,
+`tests/test_quick_pipelines.py`, `tests/test_readme_menu_rows.py`, `tests/test_recomplauncher_json.py`,
+`tests/test_release.py`, `tests/test_saved_turn_rate.py`, `tests/test_scarecrow_timing.py`,
+`tests/test_scene_format.py`, `tests/test_setup_rename_retry.py`, `tests/test_setup_runtime.py`,
+`tests/test_setup_runtime_paths.py`, `tests/test_setup_tar_diagnostics.py`, `tests/test_setup_tool_merge.py`,
+`tests/test_ship_state_list.py`, `tests/test_skip_title.py`, `tests/test_split_before_draw.py`,
+`tests/test_stick_dead_zone.py`, `tests/test_tested_configurations.py`, `tests/test_tex_compact.py`,
+`tests/test_text_size.py`, `tests/test_text_speed.py`, `tests/test_texture_ahead.cpp`, `tests/test_texture_ahead.py`,
 `tests/test_third_party_objects.py`, `tests/test_threaded_rendering.py`, `tests/test_tools_lock.py`,
 `tests/test_vk_pgo.py`, `tests/test_web_floor_steps.py`, `tests/test_windows_on_linux.py`, `tests/test_xess_sdk.py`
 
@@ -114,6 +127,16 @@ source moved on without them, and three new ones (`tests/test_profiling_mode.py`
 `tests/test_profiling_mode.py`, `tests/test_readback_timeout_source.py`, `tests/test_rumble_menu.py`,
 `tests/test_slow_frames.py`, `tests/test_switch_table.py`, `tests/test_target_image_pool.py`,
 `tests/test_upscaler_round_trip.py`, `tests/test_vcore_escape.py`, `tests/test_vk_swapchain_compat.py`
+
+The same at `9af4808f`, the second sync, on the same machine: four that passed before, whose source moved on without
+them (two of them, `tests/test_draw_stream_visibility.py` and `tests/test_fsr_image_retirement.py`, run only with the
+Vulkan headers at hand), and three new ones (`tests/test_compute_warm_apart.py`, `tests/test_invalidate_quick.py`,
+`tests/test_libc_hooks.py`)
+(7 files):
+
+`tests/test_compute_warm_apart.py`, `tests/test_draw_stream_visibility.py`, `tests/test_fsr_image_retirement.py`,
+`tests/test_invalidate_quick.py`, `tests/test_libc_hooks.py`, `tests/test_log_open_failure.py`,
+`tests/test_psychov35_fsr3_fg.py`
 
 ## Files changed at import
 

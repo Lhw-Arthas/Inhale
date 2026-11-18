@@ -96,6 +96,77 @@ Also inherited: hooks at fixed guest addresses belong to one game and are gated 
 (`hos_game_is_mkw`, `hos_game_is_oot`). This game's `main` overlaps the other games' address ranges, so an ungated
 address compare can fire by coincidence.
 
+## 13. Frame generation's presents, as rules
+
+Carried over from Longshot's design notes as they are at `9af4808f`, under Longshot's number: the renderer's code
+points here by it (`// doc: docs/design.md#13-frame-generations-presents-as-rules`, which `tests/test_doc_anchors.py`
+checks), and that code is Longshot's. Longshot checked them on 2026-11-16 (Windows 11, RTX 5090, NVIDIA 621.24,
+5120x2160 at 165 Hz with G-Sync, DLSS Frame Gen at 3x and 4x, PresentMon 2.3.0); none of it has been measured with
+this game. Each fault these rules keep away looked like frame generation turned off: the FPS counter and the display
+thread's own counts said the frames were made and on time, and the screen showed the game's frame rate.
+`tests/test_framegen_fixed_pace.py` runs the timing functions through a model of the display loop. Longshot's notes
+also name its method for rule 1 (its measure skill), which is not carried here.
+
+1. **Frame pacing is measured on the screen, not in the log.** The display thread's `frame interpolation: ... shown on time`
+   and `shown apart` counts are its present calls. After the call a present can still wait for the GPU: on 2026-11-16 the
+   log had no late frame while PresentMon showed 32% (3x) and 45% (4x) of the frames on the screen under 2 ms. Read
+   PresentMon's `DisplayedTime` (the share under 2 ms, its p10 to p90) and, for where a frame waited, `DisplayLatency` against
+   `CPUBusy` (the call) and `GPULatency` + `GPUTime` (its GPU work).
+2. **A fixed multiplier's set is shown on the game's timeline, in every present mode** (`gpu/vk/vk_framegen.cpp`
+   `fixed_on_timeline`, `fixed_dues`, `pace_lead`), whatever Frame pacing says. An immediate (V-Sync Off) swapchain shows
+   each present at once: a set presented as it came (its made frames and the game's within a millisecond) showed the
+   game's frame and hardly the made ones. Evenly apart (the smoothed frame time over the set) the motion stutters as much
+   as the game's frame times vary; on the game's timeline each frame moves as far as its time. Under FIFO (V-Sync On) a VRR
+   display shows each present when it comes, one a refresh at most: as they came, a set's frames were a refresh apart and
+   its last one waited for the next set (3x at 60 fps on 240 Hz: 4.2, 4.2 and 8.3 ms), so there a frame goes at its time
+   but no sooner than a refresh after the one before was given (`fifo_slot`). `RX_VK_FG_TIMELINE=0` gives the old way
+   back, for an A/B.
+3. **The GPU's delay is fed back only from sets taken as they came** (`pace_delay`, `display_main`'s `as_came`). A set's
+   frames are done with the game frame's GPU work, so its times wait for that (`fg.late_ns`). A set whose copies went to the
+   GPU late for another reason (no swapchain image free, the display thread busy with the set before) would raise the delay
+   by its own lateness, which sends the next set's copies later still: at 4x it ran to a whole game frame.
+4. **A set presented ahead needs a frame slot per frame of both sets in flight, and two sets' spare swapchain images**
+   (`gpu/vk/vk_replay.cpp` `present_slots_for`, `gpu/vk/vk_main.cpp` `create_swapchain`, `present_ahead_wanted`). Each present
+   waits for the copy last made in its slot: with fewer slots than a set's frames, its 4th copy waited for its own first
+   copy, and with a slot per frame of one set the next set's copy k waited for the shown set's copy k, each so for all the
+   game's work queued before it, while frames of the shown set were due. The slot count is the swapchain's
+   (`dev.swap_slots`), set when it is made for its sets, in every present mode; `RX_VK_FG_TIMELINE=0` keeps 3. An app may hold at most
+   imageCount - minImageCount acquired images (an NVIDIA surface: 8 images, 6 spare): the next set's copies go as images
+   come free (`copy_up_to`), never all or none. The slots are also how many copies may still be on the GPU: what a copy
+   reads lives through `kPresentSlotsMax` presents after it (the overlays' staging buffers and old textures,
+   `gpu/vk/vk_imgui.cpp` `kFramesLater`; Dear ImGui's vertex buffers, `ImageCount`). At 4, frame generation at 3x and up
+   let them go while copies could still read them (a test-only log showed it on an RTX 5090; a likely cause of a
+   tester's lost device on an RTX 5080, not reproduced).
+5. **A present waits on the queue it is made on.** On the replay's graphics queue it waits behind the game's next frame (3 to
+   12 ms at 5120x2160), and a second queue of the graphics family takes turns with it on the GPU. A compute family's queue
+   runs beside it (`RX_VK_PRESENT_QUEUE`, `vk_main.cpp` `create_device`): 0.1% of the frames under 2 ms, on the screen 4.9
+   to 6.9 ms apart at 3x (p10 to p90), each present's call to the screen 1.3 ms instead of 6.6. It is on by default
+   with NVIDIA's driver 621.24 and newer on Windows, where it was measured; Hookshot issue 1161, before the fork (an
+   RTX 4090 on NVIDIA's 621.14 had a black screen with it on), was never placed, so older drivers, other drivers and
+   Linux keep the replay's queue until they are measured, and `=0` is the way back.
+6. **Under FIFO the made frames do not queue** (`gpu/vk/vk_framegen.cpp` `fifo_catch_up`, `fifo_pick`,
+   `gpu/vk/vk_reflex.cpp` `fifo_min_interval_us`). FIFO shows one frame a refresh: when the game's frame rate times the
+   multiplier passes the refresh, the frames queue in the sets taken ahead and their refresh slots, the game is held
+   back, and each game frame reaches the screen later and later (RTX 5090, 165 Hz: 3x, 40 to 51 ms after its hand-over
+   before the timeline under FIFO and 65 to 82 ms with it; at 2x under the refresh, 15 and 22 ms; 6x, the game held to
+   27.5 game frames a second (45.7 with V-Sync Off) and each game frame presented 138 ms after its hand-over). FIFO's catch-up (`display_main`'s `take`): a set
+   whose game frame, its last, would be shown over a refresh after its own time keeps the most frames that bring it
+   within one, the ones left out spread over the set so the picture moves in even steps (6x with 3 shown: the 2nd, 4th
+   and 6th), and their copies are not made, so no image is held for them. Past the refresh the screen then shows 160 to
+   165 frames a second at 165 Hz, each game frame within a refresh of its time, the game at its own rate (the model in
+   `tests/test_framegen_fixed_pace.py`: 3x, 4x and 6x at 33 to 60 game frames a second; in the game, 6x: the game at
+   52 to 55 frames a second and each game frame on screen 46 to 52 ms after its hand-over). At most all but one made frame is left out:
+   at 2x the one made frame stays, as a set of one frame is not presented ahead. The GPU's delay is fed back against
+   the set's first frame whichever frames are shown: a copy takes as long for any of them, and against the first one
+   shown 6x ran the delay down to 0, so its frames came due before their copies and a frame more a set was left out.
+   For a G-SYNC or
+   FreeSync display, `RX_VK_FG_FIFO_CAP=1` has NVIDIA Reflex's sleep, while frames are made, hold the game to the
+   multiplier's share of refresh - refresh²/3600 frames a second (157 at 165 Hz: 52.5 game frames at 3x), as NVIDIA's
+   own Reflex keeps a G-SYNC display under the refresh with V-Sync (with the first catch-up, 3x on 165 Hz: 29 ms on
+   screen with a 60 cap against main's 45 to 51 before the timeline under FIFO, and 39 uncapped against 33 to 40). It is off by default: a
+   display of a fixed refresh then has refreshes without a new frame (7 a second at 165 Hz), and the game cannot tell
+   the two apart.
+
 ## 5. Risks, ranked, with the stage that settles each
 
 1. The data lives in a second, romfs-only title: certain to need work. S1 (imports), S2 (the first `fs:` lines).
@@ -742,3 +813,55 @@ The first stage was played in a window, with sound, from `work/game/inhale`.
   second over the last 5 s. With the cache filled the three take 81 s together.
 - The gate passes the game when it is still running at 60 s and has presented 1800 frames. It does not look at a
   picture and plays nothing: a sync that draws wrong or breaks a level still lands.
+
+### 2026-11-18: the second sync, to Longshot `9af4808f`
+
+- `scripts/sync_upstream.py --to 9af4808f` (66 commits past `v3.0.0-rc.7`), run by the nightly agent in
+  `work/sync/tree`: 347 files changed in the imported paths, 315 applied (88 of them new), 32 not applied (31 not
+  tracked here, and the stand-in). Five files conflicted, in 7 places, each with one answer: `gpu/vk/vk_api.h`,
+  `host/rx_backend.c` and `tests/test_audio_output_devices.py` (the interface, below), `nx2/lift.py` (both sides:
+  Longshot's entry hooks, then this fork's `other_game`) and `nx2/make_game.py` (Longshot's new sentence with this
+  fork's wording of its end).
+- `git apply -3` runs git's rerere when it leaves conflicts. With `rerere.enabled` and `rerere.autoupdate` set (they
+  are in this PC's `~/.gitconfig`) and a resolution of the same conflict recorded in the clone's `.git/rr-cache` (a
+  trial run to `310e7c9d` the same night had left all five), git writes the recorded resolutions into the files and
+  then stops at the index lock it holds itself (`fatal: Unable to create '.git/index.lock': File exists`): the work
+  tree is whole, with no conflict marks, and nothing is staged, so `git diff --diff-filter=U` lists nothing and the
+  new files are untracked. That night the work tree was compared with a second run in a scratch clone with rerere off
+  (the same files, the same bytes but for the five), the five replayed resolutions were read against the rules of the
+  sync-upstream skill, and the paths were staged by name. `scripts/sync_upstream.py` does not turn rerere off for its
+  `git apply`; it is not changed here.
+- The renderer's interface is version 34 here: Longshot went from 29 to 33 (the pose sample's `perf_tracking`, the
+  renderer's `nvn_invalidate_quick`, `rumble_test`, seven NFC members), and this fork's `origin_lower_left` comes after
+  them in `MkwVkHost` and in `host/rx_backend.c`'s table. Longshot's list of names in
+  `tests/test_audio_output_devices.py` now ends at its own `perf_tracking` and is checked as one run from `take_text`,
+  so this fork's member is no longer in that list: a line of its own there asserts that it is the last member and the
+  last entry of the table.
+- Longshot's lift now puts the host's `memcpy`, `memmove`, `memset`, `memcmp`, `strlen` and `strcmp` first in the
+  SDK's functions of those names (`nx2/entry_hooks.py`, `host/nn_libc.c`), for any game. In this game's `sdk` it finds
+  all six (`entry hooks spliced: 6`), and the game's log says so (`libc: ... are the host's`). `HOS_GUEST_LIBC=1`
+  gives the game's own back. It is the one change of this sync known to alter what this game runs.
+- Section 13 above is new: Longshot's renderer now points at rules in its own design notes
+  (`// doc: docs/design.md#13-frame-generations-presents-as-rules`), which `tests/test_doc_anchors.py` follows, so the
+  rules are carried here under Longshot's number, as they are at `9af4808f`. Nothing brings Longshot's later changes
+  to them over: `docs/` is not an imported path.
+- The stand-in `nx2/oot_patches.py` needed nothing: Longshot's file gained 11 names (the horse's jump, the texture
+  heap's compaction), and nothing in `nx2/` uses one. `host/oot_tex_compact.c` is reached only from code those patches
+  edit.
+- Checks: before the sync `tests/run_all.py` had 0 failed (536 passed, 64 skipped; 590 and 10 with the Vulkan and
+  SPIR-V headers given). After it, 12 failed. Five fail in Longshot's own tree at the same revision for the same reason
+  (checked out under `work/` and run on the same machine) and are left out, with two more that run only with the
+  Vulkan headers and fail in both trees there. Five are bound to things left out (three read Longshot's
+  `docs/development.md`, two the text of its `nx2/oot_patches.py`) and are left out with their fixtures, as are eleven
+  build outputs of a builder test project that Longshot committed (`tests/builder_workers/obj/`). `PROVENANCE.md` has
+  the lists. Two were this fork's to repair: `tests/test_doc_anchors.py` (section 13) and Longshot's new
+  `tests/test_share_message_i18n.py`, whose fixture compiles the menu's lookup and needed this fork's rows
+  (`menu_i18n_inhale.h`). After that: 556 passed, 0 failed, 79 skipped, and 625 passed, 0 failed, 10 skipped with the
+  headers given (`INHALE_VULKAN_HEADERS` and `INHALE_SPIRV_HEADERS`, a folder holding only them; Longshot's own tree
+  reads `LONGSHOT_VULKAN_HEADERS`).
+- In the game, in the clone's own work folder, no hot list and no profiles: lift 18 s, build 12 s (0 files failed;
+  the trial's object cache was there), then 60 s with `HOS_HEADLESS=1 HOS_AUDIO=0 HOS_NO_MOVIES=1`: 3288 frames
+  presented, 60.0 a second over the last 5 s, still running at the end. No picture was looked at and nothing was
+  played.
+- Not looked at: what Longshot's 66 commits change for this game beyond the checks and that run (the Insert menu's
+  NFC tab and Rumble row, the log's redaction, long paths, the present queue and frame generation changes).

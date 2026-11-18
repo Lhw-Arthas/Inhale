@@ -54,11 +54,14 @@ PY = [sys.executable, "-I", "-u", "-X", "utf8"]   # (utf8: every step's output i
 BUILD_ID = "395fc326"   # (the version this port is made for, and a hot list and profiles under work/ were made from)
 STARTED = time.time()   # (the build's total time, kept in build_times.json and said as @@times)
 sys.path[:0] = [HERE, os.path.join(ROOT, "third_party", "a64-kit", "tools")]   # (python -I leaves the script folder off)
+import long_paths  # noqa: E402
+long_paths.install()   # (paths past 260 characters on Windows, before anything reads a file: #1115)
 import toolchain as _toolchain
 import disk as _disk
 import object_store as _object_store
 import lift_store as _lift_store
 import game_title
+import log_redact as _log_redact
 # (longshot) RX_TARGET=windows on Linux: the Windows game, with llvm-mingw's Linux release (LONGSHOT_MINGW, or llvm-mingw
 # beside the builder), to run under Proton or copy to a Windows PC
 LINUX, CROSS = not _toolchain.windows(), _toolchain.windows() and os.name != "nt"
@@ -226,9 +229,15 @@ def build_log(path):
         log = open(path, "w", encoding="utf-8", newline="\n")
     except OSError as e:
         fail("Could not open build log %s: %s" % (path, e))
+    # (the file without the player's user name, as the game writes its own log: players attach it to build problems. The
+    # console, which a launcher reads, as it is: nx2/log_redact.py)
+    saved = _log_redact.RedactedLines(log)
     with log:
-        with contextlib.redirect_stdout(LogStream(sys.stdout, log)), contextlib.redirect_stderr(LogStream(sys.stderr, log)):
-            yield
+        try:
+            with contextlib.redirect_stdout(LogStream(sys.stdout, saved)), contextlib.redirect_stderr(LogStream(sys.stderr, saved)):
+                yield
+        finally:
+            saved.close()
 
 
 TIMES_FORMAT = 1
@@ -555,6 +564,7 @@ def keep_heads(out, game, stamp):
 
 
 DAMAGED_NOTE = "inhale_damaged_files.txt"   # (in the game folder: the damaged game files the last unpack replaced)
+SHOWN_DAMAGED = 50   # (damaged files named in the log, the rest only in DAMAGED_NOTE: #1275's 1896 filled the launcher's log)
 
 
 ROMFS_MARKS = (".inhale_romfs_checked", HEADS, DAMAGED_NOTE)   # (what stand_in_damaged_files left in a folder, about its romfs)
@@ -726,21 +736,29 @@ def stand_in_damaged_files(out, romfs):
               "minutes", flush=True)
         done = nup.stand_in_damaged(romfs, file_progress("checked"))
     else:   # (found while the .nup was extracted: no file opened again)
+        if known:   # (said before the stand-ins are looked for, so the log does not end at the extraction's last line)
+            print("%d damaged game file%s found while reading your game files: looking for stand-ins" %
+                  (len(known), "" if len(known) == 1 else "s"), flush=True)
         done = nup.stand_in_damaged(romfs, damaged=[os.path.normpath(os.path.join(romfs, rel)) for rel in known])
     note = os.path.join(out, DAMAGED_NOTE)
     if not done:
         with contextlib.suppress(FileNotFoundError):   # (a whole dump unpacked over a damaged one)
             os.remove(note)
     else:
+        too_many = len(done) > nup.MOST_STAND_INS   # (none was looked for: nup.stand_in_damaged)
         lines = ["Your game dump is incomplete: %d game file%s in it %s damaged (a complete dump is about 23.8 GB, an incomplete "
-                 "one 23.3 GB). Similar files are used where available, "
-                 "with different textures in those places. A complete copy of the game's files has the original ones:" %
-                 (len(done), "" if len(done) == 1 else "s", "is" if len(done) == 1 else "are")]
+                 "one 23.3 GB). %s A complete copy of the game's files has the original ones:" %
+                 (len(done), "" if len(done) == 1 else "s", "is" if len(done) == 1 else "are",
+                  "That is too many to replace with similar files (an incomplete dump has a few)." if too_many else
+                  "Similar files are used where available, with different textures in those places.")]
         for path, other in done:
             lines.append("  %s: %s" % (os.path.relpath(path, romfs),
                                        "in its place " + os.path.basename(other) if other else "no replacement found; build cannot continue"))
-        for line in lines:
+        shown = 1 + SHOWN_DAMAGED   # (the first line, then the files: the note keeps them all)
+        for line in lines[:shown]:
             print(line, flush=True)
+        if len(lines) > shown:
+            print("  ... and %d more, listed in %s" % (len(lines) - shown, note), flush=True)
         # (#2237: keep the list even when an unresolved file stops this build, before marking a successful check)
         with open(note, "w", encoding="utf-8", newline="\n") as f:
             f.write("\n".join(lines) + "\n")
@@ -2093,8 +2111,7 @@ LIFT_ENV_NOT_OUTPUT = {   # (read by the lift's sources, and no change to what i
     "INHALE_LIFT_JOBS": "how many processes", "INHALE_LIFT_NO_FORK": "how they are started", "RX_JOBS": "how many processes",
     "EMSDK": "where the compiler is", "LONGSHOT_MINGW": "where the compiler is",
     "A64_SITE_PROFILE": "the game's runtime (a64_rt.c), at play", "RX_VK_NAN_GUARD": "nx2/bake_ds's own run",
-    "RX_VK_NO_DRAW_PARAMS": "nx2/bake_ds's own run", "RX_VK_NO_F16": "nx2/bake_ds's own run",
-    "RX_VK_SHARED_48K": "nx2/bake_ds's own run",
+    "RX_VK_NO_F16": "nx2/bake_ds's own run",
     "HOS_NO_FASTFP": "the game's runtime (FASTFP_HEADER in nx2/fastfp.py, read by the lifted C at play)",
 }
 
@@ -2149,16 +2166,18 @@ def lift_sources():
 
 def lift_key(exefs, work, env, planning=True, paths=None):
     """What the lift's output depends on: the game's code, the translator (lift_sources: the modules the lift imports from nx2/ and
-    the vendored a64-kit, and their other files), the HLE functions host/ defines (hooked in the lift; the rest of host/ is compiled
-    after it, so a change there alone does not lift again), the hot list, the chunk boundaries and the hot pieces, the lift's environment and the
+    the vendored a64-kit, and their other files), the HLE functions and ENTRY_HOOK_SYM hooks host/ defines (hooked
+    in the lift; the rest of host/ is compiled after it, so a change there alone does not lift again), the hot list, the chunk boundaries and the hot pieces, the lift's environment and the
     Python running it. A file the lift never reads may be in it (a new build then lifts again); one it reads must be.
     planning=False: all of it but the two files the lift itself writes for the next one (image/chunks.txt, image/hot_pieces.txt),
     to tell whether anything else it reads changed while it ran. paths: each of the environment's values through it
     (lift_share_key)"""
     import kit  # noqa: F401  (a64-kit on the path, for standalone)
     import standalone
+    import entry_hooks
     h = hashlib.sha1(sys.version.encode(), usedforsecurity=False)
     h.update(" ".join(sorted(standalone.implemented())).encode())
+    h.update((" entry hooks: " + " ".join(entry_hooks.hooked_symbols())).encode())   # (spliced in the lift: nx2/entry_hooks.py)
     # (each file named from its own base: the exefs and the work folder may be on another drive than the source, which relpath refuses)
     files = [(exefs, os.path.join(exefs, f)) for f in sorted(os.listdir(exefs))]
     files += [(ROOT, f) for f in lift_sources()]

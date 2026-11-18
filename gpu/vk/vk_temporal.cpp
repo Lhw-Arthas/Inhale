@@ -20,7 +20,10 @@
 //    vertex skinned with this frame's bones and the frame before's, so their pixels get their own motion. Their poses are
 //    copied on the GPU from where the game has them into two buffers that take turns; a pixel is the draw's where its depth is
 //    the scene's (within RX_VK_DLSS_ACTOR_TOL steps, default 64). What moves without bones (particles, water, foliage moved in
-//    its vertex shader, mesh-shader draws) keeps the camera's motion. RX_VK_DLSS_ACTORS=0: camera motion alone.
+//    its vertex shader, mesh-shader draws) keeps the camera's motion.
+//  - hidden meshes (vk_draw.cpp hidden_depth_draw, hidden_mesh.h; #1370): the game goes on drawing a skinned mesh into the
+//    scene's depth after it stops showing it (Link, with the camera pushed into him), so those depth draws are left out:
+//    the depth and the actor motion then have no invisible body in front of the room. RX_VK_DLSS_FADED=0: drawn.
 //  - the engine scales them to the output's size; shaders/dlss_out.comp squares that back to linear colour into the
 //    network's output.
 // Anything unexpected (no camera this frame, other sizes, the engine not there or failing) leaves the network to run, the
@@ -58,6 +61,7 @@
 #include "dlss_actor.h"
 #include "dlss_checks.h"
 #include "dlss_math.h"
+#include "hidden_mesh.h"
 #include "temporal_jitter.h"
 #include "upscaler_rows.h"
 #include "vk_dlss.h"
@@ -585,8 +589,7 @@ int actor_motion(VkCommandBuffer cmd, const Camera& cam, const float* before, ui
     s.skins.clear();
     std::unordered_map<uint64_t, State::Pose> old = std::move(s.poses);
     s.poses.clear();
-    static const bool off = env_switch("RX_VK_DLSS_ACTORS") == 0;
-    if (off || skins.empty() || !make_actor_pipeline()) return 0;
+    if (skins.empty() || !make_actor_pipeline()) return 0;
     for (auto& b : s.pose_buffers)
         if (!b.buffer) {
             if (!create_device_buffer(kPoseBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -976,10 +979,8 @@ void temporal_idle() {
     if (now - s.asked <= 120) return;   // (in use, or off for under 120 frames (2 s): kept, a row stepped through comes back at once)
     // (longshot, a stutter: kept too while DLSS or FSR 4 is still the Upscaler's choice. Each area change's loading screen has no
     // gameplay upscale for 2 s and more, and DLSS's feature let go then was made again at the next area's first frame: 44-78 ms
-    // of the replay thread at every area entry (12 times in a 15-minute walk, 2026-11-10, #1520). Let go once the row leaves them.
-    // RX_VK_DLSS_IDLE_RELEASE=1: let go after 120 frames unused, as before)
-    static const bool release_idle = getenv("RX_VK_DLSS_IDLE_RELEASE") && atoi(getenv("RX_VK_DLSS_IDLE_RELEASE")) != 0;
-    if (!release_idle && temporal_wanted()) return;
+    // of the replay thread at every area entry (12 times in a 15-minute walk, 2026-11-10, #1520). Let go once the row leaves them)
+    if (temporal_wanted()) return;
     if (s.drawing) {
         logf("vk: %s: not used for 120 frames (the last at frame %llu, now %llu): what it made and its images let go; "
              "the next upscale with it makes them again", s.drawing->name, (unsigned long long)s.asked, (unsigned long long)now);
@@ -992,9 +993,35 @@ void temporal_idle() {
     s.holding = !s.dead.empty();
 }
 
+// ---- (longshot, #1370) the depth draws of hidden meshes (vk_draw.cpp hidden_depth_draw has the why) ----
+int temporal_hidden_mesh_mode() {
+    static const int mode = [] {
+        const bool rule = env_switch("RX_VK_DLSS_FADED") != 0;          // (unset: on)
+        const bool detail = env_switch("RX_VK_DLSS_FADED_LOG") == 1;   // (unset: off)
+        // (the parallel replay, RX_VK_PARALLEL=2 and more (vk_replay.cpp par_threads), draws a frame's segments on several
+        // threads at once, where the one table is drawn from by one thread at a time: nothing here runs then)
+        const bool parallel = env_switch("RX_VK_PARALLEL") >= 2;
+        if (parallel)
+            logf("vk: upscaler: faded: the parallel replay is on (RX_VK_PARALLEL): hidden meshes' depth draws are drawn");
+        else if (rule)
+            logf("vk: upscaler: faded: while a temporal upscaler or frame generation draws, the depth draws of a skinned mesh "
+                 "that had colour and has had none for %u frames are left out until its colour is back (RX_VK_DLSS_FADED=0 "
+                 "draws them)", hidden_mesh::kHiddenAfter);
+        else
+            logf("vk: upscaler: faded: RX_VK_DLSS_FADED=0: hidden meshes' depth draws are drawn");
+        return parallel ? 0 : (rule ? 1 : 0) | (detail ? 2 : 0);
+    }();
+    return mode;
+}
+
+bool temporal_scene_depth_is(const Texture* depth) {
+    State& s = st();
+    std::lock_guard lk(s.mu);
+    return depth && s.cam.valid && s.cam.depth == depth && s.cam.frame == texture_frame_no();
+}
+
 void temporal_note_skinned_draw(const SkinnedDraw& k) {
-    static const bool off = env_switch("RX_VK_DLSS_ACTORS") == 0;
-    if (off || (!temporal_wanted() && !temporal_fg_inputs()) || !k.depth || !k.bones || k.bones_size < 48 || !k.object ||
+    if ((!temporal_wanted() && !temporal_fg_inputs()) || !k.depth || !k.bones || k.bones_size < 48 || !k.object ||
         k.object_size < 0x4c)
         return;
     State& s = st();

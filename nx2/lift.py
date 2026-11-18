@@ -25,6 +25,8 @@ import time
 import capstone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # (python -I leaves the script folder off)
+import long_paths  # noqa: E402
+long_paths.install()   # (paths past 260 characters on Windows, before anything reads a file: #1115)
 import kit
 import nso2  # noqa: F401  (DT_RELR)
 import insn
@@ -33,6 +35,7 @@ import dead_flags   # (longshot) the kit's dead_flags, answered at once for a fu
 import walk   # (longshot) the kit's walk, with one shared entry per plain op's word
 import discover   # (longshot) the discovery's walks in new processes where there is no fork
 import lift_fixes
+import entry_hooks
 import suyu_rt_fixes
 import chunks
 import standalone
@@ -50,6 +53,7 @@ fastfp.install()   # (before lift_fixes and poll wrap emit_function: theirs go a
 dead_flags.install()
 walk.install()
 lift_fixes.install()
+entry_hooks.install()   # (host/*.c's ENTRY_HOOK_SYM hooks at the entry of their SDK functions: add() below)
 suyu_rt_fixes.install()
 
 
@@ -173,6 +177,8 @@ def main():
         print("ADR / ADRP+ADD code addresses outside the %d unwind-covered functions: %d, %d of them new entries" % (
             len(spans), len(refs), len(new)))
     L = a64_lift.Lifter(img)
+    if a.standalone:   # (longshot) the host's memcpy, memset, ... first, the SDK's own kept behind them (nx2/entry_hooks.py)
+        entry_hooks.add(L, img)
     # (inhale) the other game's hooks sit at fixed addresses of its main: only in its image. Two of them check no build id
     # of their own, only the instruction word at each address, which another game's code can hold by coincidence
     import oot_fov
@@ -236,6 +242,8 @@ def main():
         L.report()
         if L.stats["entry_gotos"]:   # (nx2/lift_fixes.py, 4)
             print("functions with code below their entry, started at it by a goto: %d" % L.stats["entry_gotos"])
+        if a.standalone:   # (nx2/entry_hooks.py: one per hook the lift found a function for)
+            print("entry hooks spliced: %d" % L.stats["entry_hooks"])
         print("interrupt polls: %d loop headers in %d functions" % (poll.stats["polls"], poll.stats["functions"]))
         print("wrote %d code files to %s (%.0fs)" % (len(files), gen, time.time() - t0))
     print("done (%.0fs)" % (time.time() - t0))

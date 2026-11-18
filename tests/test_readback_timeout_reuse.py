@@ -142,7 +142,6 @@ static void logf(const char*, ...) {}
 static void full_barrier(VkCommandBuffer, const char* = nullptr) {}
 static void destroy_buffer(VkBuffer, VmaAllocation) {}
 static void watch_tex(const Texture*, const char*) {}
-static bool remade_skip_old() { return false; }
 static bool remade_log_on() { return false; }
 static uint64_t evicted_key(uint64_t gpu, uint32_t, uint32_t, uint32_t) { return gpu; }
 struct Evicted { uint64_t frame; bool rendered; };
@@ -154,6 +153,11 @@ static std::set<const Texture*> destroyed, written;
 static void destroy_later(Texture& t) { destroyed.insert(&t); }
 static void forget_gpu(Texture*) {}
 static std::map<uint64_t, std::unique_ptr<Texture>> textures;
+// (vk_texture.cpp's list of the rendered textures and what takes a texture out of it before the table lets it go)
+static std::vector<Texture*> rendered_targets;
+template <class Set> static void rendered_forget(const Set& gone) {
+    if (!gone.empty()) std::erase_if(rendered_targets, [&](Texture* t) { return gone.count(t) != 0; });
+}
 
 namespace {
 /* DEAD */

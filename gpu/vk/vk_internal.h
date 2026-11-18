@@ -13,7 +13,7 @@
 #ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
 #include "compat/inhale_env.h"
 #endif
-#include "vk_vendor.h"
+#include "device_policy.h"
 #include "gpu_choice.h"
 
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
@@ -65,6 +65,7 @@ struct Device {
          sparse_images = false, // (sparse resident 2D images on the queue: the terrain's huge arrays)
          sparse_buffers = false, // (sparse-bound buffers on the queue: a pool imported as several dma-bufs)
          view_2d_of_3d = false, // (VK_EXT_image_2d_view_of_3d: a 3D texture a 2D sample instruction reads)
+         memory_priority = false, // (VK_EXT_memory_priority with its feature, asked for by RX_VK_MEMORY_PRIORITY: vk_vma.cpp)
          coop_matrix = false,   // (VK_KHR_cooperative_matrix with its feature)
          native_mma = false;    // (HMMA on it: the cooperative matrix test passed, vk_coopmat.cpp)
     bool float_atomic_add = false;   // (longshot) VK_EXT_shader_atomic_float's shaderBufferFloat32AtomicAdd: the translator's float adds
@@ -84,7 +85,11 @@ struct Device {
     uint32_t subgroup_size = 32, subgroup_max = 32;   // (the lanes a stage not pinned runs at, and the most it can have)
     VkDriverId driver_id{};
     bool radv_gcn = false;   // (longshot) RADV on a GCN 1-4 card (GFX6-8: RX 400/500, R9 2xx/3xx/Fury): fallback_size_policy.h
-    VendorFixes fixes{};   // (longshot) the vendor and driver workarounds this device needs (vk_vendor.h; vk_main.cpp create_device)
+    // (longshot) what create_device learnt of this PC and the defaults it gets by it (device_policy.h); driver is what facts'
+    // driver_info points into. Here and not in vk_state.h, which is part of the translator's stamp
+    VkPhysicalDeviceDriverProperties driver{};
+    DeviceFacts facts{};
+    DevicePolicy policy{};
     uint32_t max_push_descriptors = 0;
     // no window (HOS_HEADLESS): presents go to an image of their own, which RX_VK_SHOTS can write out
     bool offscreen = false;
@@ -98,6 +103,9 @@ struct Device {
     // (longshot) how many of its images may be held acquired at once with no acquire timeout: the count less the surface's
     // minImageCount (the Vulkan spec's limit). vk_framegen.cpp's present ahead holds two
     std::atomic<uint32_t> swap_spare{0};
+    // (longshot) present_image's frame slots while frame generation runs, as create_swapchain made the chain for frame
+    // generation's sets (present_slots_for: 3, or a slot per frame of two sets where the chain is made for two)
+    std::atomic<uint32_t> swap_slots{3};
     std::vector<VkImageView> swap_views;   // (longshot) a view of each, for Dear ImGui's overlays (VK_NULL_HANDLE: none)
     VkFormat swap_view_format = VK_FORMAT_UNDEFINED;   // (their format: the UNORM one of an sRGB swapchain when it can be)
     bool swap_mutable = false;   // (VK_KHR_swapchain_mutable_format: an sRGB swapchain's images viewed as UNORM)
@@ -320,6 +328,7 @@ void memory_drop_shadow(uint64_t guest, uint64_t size);   // (a write the captur
 /// (EvilBoyce) the newest submission value whose write-back reaches into [guest, guest + size) (0: none ever); *ever set
 /// when any write-back ever did
 uint64_t memory_writeback_value(uint64_t guest, uint64_t size, bool* ever, uint64_t* part = nullptr, uint64_t* whole = nullptr);
+bool memory_writeback_ever(uint64_t guest, uint64_t size);   // (longshot) its *ever without a lock: invalidate_quick
 void memory_note_readback(uint64_t guest, uint64_t size);   // (PR 430) a CPU read of GPU results: see memory_rb_refresh
 bool texture_storage_any(uint64_t gpu, uint64_t size);   // (vk_replay.cpp) a texture the game made has its storage there
 bool replay_render_thread_on();   // (vk_replay.cpp) the replay runs on the render thread (RX_VK_ASYNC, Threaded rendering)
@@ -348,6 +357,13 @@ bool readback_early_on();
 /// 1 over 1 MiB; 2 a bare or wide storage range); the pages the soft write watch reported (full: memory_collect_written's, begun as
 /// collection gen, from early_check_collect_begin: 0 when the check is off)
 void early_check_gpu_write(uint64_t lo, uint64_t hi, uint64_t value, uint64_t part, int kind);
+/// (longshot, vk_replay.cpp: frame overlap) a draw or a dispatch is recorded now (vk_draw.cpp push_constants); follows: a
+/// dispatch, or a draw whose program follows pointers into the game's memory: its recording reads it at the GPU's time
+void frame_overlap_op(bool follows);
+/// (longshot, vk_memory.cpp, for vk_replay.cpp's frame ahead counters) the mirror syncs' dirty pages so far from the capture
+/// taken last and from guest memory as it was at the replay; and the next capture to be taken, looked at: its pages and pools
+void memory_sync_sources(int64_t* capture, int64_t* live);
+void memory_capture_peek(int64_t* pages, int64_t* pools);
 void early_check_cpu_pages(const uint32_t* pages, int64_t n, bool full, uint32_t gen);
 uint32_t early_check_collect_begin();
 void early_in_place_write(uint64_t lo, uint64_t hi, uint64_t value);
@@ -430,7 +446,7 @@ void destroy_image(VkImage image, VmaAllocation allocation);
 /// What an allocation really takes (VkMemoryRequirements.size: padding, alignment, the driver's metadata), 0 for none
 uint64_t allocation_size(VmaAllocation allocation);
 /// (dedicated: its own memory object, not a share of a 64 MB block: for the 16 to 32 MB ones that fit two to a block and leave
-/// the rest of it free; RX_VK_BLOCK_BUFFERS=1: as before)
+/// the rest of it free)
 bool create_buffer(uint64_t size, VkBufferUsageFlags usage, bool host_visible, VkBuffer& buffer,
                    VmaAllocation& allocation, void** mapped, bool dedicated = false);
 void destroy_buffer(VkBuffer buffer, VmaAllocation allocation);
@@ -466,6 +482,10 @@ int shot_ask_next(const char* path, void (*done)(void* ctx, int64_t present, int
 bool create_swapchain(uint32_t width, uint32_t height);
 void present_thread_drain();   // (vk_replay.cpp: the presenter thread's present made, RX_VK_PRESENT_THREAD)
 int swapchain_framegen();   // (vk_main.cpp: frame generation's fixed multiplier as the swapchain is made for it, 0 none)
+/// (longshot) present_image's frame slots (vk_replay.cpp frames[]), at most; ImGui keeps one more vertex buffer, and the
+/// overlays keep what they let go one more present (vk_imgui.cpp ImageCount, kFramesLater)
+constexpr int kPresentSlotsMax = 8;
+int present_slots_for(int framegen, bool two_sets);   // (vk_replay.cpp: the slots present_image uses; create_swapchain's)
 bool swapchain_dlssg();     // (vk_main.cpp: and DLSS-G makes its sets: V-Sync Auto's FIFO)
 void retire_swapchain();   // (dev.present_mu held)
 bool invalidate_lost_surface(VkResult result);   // (dev.present_mu held)
@@ -503,6 +523,14 @@ void prepare_guess(size_t out[3]);   // (the three parts' counts from the files,
 /// what is done kept (the program cache, the driver's) and not counted as a start that ended inside them
 void prepare_stop();
 bool prepare_stopped();
+void prepare_compiled();   // (longshot, vk_main.cpp) a driver compile ended: the preparation's watchdog sees the driver answer
+bool prepare_compiling();   // (longshot, vk_draw.cpp) a driver compile is under way: a slow one gets longer before a stop
+/// (longshot, vk_main.cpp) The preparation's watchdog saw the process keep half a CPU or more busy: a compile under way is at
+/// work, not stuck on a lock. False in a game start, which has no watchdog
+bool prepare_compiler_busy();
+/// (longshot, vk_draw.cpp) The driver's compiler takes minutes over one large program while it works (Mesa's Intel driver:
+/// a 32-lane variant was not done after 15 minutes on an Iris Xe): the watchdog waits an hour for a compile at work, not 900 s
+bool prepare_long_compiles();
 /// (longshot, vk_draw.cpp) The pipeline cache is being written out before the game (precompile_warm, a GB and more): every
 /// pipeline is counted by then, and the start-up screen says what it waits on
 bool prepare_saving();
