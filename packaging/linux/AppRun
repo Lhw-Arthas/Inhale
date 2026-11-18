@@ -1,0 +1,37 @@
+#!/bin/sh
+# The Inhale AppImage: the builder's window, its Python, Inhale's sources and the build tools (clang and lld, a glibc 2.35
+# sysroot, FFmpeg with dav1d, SDL2, the Vulkan headers), all inside. Adapted from upstream's builder/linux/AppRun (9af4808f),
+# which has no window and downloads its tools.
+#   Inhale-x86_64.AppImage                  the window (packaging/gui/inhale_builder.py)
+#   Inhale-x86_64.AppImage --cli <args>     nx2/make_game.py itself, e.g. --cli --nup game.nup --out ~/Games/Inhale
+#   Inhale-x86_64.AppImage --play [<dir>]   start the game built in <dir> (default ~/Games/Inhale)
+HERE="$(dirname "$(readlink -f "$0")")"
+SRC="$HERE/usr/share/inhale"
+LIB="$HERE/usr/lib/inhale"
+PY="$HERE/usr/python/bin/python3"
+# (the same places as packaging/gui/tools_env.py linux_tools; tests/test_packaging_env.py checks the two agree)
+build_tools() {
+    export EMSDK="$LIB/llvm"
+    export INHALE_SYSROOT="$LIB/sysroot"
+    export INHALE_FFMPEG="$LIB/ffmpeg"
+    export INHALE_SDL2="$LIB/sdl2/libSDL2-2.0.so.0"
+    export RX_CPM="$LIB/cpm"
+    unset INHALE_MSVC
+}
+case "${1:-}" in
+    --cli)
+        shift
+        build_tools
+        exec "$PY" -I "$SRC/nx2/make_game.py" "$@"
+        ;;
+    --play)
+        folder=${2:-$HOME/Games/Inhale}
+        [ -x "$folder/inhale" ] || { echo "Inhale: no built game in $folder" >&2; exit 1; }
+        # (the AppImage runtime's and the tools' variables dropped, as tools_env.play_env and make_game.game_env do)
+        for name in $(env | awk -F= '$1 ~ /^(INHALE_|PYTHON|APPDIR|APPIMAGE|ARGV0|OWD|RX_CPM|RX_TARGET|EMSDK|LONGSHOT_MINGW)/ || $1 == "LD_LIBRARY_PATH" { print $1 }'); do
+            unset "$name"
+        done
+        cd "$folder" && exec ./inhale
+        ;;
+esac
+exec "$PY" -I "$SRC/packaging/gui/inhale_builder.py" "$@"

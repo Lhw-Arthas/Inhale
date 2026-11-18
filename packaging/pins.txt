@@ -1,0 +1,27 @@
+# Every file the release packages download (packaging/fetch.py): one line each,
+#
+#   <name> <version> <os> <url> <sha256>
+#
+# os: linux (the AppImage), windows (the installer) or any (a source both build from). A download whose SHA-256 differs
+# stops the build. The versions are upstream's (scripts/linux/deps.sh, tools.lock and third_party/sdl2 at 9af4808f), so
+# a player's build compiles with the same tools as upstream's players do. To bump one: CONTRIBUTING.md, "Bump a pin".
+#
+# Linux: clang and lld, Python with tkinter, SDL2's source, the AppImage packer and its runtime
+llvm            23.1.5        linux   https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.5/LLVM-23.1.5-Linux-X64.tar.xz f72edb0b36580ece7f52e23858f00c18fad4e87395ea7ad05d7e55c39f8fc78a
+python          3.12.16       linux   https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz ce4f6d0a6cfdb3bed6e44c2f9affd85943c76a42e25ad3a259002f31d6fb8a20
+sdl2-src        2.32.10       linux   https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.tar.gz 5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
+appimagetool    1.9.1         linux   https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+appimage-runtime 20251108     linux   https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+# Windows: llvm-mingw (its Linux build cross-compiles FFmpeg, dav1d and the prebuilt objects; its Windows build is
+# installed), Python with tkinter, the SDL DLLs (SDL2.dll is sdl2-compat, which loads SDL3.dll beside it)
+llvm-mingw-host 20261104      windows https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-ubuntu-22.04-x86_64.tar.xz 919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926
+llvm-mingw      20261104      windows https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-x86_64.zip 552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f
+python          3.12.16       windows https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz 1f2ab53880fc67ea323398c6388e05af28addc99a8e389209f08a51fdff4b149
+sdl3            3.4.20        windows https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20-win32-x64.zip 368bed8b24e44ad9ea372990814f2343fcfb9e468abb7f8f4a3bc146c7304752
+sdl2-compat     2.32.74       windows https://github.com/libsdl-org/sdl2-compat/releases/download/release-2.32.74/sdl2-compat-2.32.74-win32-x64.zip 94a0184bc2d0670151a023656fb58e8f722fc001bda3a6a424234c88c5501cc0
+# Both: FFmpeg and dav1d (built for each system, static, linked into the game), the Vulkan back end's headers
+ffmpeg-src      9.0.2         any     https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+dav1d-src       1.5.4         any     https://github.com/videolan/dav1d/archive/refs/tags/1.5.4.tar.gz a1d5b63d2d38ec9bd03acf643caa51fa22edd1e89c5a109c4807717216bbec07
+vulkanheaders   v1.4.345      any     https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.345.tar.gz 99e19205df172c33229f18b5574c9258bc73ea229ec7d6b04daa357b2430f6c8
+spirv-headers   vulkan-sdk-1.4.341.0 any https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.341.0.tar.gz cab0a654c4917e16367483296b44cdb1d614e3120c721beafcd37e3a8580486c
+vulkanmemoryallocator v3.3.0  any     https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/refs/tags/v3.3.0.tar.gz c4f6bbe6b5a45c2eb610ca9d231158e313086d5b1a40c9922cb42b597419b14e

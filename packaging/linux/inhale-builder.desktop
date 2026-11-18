@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Inhale Builder
+Comment=Build the PC version of the game from your own copy
+Exec=AppRun
+Icon=inhale-builder
+Terminal=false
+Categories=Game;
