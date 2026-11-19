@@ -67,6 +67,12 @@ def main():
     for script, var in (("packaging/linux/appimage.sh", "T"), ("packaging/windows/build.sh", "S")):
         if 'cp packaging/profiles/hot_funcs.txt "$%s/work/hot_funcs.txt"' % var not in (ROOT / script).read_text(encoding="utf-8"):
             failures.append("%s does not put the hot list in the package's work/" % script)
+    # (the shipped pipeline state lists, assets/pipeline_states/: make_game.py ship_state_list reads them under the tools' root,
+    # and a package without them built nothing before the title: issue #1's stutter of a first visit)
+    for script in ("packaging/linux/appimage.sh", "packaging/windows/build.sh"):
+        m = re.search(r"git ls-files -z -- ([^|]+)\|", (ROOT / script).read_text(encoding="utf-8"))
+        if not m or "assets" not in m.group(1).split():
+            failures.append("%s does not copy assets/ (the shipped pipeline state lists) into the package" % script)
     for f in failures:
         print("FAIL:", f)
     print("%d names staged, %d failures" % (len(staged), len(failures)))

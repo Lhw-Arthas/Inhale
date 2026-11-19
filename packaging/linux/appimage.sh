@@ -25,7 +25,7 @@ export EMSDK=$L/llvm RX_CPM=$L/cpm INHALE_SYSROOT=$L/sysroot
 CLANGXX=$EMSDK/upstream/bin/clang++
 
 # ---- the sources a player's build compiles, and the scripts: the tracked files, as they are in this checkout ----
-git ls-files -z -- nx2 host gpu scripts third_party requirements.txt LICENSE CREDITS.md README.md PROVENANCE.md |
+git ls-files -z -- nx2 host gpu scripts third_party assets requirements.txt LICENSE CREDITS.md README.md PROVENANCE.md |
     tar --null -T - -cf - | tar -xf - -C "$T"
 printf '%s\n' "$VERSION" > "$T/VERSION"   # (no git history in here: nx2/version.py reads the release name from it)
 mkdir -p "$T/packaging"

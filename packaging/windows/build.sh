@@ -22,7 +22,7 @@ S=$B/win-stage
 rm -rf "$S"
 mkdir -p "$S"
 
-git ls-files -z -- nx2 host gpu scripts third_party requirements.txt LICENSE CREDITS.md README.md PROVENANCE.md |
+git ls-files -z -- nx2 host gpu scripts third_party assets requirements.txt LICENSE CREDITS.md README.md PROVENANCE.md |
     tar --null -T - -cf - | tar -xf - -C "$S"
 printf '%s\n' "$VERSION" > "$S/VERSION"
 cp -a "$DEPS/llvm-mingw" "$DEPS/python" "$DEPS/cpm" "$S/"
