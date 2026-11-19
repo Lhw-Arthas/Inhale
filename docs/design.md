@@ -189,6 +189,8 @@ also name its method for rule 1 (its measure skill), which is not carried here.
 
 ## 7. Not verified yet
 
+- The 3D frame at the output size (section 9, "issue #1, dynamic resolution") on NVIDIA, on Windows, on a 4K screen,
+  and at an output between 2560 x 1440 and 3840 x 2160.
 - What `subsdk0` (CUDA) does after its init: its `DT_INIT` runs, but no `cu*` call has been seen yet.
 - The NVN API version this game's `sdk` expects, and the SDK 19 thread layout beyond a clean start of the game's threads.
 - The first start's shader preparation (section 9, "issue #1"), on another GPU than the RX 7900 XTX: NVIDIA, Windows,
@@ -1082,3 +1084,51 @@ walk (beach to jungle), `RX_VK_FRAME_TRACE=1`, presents 900 to 4860 (the stage).
   the lift, lifted stores marking only GPU pages (`RX_MARK_BITMAP`), `nn::os::YieldThread` giving up the virtual core
   only (`HOS_OS_YIELD=1` as before), temporary pipelines for required draws, threaded rendering's Auto by physical
   cores, the correctly rounded FMA on CPUs without FMA3, and the first install's overlapped unpack.
+
+### 2026-11-19: issue #1, dynamic resolution
+
+The question (an RTX 5080 at 4K): "not sure if dynamic resolution is disabled here or not". It was not, and the 4K
+output was not a 4K picture. Measured with `RX_VK_PASS_TRACE=1 RX_VK_PASS_TRACE_AT=300` (each pass's size, two frames
+every 300 presents) on S5's walk; the scene's size is the colour grading pass's (`5be22000a0782116`).
+
+- At `HOS_OUTPUT_RES=3840x2160` the scene drew at 2560 x 1440 at most, and at 2240 x 1260 and 1862 x 1048 at times
+  (1536 x 864 on the title screen). The game's own pass (`272f3b6f806b3a33`, one draw) stretched it to the output
+  (`work/runs/i1/dynres4k.txt`). With `RX_VK_TS_SCALE` 0.001, 0.1 or 1 the stage stayed at 2560 x 1440 after the first
+  frames of the walk (`dyn_ts0001`, `dyn_ts01`, `dyn_ts1`): the clock the renderer reports does not change the level here.
+- Where the sizes come from: data. `basil/ScnCommon.bin` of the data title (an XBIN) holds at 0x97ca0 six docked levels
+  as (index, width, height), 2560 x 1440, 2240 x 1260, 1862 x 1048, 1536 x 864, 1280 x 720, 854 x 480, then five sizes
+  of another set (1920 x 1080 to 640 x 360) and the load thresholds (1.0, 0.97, 0.88, 0.84, 0.03, 0.95, 0.65). The game
+  makes a set of scene targets at each level (`nvnTextureBuilderSetWidth` from `main+0x63e8dc`, 2560 to 1536 wide) and
+  steps between them by GPU load. Found by a store probe in the lifted C (each store of 1862 or 854, the function
+  logged: `L_8068aa74` copies the list, `main+0x6f9470` and `main+0x899ef4` read it).
+- Not the cause, ruled out on the way. (a) The code's own sizes: the graphics system writes 2560 x 1440 into a list of
+  six sizes at `main+0x64fbac`, `main+0x65ef80` and `main+0x66e270`, and `main+0x660dc0` clamps to the largest of
+  `main+0x9aaa70` (1920 x 1080, 2560 x 1440, 3840 x 2160; mode 3 here). The game takes 3840 x 2160 as its x1
+  (`main+0x6611d4` divides by it). Those three constants raised to the output size (`lifter.after`, `work/runs/i1/res_patch/`)
+  made the targets 3840 wide, and the passes stayed at 2560 x 1440. With the table scaled they are not needed. (b)
+  DLSS: the executable loads every `nvnDlss*` proc (the host answers device integer 0x5A with 0, and `main+0x63e7a0`
+  makes a capability bit of it), but no code calls any of them (no use of their GOT slots outside the loader at
+  `main+0x63d000`; with 0x5A answered 1 and every DLSS proc logging, none ran). This game has no DLSS route to turn on.
+  (c) `HOS_GRAPHICS_SCALE=1.5`: the game does not size its frame by the float.
+- The change: `host/kirby_res.c`, called from `nn_fs.c`'s read for each file read (one `(inhale)` block): where the
+  bytes read hold the whole table and it is the one known, the six sizes are scaled by the output's width over 2560,
+  each side even, when the output is 16:9 and wider than 2560 and at most 3840 (the largest of the game's table). Any
+  other output, file or table is left as read. `HOS_DYNAMIC_RES=0` gives all six levels the first one's size. Test:
+  `tests/test_kirby_res.py`.
+
+| run (S5's walk, RX 7900 XTX) | scene sizes seen | presents a second | GPU time a frame |
+|---|---|---|---|
+| 4K output, before (`dynres4k`) | 2560 x 1440, 2240 x 1260, 1862 x 1048 | 60.0 | 1.8-1.9 ms |
+| 4K output, after (`a4k`) | 3840 x 2160, 3360 x 1890 | 60.1 | 2.9 ms (4.2 ms in two windows) |
+| 4K, after, `RX_VK_TS_SCALE=1` (`a4k_ts1`) | 3840 x 2160, 3360 x 1890 (the first 1200 presents) | 60.0 | |
+| 4K, after, `HOS_DYNAMIC_RES=0` (`a4k_fixed`) | 3840 x 2160 only | 60.0 | 2.9-3.2 ms |
+| 2560 x 1440 output, after (`a1440`) | 2560 x 1440, 2240 x 1260 (unchanged) | 60.0 | 1.8-1.9 ms |
+
+- The picture at present 1800 (the jungle) with the table scaled, against the game's 2560 x 1440 stretched: the same
+  scene, the fog the game's (`work/runs/i1/ov4k_shots`, `base_shots`). Tried first through `HOS_FS_OVERLAY` with a
+  scaled copy of the file (`work/i1/ov`).
+- `tests/run_all.py`: 602 passed, 0 failed, 80 skipped (the tree before the change, after the v3.0.0 sync: 601, 0, 80).
+  `scripts/rename_full.py` 0 places, `scripts/check_third_party.py` 14 parts.
+- Not checked: NVIDIA, Windows, a 4K screen (the runs are headless at 3840 x 2160), an output between 2560 and 3840
+  wide, the handheld set of sizes (left as the game's), whether a heavy scene steps down further on a slower GPU, and
+  the UI at 4K against 1440p (the layouts are drawn after the scene, at the output's size).

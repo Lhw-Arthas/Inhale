@@ -1,0 +1,61 @@
+/* (inhale) The 3D frame at the output size (Kirby and the Forgotten Land, Switch 2 Edition): docs/design.md, "issue #1,
+   dynamic resolution".
+
+   The game's dynamic resolution takes its sizes from data: basil/ScnCommon.bin of the data title holds, at 0x97ca0, six
+   docked levels as (index, width, height), 2560 x 1440 down to 854 x 480, which the game makes its scene targets at and
+   steps between by GPU load. Its own pass then stretches the scene to the output. So at a 3840 x 2160 output the scene
+   drew at 2560 x 1440 at most.
+
+   As the file is read, the six sizes are scaled by the output's width over 2560 where the output is 16:9 and between
+   2560 x 1440 and 3840 x 2160 (the largest of the game's own size table, main+0x9aaa70): at 3840 x 2160 they become
+   3840 x 2160 down to 1280 x 720. Another output keeps the game's sizes (a 16:10 or 21:9 one: the game's cameras are
+   16:9). HOS_DYNAMIC_RES=0 gives all six levels the first one's size, so the scene never steps down. The table's bytes
+   are checked first: another version of the file is left as it is, and says so. */
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+void hos_log(const char *fmt, ...);
+uint32_t hos_output_size(int height);   /* nn_applet.c */
+
+#define KIRBY_SCN_TABLE 0x97ca0
+#define KIRBY_SCN_LEVELS 6
+/* (index, width, height) of each docked level, as the game ships them */
+static const uint32_t kirby_scn_levels[KIRBY_SCN_LEVELS * 3] = {
+    0, 2560, 1440, 1, 2240, 1260, 2, 1862, 1048, 3, 1536, 864, 4, 1280, 720, 5, 854, 480,
+};
+
+/* The read of [off, off + n) of a file the game opened as guest, now in buf: the table rewritten in it when it is
+   there whole. Returns 1 when the sizes were changed. */
+int kirby_scn_patch(const char *guest, int64_t off, uint8_t *buf, uint64_t n, uint32_t out_w, uint32_t out_h, int fixed) {
+    static const char name[] = "/basil/ScnCommon.bin";
+    const size_t len = guest ? strlen(guest) : 0, tail = sizeof name - 1;
+    if (len < tail || strcmp(guest + len - tail, name)) return 0;
+    const int64_t at = KIRBY_SCN_TABLE - off;
+    if (at < 0 || (uint64_t)at + sizeof kirby_scn_levels > n) return 0;   /* (not this read, or not all of it in it) */
+    uint32_t v[KIRBY_SCN_LEVELS * 3];
+    memcpy(v, buf + at, sizeof v);
+    if (memcmp(v, kirby_scn_levels, sizeof v)) {
+        hos_log("kirby: %s: the frame sizes at %#x are not the ones known: left as they are", guest, KIRBY_SCN_TABLE);
+        return 0;
+    }
+    const int bigger = (uint64_t)out_w * 9 == (uint64_t)out_h * 16 && out_w > 2560 && out_w <= 3840;
+    if (!bigger && !fixed) return 0;
+    for (int k = 0; k < KIRBY_SCN_LEVELS; k++) {
+        const int from = fixed ? 0 : k;
+        const uint32_t w = kirby_scn_levels[from * 3 + 1], h = kirby_scn_levels[from * 3 + 2];
+        v[k * 3 + 1] = bigger ? (uint32_t)((uint64_t)w * out_w / 2560) & ~1u : w;
+        v[k * 3 + 2] = bigger ? (uint32_t)((uint64_t)h * out_h / 1440) & ~1u : h;
+    }
+    memcpy(buf + at, v, sizeof v);
+    hos_log("kirby: 3D frame %ux%u down to %ux%u%s", v[1], v[2], v[KIRBY_SCN_LEVELS * 3 - 2], v[KIRBY_SCN_LEVELS * 3 - 1],
+            fixed ? " (fixed: HOS_DYNAMIC_RES=0)" : "");
+    return 1;
+}
+
+/* nn_fs.c's read, for each file read: the output size and HOS_DYNAMIC_RES asked only for the one file */
+void kirby_read_done(const char *guest, int64_t off, uint8_t *buf, uint64_t n) {
+    if (!guest || !strstr(guest, "ScnCommon")) return;
+    const char *e = getenv("HOS_DYNAMIC_RES");
+    kirby_scn_patch(guest, off, buf, n, hos_output_size(0), hos_output_size(1), e && !atoi(e));
+}

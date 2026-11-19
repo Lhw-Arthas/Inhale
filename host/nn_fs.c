@@ -480,6 +480,10 @@ static uint64_t read_at(Ctx *c, uint64_t id, int64_t off, uint64_t buf, uint64_t
         if (!ReadFile(fh->h, GP(buf + done), chunk, &got, &ov) || !got) break;
         done += got;
     }
+    {   /* (inhale) the dynamic resolution's frame sizes at the output's: host/kirby_res.c */
+        void kirby_read_done(const char *guest, int64_t off, uint8_t *buf, uint64_t n);
+        kirby_read_done(fh->path, off, (uint8_t *)GP(buf), done);
+    }
     if (away) hos_vcore_back();
     HOS_WRITTEN(GP(buf), (size_t)done);   /* (into guest memory: the GPU may read it) */
     {   /* HOS_FS_WATCH=<lo hex>:<hi hex> (debugging): reads into that guest range, with the file */
