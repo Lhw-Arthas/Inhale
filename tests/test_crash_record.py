@@ -134,6 +134,7 @@ def build(cc, temp, glue, threads, main):
                                block(threads, "static void hos_vlog("), block(threads, "void hos_log("),
                                block(threads, "void hos_log_at("))),
         "HOS_FATAL": block(threads, "void hos_fatal("),
+        "A64_ON_TRAP": block(threads, "void a64_on_trap("),   # (inhale) the trap's note, host/kirby_trap_note.c
         "CLOSE_FINISH": block((ROOT / "host/hos_relaunch.c").read_text(encoding="utf-8"), "void hos_close_finish("),
         "CONTROL_QUIT": block((ROOT / "host/control.c").read_text(encoding="utf-8"), "static void game_quit("),
         "WINDOW_EXIT": block((ROOT / "host/hos_relaunch.c").read_text(encoding="utf-8"), "void hos_window_closed_exit("),
@@ -148,7 +149,8 @@ def build(cc, temp, glue, threads, main):
     src, exe = temp / "fixture.c", temp / "fixture.exe"
     src.write_text(template, encoding="utf-8")
     cmd = [cc, "-std=gnu11", "-O1", "-fno-omit-frame-pointer", "-Wall", "-Wextra", "-Werror",
-           "-I", str(ROOT / "host"), str(src), str(ROOT / "host/hos_report_run.c"), "-o", str(exe)]
+           "-I", str(ROOT / "host"), str(src), str(ROOT / "host/hos_report_run.c"),
+           str(ROOT / "host/kirby_trap_note.c"), "-o", str(exe)]   # (inhale) the trap's note
     if os.name == "nt":
         cmd += ["-ldbghelp", "-ladvapi32"]
     else:
@@ -219,13 +221,18 @@ def main():
             print("PASS: module offsets equal dladdr load-base offsets; gapped segments, same basenames and repeated mappings covered")
 
         device_modes = ("device-lost", "device-early", "device-lost-tagged", "device-early-tagged")
-        for mode in ("fake", "partial", "privacy", "namespace", "bounds", "fatal", *device_modes, "crash", "signal", "abort", "heap"):
+        # (inhale) a trap from the lifted code: the record keeps its address and a fixed label for its kind, never the text
+        traps = {"trap": "indirect jump", "trap-svc": "svc", "trap-other": "other"}
+        for mode in ("fake", "partial", "privacy", "namespace", "bounds", "fatal", *traps, *device_modes, "crash", "signal", "abort", "heap"):
             folder = temp / mode; folder.mkdir()
-            result = run(folder, mode, 3 if mode == "fatal" or mode in device_modes else None if mode in ("crash", "signal", "abort", "heap") else 0)
+            result = run(folder, mode, 3 if mode == "fatal" or mode in traps or mode in device_modes else None if mode in ("crash", "signal", "abort", "heap") else 0)
             paths = records(folder); assert len(paths) == 1, (mode, paths)
             text, values = checked_record(paths[0])
             assert "[hos host] run_id: " + values["run_id"] + "\n" in result.stderr
             assert values["dump"] == "off"
+            assert values.get("guest_trap") == ("0xff000498 " + traps[mode] if mode in traps else None), (mode, text)
+            if mode in traps:
+                assert values["reason"] == "hos_fatal" and "at 0xff000498 (insn 00000000)" in result.stderr
             if mode == "bounds":
                 assert values["thread"] == "unknown" and values["module_offset"] == "unknown"
                 assert "guest_register:" not in text

@@ -388,6 +388,10 @@ void hos_fatal(Ctx *c, const char *fmt, ...) {
 
 /* Traps from the lifted code (rt/a64_rt.c): name the thread, then stop. */
 void a64_on_trap(Ctx *c, uint64_t pc, uint32_t insn, const char *why) {
+    /* (inhale) the crash record keeps the address and the kind, which hos_fatal's fixed reason leaves out: a report can
+       come without a log (host/kirby_trap_note.c) */
+    void kirby_trap_note(uint64_t pc, const char *why);
+    kirby_trap_note(pc, why);
     hos_fatal(c, "%s at %#llx (insn %08x)", why, (unsigned long long)pc, insn);
 }
 

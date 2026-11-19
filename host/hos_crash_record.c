@@ -463,6 +463,12 @@ static void format_record(Text *b, const Session *s, const HosCrashContext *c, u
             c->fault_address >= c->guest_base && c->fault_address - c->guest_base < c->guest_size ? "guest window" : "other";
         field(b, "fault_address_class", address_class);
         host_stack(b, c); guest_stack(b, c);
+        /* (inhale) a trap from the lifted code: its address and a fixed label for its kind, as the reason says "hos_fatal"
+           alone (host/kirby_trap_note.c). The process's first trap, so a record another thread's fault won has it too */
+        const char *kirby_trap_noted(uint64_t *pc);
+        uint64_t trap_pc = 0;
+        const char *trap_label = kirby_trap_noted(&trap_pc);
+        if (trap_label) { put(b, "guest_trap: 0x"); number(b, trap_pc, 16); put(b, " "); put(b, trap_label); put(b, "\n"); }
     } else {
         field(b, "crash_handler", "not observed");
         field(b, "termination_note", "ended from outside or lost power, not necessarily a crash");

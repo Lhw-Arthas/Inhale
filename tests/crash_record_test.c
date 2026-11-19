@@ -146,6 +146,7 @@ void hos_hostcall_stats(void) {}
 static size_t hos_log_redact(char *out, size_t cap, const char *line) { snprintf(out, cap, "%s", line); return strlen(out); }
 /* HOS_LOG */
 /* HOS_FATAL */
+/* A64_ON_TRAP */
 void rx_close_asked(void) {}
 void hos_fs_wait_writes(void) {}
 /* CLOSE_FINISH */
@@ -262,6 +263,12 @@ int main(int argc, char **argv) {
     }
     if (!strcmp(mode, "game-return")) { game_thread(NULL); return 90; }
     if (!strcmp(mode, "fatal")) { hos_fatal(NULL, "private-user /home/private-user secret"); return 90; }
+    if (!strncmp(mode, "trap", 4)) {   /* (inhale) a trap from the lifted code, as rt/a64_rt.c reports one: host/kirby_trap_note.c */
+        a64_on_trap(&guest_context, 0xff000498u, 0, !strcmp(mode, "trap-svc") ? "svc #0x7" :
+                    !strcmp(mode, "trap-other") ? "private-user /home/private-user secret" :
+                    "indirect jump to an address with no function");
+        return 90;
+    }
     if (!strcmp(mode, "device-lost-tagged") || !strcmp(mode, "device-early-tagged")) {
         if (!strcmp(mode, "device-early-tagged"))
             hos_log_at(HOS_LOG_WARN, "%s", "vk: device lost: reading the checkpoints");

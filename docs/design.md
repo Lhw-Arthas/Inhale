@@ -1351,3 +1351,48 @@ Also seen and not explained: a script of the game switches a player's rumble off
 every frame) about 2.3 s after the last scripted press, in both walks (presents 4218 and 8122), and on again at the
 stage's start. If it follows the pad's activity that is the game's own rule; if it follows something this runtime
 reports about the pad, it is a second cause.
+
+### 2026-11-20: issue #4, a crash to desktop in play (not explained), and the record's `guest_trap`
+
+The report: v0.1.1 (`ff044b2a`, the release build) on Windows 10, a Ryzen 3 3200G with its own graphics (4 threads,
+the weakest PC this has run on), every setting at its default, closed after 412 s of play. One crash record and the
+crash window's report; no log (the game logged to no file).
+
+What the record says. `reason: hos_fatal` on `Thread_8091ce68`, one of the game's seven job workers, with the host
+frames `hos_fatal`, `a64_on_trap` (`host/hos_thread.c`), `site_call` (`third_party/a64-kit/rt/a64_rt.c`): a trap of
+an indirect branch, to an address with no function. The guest's `lr` 0x80683f38 is in main+0x663ee0 (`f_80683ee0`),
+which is the game's `free`:
+
+- it takes the calling thread's current allocator from thread-local storage (`f_8091d0c0`) and calls that one's
+  virtual at +80 (slot 10) with the block (`x1` = `x19` = 0x7883eebc00 in the record);
+- the allocator here is the game's static default one at 0x82c1fb50: member +352 of the static at 0x82c1f9f0, which
+  `f_80681ba0` builds, vtable 0x82bbd520;
+- that vtable's slot 10 is `f_8088b848`, a thunk with no frame: the override allocator at +16 if there is one, else
+  the base at +8, and a `br` to that one's slot 10.
+
+At the stop `x8` is 0x7ad3071000 and `x2` 0xff000498: a vtable read from heap data, and a target in it that is no
+code. So an allocator object that a worker's `free` reached was not an allocator: freed, written over, or not built
+yet.
+
+Not known: which object was bad (`x0` is still 0x82c1fb50 at the stop, which the thunk as lifted does not leave so;
+the static's vtable may not be the one `f_80681ba0` stores), where in the game it happened, and whether the builds
+since v0.1.1 still do it. None of the 12 commits since is aimed at it; the third sync changed `host/nn_os_sync.c`,
+`host/hos_thread.c` and the lifter (registers as locals), which can move a race's timing and is no evidence that it
+is gone. Not reproduced here, and no fix: the record does not name the cause. Asked of the reporter: the place, how
+the game is started (no log file), and a run of the nightly. Worth trying once the place is known: four cores pinned
+and a session played by hand.
+
+The stutter of the same report is issue #1's and #3's: v0.1.1 compiles each pipeline when it is first drawn, and the
+builds since prepare the shipped lists before the title.
+
+What changed: the crash record now keeps a trap. Its `reason` is a fixed label, never the formatted message
+(`host/hos_crash_record.h`), so the trap's text ("indirect jump to an address with no function at 0x...") was in the
+log alone, and this report had none. `a64_on_trap` now notes the address and the kind (`host/kirby_trap_note.c`), and
+the record has one more line after the guest's backtrace:
+
+    guest_trap: 0xff000498 indirect jump
+
+The kind is one of `trap`, `branch to a non-function`, `indirect call`, `indirect jump`, `svc` and `other`, never the
+runtime's text (an svc's has a number formatted into it, and a text this does not know becomes `other`). A fatal that
+is no trap has no such line. `tests/test_crash_record.py` holds it with three trapping children. Not checked: the
+Windows build's record (the test and the game ran on Linux).
