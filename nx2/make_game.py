@@ -2040,8 +2040,15 @@ def shader_census_cmd(romfs, out):
     return PY + [os.path.join(HERE, "shader_census.py"), long_path(romfs), "--out", out]
 
 
+def kirby_shaders_cmd(romfs, exefs, image, out):
+    """(inhale) This game's shader list (nx2/kirby_shaders.py), from its data title's romfs and its executable's image, as the same
+    interpreter as shader_census_cmd"""
+    return PY + [os.path.join(HERE, "kirby_shaders.py"), long_path(romfs), "--exefs", exefs, "--image", image, "--out", out]
+
+
 SHADER_LIST_NOTE = "shader_list.txt"   # (in <work>: what the game folder's inhale_shaders.bin was made from)
 CENSUS_READS = ("Shader", "Layout2Shader", "Lib", "Movie", "Effect", os.path.join("Pack", "ZsDic.pack.zs"))   # (shader_census.py)
+CENSUS_READS += ("gfx", "lyt", "ptcl", "shader", "ndsr")   # (inhale) and this game's data romfs: kirby_shaders.py READS
 
 
 def shader_list_key(romfs):
@@ -2049,6 +2056,9 @@ def shader_list_key(romfs):
     names, sizes and times)"""
     h = hashlib.sha1(sys.version.encode(), usedforsecurity=False)
     with open(os.path.join(HERE, "shader_census.py"), "rb") as f:
+        h.update(f.read())
+    # (inhale) and this game's census, which reads it. Its other input, the executable's image, is the one build make_game takes
+    with open(os.path.join(HERE, "kirby_shaders.py"), "rb") as f:
         h.update(f.read())
     for top in CENSUS_READS:
         p = os.path.join(romfs, top)
@@ -3216,12 +3226,17 @@ def main(a=None):
     # every shader of the game, for its first start to translate (gpu/vk/vk_shader.cpp seed_open). Without it the game still runs, compiling them
     # as it meets them: not worth stopping a finished build for
     # (made again only when the game's shader files, the census or the list itself changed: 4 s and 514 MB written at every update)
-    if shader_list_current(work, romfs, os.path.join(out, "inhale_shaders.bin")):
+    # (inhale) this game's shaders are in its data title and its executable, which upstream's census does not read (it stopped on
+    # the other game's Pack/ZsDic.pack.zs): kirby_shaders.py makes the same list from them
+    census_romfs = data_romfs(romfs, aoc)
+    if shader_list_current(work, census_romfs, os.path.join(out, "inhale_shaders.bin")):
         print("the shader list is the one the last build made from the same files: not made again", flush=True)
-    elif run(shader_census_cmd(romfs, os.path.join(out, "inhale_shaders.bin")), check=False, output=sys.stderr):
+    elif run(kirby_shaders_cmd(census_romfs, exefs, os.path.join(out, "image.bin"), os.path.join(out, "inhale_shaders.bin"))
+             if census_romfs != romfs else shader_census_cmd(romfs, os.path.join(out, "inhale_shaders.bin")),
+             check=False, output=sys.stderr):
         print("the shader list was not made: the game will compile its shaders as it plays", flush=True)
     else:
-        note_shader_list(work, romfs, os.path.join(out, "inhale_shaders.bin"))
+        note_shader_list(work, census_romfs, os.path.join(out, "inhale_shaders.bin"))
     PHASES.part("shader list")
     icon = os.path.join(ROOT, "assets", "inhale.png")
     if LINUX and not game_title.write_png(out, os.path.join(out, "inhale.png")) and os.path.exists(icon):   # (the window's icon: host/posix/display_sdl.c; the game's own when its .nup had one)
