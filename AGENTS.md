@@ -54,7 +54,13 @@ line of an imported file that differs here can meet a change of Longshot's and c
   (`python -I scripts/check_third_party.py`); a fix goes outside them, not into them.
 - **Paths are UTF-8.** Keep host code portable (Longshot builds it for Windows too) and paths UTF-8 (no `CP_ACP`;
   `tests/test_utf8_paths.py`).
-- **No CI, and no game in the checks.** Nothing runs the checks for you: run `python -I -B tests/run_all.py` yourself
-  and say what it printed. Compare a failure with the tree before your change before you call it yours. The checks
-  run without the game; a run in the game is yours to do and report.
+- **CI runs after the push, and no game in the checks.** `.github/workflows/ci.yml` runs `tests/run_all.py --strict`,
+  the `third_party/` check and the rename on every push to `main` and every pull request, on Linux. That is after your
+  change has landed: run `python -I -B tests/run_all.py` yourself first and say what it printed. Compare a failure
+  with the tree before your change before you call it yours. The checks run without the game; a run in the game is
+  yours to do and report.
+- **A skip is not a pass.** A check whose compiler, headers or tool this PC lacks is skipped, and CI has them all, so
+  a run with nothing failed here can still fail there. The Vulkan headers are found only by
+  `INHALE_VULKAN_HEADERS=<folder holding vulkan/vulkan.h>` (not in `/usr/include`); set it, add `--strict`, and read
+  what is still skipped.
 - **Builds go under `work/`**, which git ignores, and never on a RAM file system (`/tmp` is often one).
