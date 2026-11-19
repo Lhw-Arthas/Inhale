@@ -9,14 +9,22 @@
    As the file is read, the six sizes are scaled by the output's width over 2560 where the output is 16:9 and between
    2560 x 1440 and 3840 x 2160 (the largest of the game's own size table, main+0x9aaa70): at 3840 x 2160 they become
    3840 x 2160 down to 1280 x 720. Another output keeps the game's sizes (a 16:10 or 21:9 one: the game's cameras are
-   16:9). HOS_DYNAMIC_RES=0 gives all six levels the first one's size, so the scene never steps down. The table's bytes
-   are checked first: another version of the file is left as it is, and says so. */
+   16:9).
+
+   The steps are off by default: all six levels get the first one's size, so the docked scene never steps down (at the
+   output's size where it is scaled, at 2560 x 1440 at any other output). At 3840 x 2160 the game stepped to 3360 x 1890
+   with an RX 7900 XTX at 2.9 ms of a 16.6 ms frame: the steps cost sharpness on a PC that has no need of them.
+   HOS_DYNAMIC_RES=1 gives the game's steps back. The handheld profile (the menu's Profile row, HOS_HANDHELD) keeps the
+   file as the game ships it, steps and all: it draws from another set of sizes (1920 x 1080 down), but was seen at a
+   docked level's size too, so the fixed size is not given to it. The table's bytes are checked first: another version
+   of the file is left as it is, and says so. */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 void hos_log(const char *fmt, ...);
 uint32_t hos_output_size(int height);   /* nn_applet.c */
+int hos_handheld(void);                 /* nn_applet.c */
 
 #define KIRBY_SCN_TABLE 0x97ca0
 #define KIRBY_SCN_LEVELS 6
@@ -49,13 +57,13 @@ int kirby_scn_patch(const char *guest, int64_t off, uint8_t *buf, uint64_t n, ui
     }
     memcpy(buf + at, v, sizeof v);
     hos_log("kirby: 3D frame %ux%u down to %ux%u%s", v[1], v[2], v[KIRBY_SCN_LEVELS * 3 - 2], v[KIRBY_SCN_LEVELS * 3 - 1],
-            fixed ? " (fixed: HOS_DYNAMIC_RES=0)" : "");
+            fixed ? " (fixed: HOS_DYNAMIC_RES=1 for the game's steps)" : "");
     return 1;
 }
 
-/* nn_fs.c's read, for each file read: the output size and HOS_DYNAMIC_RES asked only for the one file */
+/* nn_fs.c's read, for each file read: the output size, the profile and HOS_DYNAMIC_RES asked only for the one file */
 void kirby_read_done(const char *guest, int64_t off, uint8_t *buf, uint64_t n) {
     if (!guest || !strstr(guest, "ScnCommon")) return;
     const char *e = getenv("HOS_DYNAMIC_RES");
-    kirby_scn_patch(guest, off, buf, n, hos_output_size(0), hos_output_size(1), e && !atoi(e));
+    kirby_scn_patch(guest, off, buf, n, hos_output_size(0), hos_output_size(1), !hos_handheld() && !(e && atoi(e)));
 }

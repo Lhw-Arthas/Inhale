@@ -191,6 +191,9 @@ also name its method for rule 1 (its measure skill), which is not carried here.
 
 - The 3D frame at the output size (section 9, "issue #1, dynamic resolution") on NVIDIA, on Windows, on a 4K screen,
   and at an output between 2560 x 1440 and 3840 x 2160.
+- The game's dynamic resolution off by default (the same section, "Off by default"): the fixed 2560 x 1440 scene on a
+  weak GPU at a small output (a 1080p monitor), and the handheld profile as that PC's way out, chosen in the menu. Why
+  handheld drew at a docked level's size in one run.
 - What `subsdk0` (CUDA) does after its init: its `DT_INIT` runs, but no `cu*` call has been seen yet.
 - The NVN API version this game's `sdk` expects, and the SDK 19 thread layout beyond a clean start of the game's threads.
 - The first start's shader preparation (section 9, "issue #1"), on another GPU than the RX 7900 XTX: NVIDIA, Windows,
@@ -1115,8 +1118,8 @@ every 300 presents) on S5's walk; the scene's size is the colour grading pass's 
 - The change: `host/kirby_res.c`, called from `nn_fs.c`'s read for each file read (one `(inhale)` block): where the
   bytes read hold the whole table and it is the one known, the six sizes are scaled by the output's width over 2560,
   each side even, when the output is 16:9 and wider than 2560 and at most 3840 (the largest of the game's table). Any
-  other output, file or table is left as read. `HOS_DYNAMIC_RES=0` gives all six levels the first one's size. Test:
-  `tests/test_kirby_res.py`.
+  other output, file or table is left as read. `HOS_DYNAMIC_RES=0` gave all six levels the first one's size: that is
+  the default since ("Off by default" below), and `HOS_DYNAMIC_RES=1` the switch. Test: `tests/test_kirby_res.py`.
 
 | run (S5's walk, RX 7900 XTX) | scene sizes seen | presents a second | GPU time a frame |
 |---|---|---|---|
@@ -1134,6 +1137,43 @@ every 300 presents) on S5's walk; the scene's size is the colour grading pass's 
 - Not checked: NVIDIA, Windows, a 4K screen (the runs are headless at 3840 x 2160), an output between 2560 and 3840
   wide, the handheld set of sizes (left as the game's), whether a heavy scene steps down further on a slower GPU, and
   the UI at 4K against 1440p (the layouts are drawn after the scene, at the output's size).
+
+**Off by default (2026-11-19, the same day).** The steps cost sharpness on a PC that has no need of them: in `a4k` the
+scene dropped to 3360 x 1890 with the GPU at 2.9 ms of a 16.6 ms frame, and nothing here shows that the level follows
+this PC's GPU load (`RX_VK_TS_SCALE` did not move it). So `kirby_read_done` now asks for the fixed size unless
+`HOS_DYNAMIC_RES` is set to a number that is not 0, and never in the handheld profile.
+
+- Docked, a 16:9 output wider than 2560 and at most 3840: the scene at the output's size, always.
+- Docked, any other output (a 1080p monitor, 21:9): the scene at 2560 x 1440, always. Before, it could step down to
+  854 x 480.
+- Handheld (the menu's Profile row after a restart, or `HOS_HANDHELD=1`): the file as the game ships it, so the game's
+  sizes and steps. This is the choice for a PC too slow for the fixed size.
+- `HOS_DYNAMIC_RES=1`: the docked steps back, scaled as above.
+- No menu row: the table is read once at the start, the Render resolution row is hidden for this game, and a row would
+  offer a help that is not measured. One can be added on `kirby_scn_patch`'s `fixed` argument.
+
+| run (S5's walk, RX 7900 XTX, `work/runs/i1/`) | scene sizes seen | presents a second |
+|---|---|---|
+| 4K output, default (`d4k`) | 3840 x 2160 only | 60.0 |
+| 4K output, `HOS_DYNAMIC_RES=1` (`d4k_steps`) | 3840 x 2160, 3360 x 1890, 2792 x 1572 | 60.0 |
+| 2560 x 1440 output, default (`d1440`) | 2560 x 1440 only | 60.0 |
+| handheld, default (`hh_after`) | 1920 x 1080, 1600 x 900 | 60.0 |
+
+- Handheld was looked at first, since the patch was taken to reach the six docked levels only. It does not hold. With
+  the docked table fixed (`HOS_HANDHELD=1`, 1920 x 1080 output), the scene drew at 1920 x 1080 only in one run
+  (`hh_before`, the tree before, `HOS_DYNAMIC_RES=0`), at 1600 x 900 and then 1920 x 1080 in two (`hh2`, `hh3`), and in
+  one at 2560 x 1440 for the first 600 presents (the title screen) and 1920 x 1080 after: a docked level's size in
+  handheld, larger than its output. That run's log was written over by `hh_after`. With the game's own table
+  (`hh_steps`, `hh_steps2`, `hh_after`) handheld showed 1920 x 1080, 1600 x 900 and 1280 x 720, so its set does step
+  here, and no docked size in those three runs. Hence the profile is asked (`hos_handheld`, one `(inhale)` line in
+  `nn_applet.c`) and the file left as read in handheld, where no `kirby:` line is logged.
+- `tests/test_kirby_res.py` failed on the tree before at the unset case, and fails at the handheld case with the
+  profile not asked. `tests/run_all.py --strict` with `INHALE_VULKAN_HEADERS` and `INHALE_SPIRV_HEADERS` set: 674
+  passed, 0 failed, 10 skipped (Windows, a Vulkan 1.3 device, Unicorn). `scripts/rename_full.py` 0 places,
+  `scripts/check_third_party.py` 14 parts.
+- Not checked: why handheld drew at a docked size in that one run, and whether it does with the game's own table (a
+  level below the first then); a weak GPU, where the fixed 2560 x 1440 at a small output costs most; a window; NVIDIA;
+  Windows; the Profile row changed in the menu (the runs set `HOS_HANDHELD`).
 
 ### 2026-11-19: issue #1, the depth-of-field switch
 

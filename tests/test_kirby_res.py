@@ -1,8 +1,9 @@
 """Game-free test of host/kirby_res.c: the dynamic resolution's six docked frame sizes in basil/ScnCommon.bin, scaled to a
 16:9 output between 2560 x 1440 and 3840 x 2160 as the file is read, and left alone for another output, another file, a
-read that does not hold the whole table, or a table that is not the one known. HOS_DYNAMIC_RES=0's fixed size. The sizes
-in the fixture are the game's level sizes (numbers, no game data). And nn_fs.c's read calls it before the bytes are
-marked written.
+read that does not hold the whole table, or a table that is not the one known. The fixed size, every level the first
+one's, and kirby_read_done's choice of it: fixed unless HOS_DYNAMIC_RES is set to a number that is not 0 (the game's
+steps are off by default), and never in the handheld profile, which keeps the file as read. The sizes in the fixture
+are the game's level sizes (numbers, no game data). And nn_fs.c's read calls it before the bytes are marked written.
 
     python -I tests/test_kirby_res.py --cxx clang++
 """
@@ -19,15 +20,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # (python -I leaves t
 from srccut import block
 
 FIXTURE = r'''
+#define _POSIX_C_SOURCE 200112L   /* (setenv, unsetenv under -std=c11) */
 #include <assert.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 void hos_log(const char *fmt, ...) { va_list ap; va_start(ap, fmt); vprintf(fmt, ap); va_end(ap); printf("\n"); }
-uint32_t hos_output_size(int height) { return height ? 2160 : 3840; }
+static uint32_t out_w = 3840, out_h = 2160;
+static int handheld;
+uint32_t hos_output_size(int height) { return height ? out_h : out_w; }
+int hos_handheld(void) { return handheld; }
 int kirby_scn_patch(const char *guest, int64_t off, uint8_t *buf, uint64_t n, uint32_t out_w, uint32_t out_h, int fixed);
+void kirby_read_done(const char *guest, int64_t off, uint8_t *buf, uint64_t n);
 
 static const uint32_t game[18] = {0, 2560, 1440, 1, 2240, 1260, 2, 1862, 1048, 3, 1536, 864, 4, 1280, 720, 5, 854, 480};
 static uint8_t file[0x98000];
@@ -65,13 +72,36 @@ int main(void) {
     fresh();
     file[0x97ca0 + 4 * 7] ^= 1;
     assert(kirby_scn_patch(path, 0, file, sizeof file, 3840, 2160, 0) == 0 && at(7) == (1862 ^ 1) && at(1) == 2560);
-    /* HOS_DYNAMIC_RES=0: every level the first one's size, at the output's or at the game's */
+    /* fixed: every level the first one's size, at the output's or at the game's */
     fresh();
     assert(kirby_scn_patch(path, 0, file, sizeof file, 3840, 2160, 1) == 1);
     for (int k = 0; k < 6; k++) assert(at(3 * k) == (uint32_t)k && at(3 * k + 1) == 3840 && at(3 * k + 2) == 2160);
     fresh();
     assert(kirby_scn_patch(path, 0, file, sizeof file, 1920, 1080, 1) == 1);
     for (int k = 0; k < 6; k++) assert(at(3 * k + 1) == 2560 && at(3 * k + 2) == 1440);
+    /* the read's own choice (the output here is 3840 x 2160): fixed with HOS_DYNAMIC_RES unset or 0, the game's steps
+       with 1 */
+    unsetenv("HOS_DYNAMIC_RES");
+    fresh();
+    kirby_read_done(path, 0, file, sizeof file);
+    for (int k = 0; k < 6; k++) assert(at(3 * k) == (uint32_t)k && at(3 * k + 1) == 3840 && at(3 * k + 2) == 2160);
+    setenv("HOS_DYNAMIC_RES", "0", 1);
+    fresh();
+    kirby_read_done(path, 0, file, sizeof file);
+    for (int k = 0; k < 6; k++) assert(at(3 * k + 1) == 3840 && at(3 * k + 2) == 2160);
+    setenv("HOS_DYNAMIC_RES", "1", 1);
+    fresh();
+    kirby_read_done(path, 0, file, sizeof file);
+    for (int k = 0; k < 18; k++) assert(at(k) == want[k]);
+    /* the handheld profile (its output is 1920 x 1080): the file as read, HOS_DYNAMIC_RES unset or 0 */
+    handheld = 1, out_w = 1920, out_h = 1080;
+    unsetenv("HOS_DYNAMIC_RES");
+    fresh();
+    kirby_read_done(path, 0, file, sizeof file);
+    assert(same());
+    setenv("HOS_DYNAMIC_RES", "0", 1);
+    kirby_read_done(path, 0, file, sizeof file);
+    assert(same());
     puts("ok");
     return 0;
 }
