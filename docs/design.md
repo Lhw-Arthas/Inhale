@@ -191,7 +191,9 @@ also name its method for rule 1 (its measure skill), which is not carried here.
 
 - What `subsdk0` (CUDA) does after its init: its `DT_INIT` runs, but no `cu*` call has been seen yet.
 - The NVN API version this game's `sdk` expects, and the SDK 19 thread layout beyond a clean start of the game's threads.
-- The shader container type: the three `.bfsha` files looked at carry neither `Nin_NX_NVN` nor `Nin_Ounce_NVN2`.
+- The first start's shader preparation (section 9, "issue #1"), on another GPU than the RX 7900 XTX: NVIDIA, Windows,
+  and the issue's RTX 5080 at 4K. How many of a player's pipelines the shipped lists hold at other settings than the two
+  lists' (the blend state and vertex strides differ, not the shaders).
 - Why the presents sometimes drop to 7 a second while the movie player starts (S4, section 9): seen twice, not explained.
 - One of three runs sampled with `HOS_SAMPLE_ALL` (`work/runs/s5x/c4.txt`) fell below 6 presents a second at the first zone
   change and stayed there; no unsampled run did. The sampler unwinds inside a signal handler: suspected, not proven.
@@ -276,6 +278,11 @@ Everything downloaded is in `packaging/pins.txt` (name, version, system, URL, SH
 Python 3.12.16, FFmpeg 9.0.2, dav1d 1.5.4, SDL 2.32.10 / 3.4.20 / sdl2-compat 2.32.74, Vulkan-Headers v1.4.345,
 SPIRV-Headers vulkan-sdk-1.4.341.0, VMA v3.3.0). The window (`packaging/gui/inhale_builder.py`) runs
 `python -I nx2/make_game.py` and reads its `@@` lines (`packaging/gui/protocol.py`); nothing in `nx2/` changed for it.
+
+The shipped pipeline state lists (`assets/pipeline_states/`, section 9, "issue #1") are in both packages' sources
+(`assets` in the `git ls-files` line of `packaging/linux/appimage.sh` and `packaging/windows/build.sh`; the
+uninstaller removes `$INSTDIR\assets`), where `make_game.py` `ship_state_list` reads them; `tests/test_packaging_scripts.py`
+checks both scripts.
 
 The hot list (section 9, S6: CPU time 10% less) is tracked as `packaging/profiles/hot_funcs.txt`, 301 function names,
 and both packages put it in their `work/`, where `make_game.py` takes it; CI's packages have it too. The profiles
@@ -938,8 +945,9 @@ The first stage was played in a window, with sound, from `work/game/inhale`.
   and the uninstall key.
 - Cancel: the runner's `kill()` during the compile took the build's session from 25 processes to 0 (Linux). The
   Windows path (`taskkill /T`) was not tried.
-- Both builds print a traceback from `nx2/shader_census.py`, which reads `romfs/Pack/ZsDic.pack.zs` (the other game's
-  file), then "the shader list was not made". It is make_game's own and the build goes on. Not looked into.
+- Both builds printed a traceback from `nx2/shader_census.py`, which reads `romfs/Pack/ZsDic.pack.zs` (the other game's
+  file), then "the shader list was not made". Gone: this game's list is `nx2/kirby_shaders.py`'s now (section 9,
+  "issue #1").
 - Played by hand (the user): the AppImage's window, a build into the default `~/Games/Inhale`, Play: the game works.
 - The release workflow (run 44315474239, from a branch with a commit adding it to the push trigger, dropped after):
   the three jobs passed, and the `nightly` prerelease got `Inhale-x86_64.AppImage` (245 MB), `Inhale-Setup-x64.exe`
@@ -978,3 +986,58 @@ the changes. `tests/run_all.py`: 561 passed, 0 failed, 79 skipped.
   files` to `1.000 Done`, and the known `shader_census.py` traceback (section 9, the release packages) on stderr.
   `--play work/rl/out` ran at 60.0 presents a second at 30 s. No picture was looked at.
 - Not tried: RecompLauncher itself, and the zip on Windows.
+
+### 2026-11-19: issue #1, the stutter of a first visit
+
+Issue #1 (an RTX 5080 at 4K): "constant microstutters" in the first level, 60 presents a second otherwise. The cause was
+the first visit's shader and pipeline compiles. This game sets `RX_VK_PIPE_SKIP=0` (S5: every draw waits for its
+pipeline), and a first start had nothing to build ahead of time: no shader list (the census was upstream's and stopped,
+section 9, "the release packages") and no shipped pipeline list. A warm folder does not stutter (the user's install: 374
+of 412 log windows at 0.00 waits a frame).
+
+Where the game keeps its shaders. The code title's romfs is empty, and the files are in the data title
+(`aoc/01004d300c5af001/romfs`). A `.cmp` is a u32 size, then an LZ4 frame. Every stage is a BNSH as upstream's game has
+them: the control section (magic `34 12 76 98`, 0xd8 bytes) and the code area it sizes, one program per variation (slot 8
+vertex, 40 fragment, 48 compute, 32 an NVN stage 2). `shader_census.py`'s `bnsh_all` reads them unchanged:
+
+- `gfx/**/*.bfres.cmp`: the models, a BNSH for each material shader, 44522 programs;
+- `ptcl/**/*.ptcl.cmp`: 8638 programs; `lyt/**/*.arc.cmp` (SARCs, some files in them `.cmp` again): 970;
+  `shader/**/*.bfsha` (an FSHA with a BNSH at 0x1000 or 0x2000): 46;
+- `ndsr/lower_left.ndsr`: an NDSR in another layout than upstream's (u16 +0x0e the item count, items from +0x10;
+  upstream's: u32 +0x0c, from +0x14), with the same item types: 3 graphics programs, 30 compute;
+- the executable itself: three BNSHs in `main` (the layouts' common programs, 55 not found elsewhere), read from the
+  folder's `image.bin`. No file holds them: the layout archives carry near copies that differ in the control section's
+  hash at +0x20 and in the code.
+
+`nx2/kirby_shaders.py` walks these and writes `HKSEED01` (`inhale_shaders.bin`): 54264 programs from 66064 stages,
+544 MB, 10-14 s. It runs only for main's build 395fc326. `make_game.py` runs it instead of `shader_census.py` when the
+data is a data title's (`data_romfs`), and the "not made again" key covers it and its folders (`CENSUS_READS`).
+Coverage: all 636 stages a cold walk dumped (`RX_VK_DUMP_STAGES`), and 5041 of the 5045 stage keys in the user's play
+list (past the first boss). `assets/pipeline_states/contrib/` ships two lists: the user's play (9778 pipelines, v0.1.1)
+and the walk below (899); 10219 merged.
+
+Measured with `work/cold.sh` (a fresh folder, `MESA_SHADER_CACHE_DISABLE=true`, RX 7900 XTX, RADV, Mesa 26.3.1) on S5's
+walk (beach to jungle), `RX_VK_FRAME_TRACE=1`, presents 900 to 4860 (the stage). A development build prepares only with
+`RX_VK_PRECOMPILE=1`; a release does it by default.
+
+| run | pipeline waits | wait ms in all | frames over 20 ms (with waits) | slowest 120 presents |
+|---|---|---|---|---|
+| before (`work/runs/i1/cold0.txt`) | 290 | 832 | 38 (38) | 24.2 ms |
+| the list and the user's play list only (`after_play`) | 210 | 101 | 2 (1) | 19.0 ms |
+| the list and both shipped lists (`after_both`) | 212 | 3.0 | 21 (0) | 19.1 ms |
+
+- The preparation on the first start: 54264 programs translated in 28.5-30 s on 12 workers, then the shipped list's
+  pipelines (9684 and 9732) built into the pipeline cache in 2.9-3.2 s on 16 threads. 262 programs do not translate:
+  30 are a network left out on this card, and 232 use an NVN stage 2 (slot 32) that does not lower ("unsupported native
+  opcode"). Play never drew one of them (no such key in either list).
+- With the user's list only, the zone change still compiled: 145 pipelines in one frame, 100 ms (present 1426). 435 of
+  the 875 pipelines the walk used were not in that list. For 419 of them a record of the same stages was there, with
+  another blend state (316) or vertex strides (252), so another route or other settings add pipelines that a list does
+  not have. The walk's own list is the test route here, so `after_both` measures the release set-up, not how well a
+  list carries over.
+- `after_both`'s 21 slow frames (20-26 ms, one 49 ms) have no pipeline wait, with the game 2-7 ms and the draws about
+  1 ms. They are pacing, not looked into.
+- `make_game.py` into `work/i1/game` makes the same list (byte for byte), ships 10219 pipelines, and prints no
+  traceback. A second build says "not made again" (0 s). `tests/run_all.py`: 562 passed, 0 failed, 79 skipped (before:
+  561, 0, 79).
+- Not checked: NVIDIA, Windows, 4K, the issue's GPU (section 7).
