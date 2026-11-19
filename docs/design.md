@@ -196,6 +196,8 @@ also name its method for rule 1 (its measure skill), which is not carried here.
 - The first start's shader preparation (section 9, "issue #1"), on another GPU than the RX 7900 XTX: NVIDIA, Windows,
   and the issue's RTX 5080 at 4K. How many of a player's pipelines the shipped lists hold at other settings than the two
   lists' (the blend state and vertex strides differ, not the shaders).
+- The depth mode fix (section 9, "the picture that stays wrong until `cache/` is deleted") in a window, on NVIDIA and on
+  Windows, and why deleting `cache/` cured the picture for the reporter.
 - Why the presents sometimes drop to 7 a second while the movie player starts (S4, section 9): seen twice, not explained.
 - One of three runs sampled with `HOS_SAMPLE_ALL` (`work/runs/s5x/c4.txt`) fell below 6 presents a second at the first zone
   change and stayed there; no unsampled run did. The sampler unwinds inside a signal handler: suspected, not proven.
@@ -1202,3 +1204,77 @@ jitter): depth is there; the camera is there, but this frame's only; the jitter 
 own motion vectors, everything that moves on its own (Kirby, enemies, water, particles) gets vectors of the camera's
 motion only: with FSR 3.1 AA, XeSS AA or DLAA that shows as ghosting or smearing behind Kirby. A version without jitter
 (the AA's history only, no sub-pixel offsets) is possible, and anti-aliases far less.
+
+### 2026-11-19: the picture that stays wrong until `cache/` is deleted
+
+The report: a game folder updated from v0.1.1 to main shows the 3D scene blurred at every start (the HUD sharp),
+sometimes with smeared geometry, and deleting `cache/` cures it. The question was which part of the cache has to be
+invalidated, how and when. Answer: none by hand. The programs in the cache were translated for the wrong depth mode,
+and the fix changes the cache's stamp, so the first start of a fixed build drops them by itself.
+
+Cause. The renderer asks the host for NVN's depth mode when it translates a vertex stage (`vk_shader.cpp`,
+`convert_depth_mode = host->depth_minus_w()`), and puts the answer in the program cache's stamp (`translator_stamp`).
+The host started with 1, near = -w (`host/nvn_native.c`, `depth_minus_w`: Longshot's game's mode, so that what is
+prepared before its device exists comes out right). This game calls `nvnDeviceSetDepthMode` with near = 0. A shader
+preparation translates with no game (`--prepare-shaders`, a build's last step) or before the game makes its device (a
+start's own preparation), so each of the shader list's 54264 programs got a vertex stage that converts the depth,
+z' = (z + w) / 2, and play then drew with them. The log said so at every start: `nvn: the depth mode is not the one the
+prepared shaders were made for: their vertex stages draw wrong`. The stamp is read before the game's call, so it
+matched and nothing was dropped.
+
+It came with main, not with v0.1.1's cache: v0.1.1 had no shader list (section 9, "issue #1, the stutter of a first
+visit"), so nothing was prepared and every program was translated in play, after the game had set its mode.
+
+Runs (RX 7900 XTX, RADV, Mesa 26.3.1; headless; the user's save, which starts in Waddle Dee Town; the folders under
+`work/runs/cache1/`, each with the build, the shader list and the shipped pipeline list, `RX_VK_PRECOMPILE=1` as a
+release has it; `run.sh <folder> prepare|play <name>`, shots with `RX_VK_SHOTS`):
+
+| folder | cache | programs made | picture |
+|---|---|---|---|
+| A | v0.1.1's (`work/game/cache`, copied) | `--prepare-shaders`, then play | blurred and dark (`A_p1`) |
+| B | empty | `--prepare-shaders`, then play | the same (`B_p1`) |
+| E | empty | the start's own preparation | the same (`E_p1`) |
+| C | empty, no shader list, nothing prepared | in play | right (`C_p1`) |
+
+- One frame of B and C pass by pass (`RX_VK_DUMP=2000`, `B_d1.txt`, `C_d1.txt`): the depth differs from the first
+  depth pass on, and B's is 0.5 + C's / 2 everywhere. The scene's depth has a maximum of 0.5061 in B against 0.0122 in
+  C, the shadow map 0.7358 against 0.4717. Every pass that reads depth then goes wrong: the depth of field takes the
+  whole scene for far and blurs it all, and the lighting comes out dark. With Depth of field Off the blur goes and the
+  rest stays, which is how the row looked like a cause.
+- Two suspects that are not it. The player's pipeline state list (`inhale_pipeline_states.bin`, which survives an
+  update unstamped): B and E have none and are as wrong as A. The storage buffer pass's pointer answers
+  (`IsCbufStorageBufferPointer`, answered from bound buffers, so "no" for everything before the game): with
+  `RX_VK_PTR_DIAG=1` the 183 programs C's play translated have the same counts of bound and searched accesses as the
+  same keys in a preparation (`C_p1.txt`, `D_prep.txt`).
+
+Fix. `nvn_depth_minus_w` answers the game's own mode until the game sets one: 1 for Longshot's game (by its build id),
+0 otherwise. `tests/test_depth_mode_start.py` cuts the three pieces out of `host/nvn_native.c` and checks both games,
+the report of a mode that differs, and a call made before anything asked. Before the fix it fails with "the mode before
+the game sets one is not the game's".
+
+After it, with the same folders:
+
+- E, whose cache the build before the fix had prepared: `pipeline cache: 4 files made for another translator dropped`,
+  `program cache ...: 0 program keys kept`, the preparation again (33.7 s), no depth mode line, and the picture is C's
+  (`E_fix1`).
+- A from v0.1.1's cache again, state list kept: `--prepare-shaders` (`A_fixprep.txt`: 20345 pipelines, 180 variants by
+  their textures), then three starts, with Depth of field On, Off (`depth_of_field=0`) and On again: right each time,
+  86404 program keys kept, no depth mode line (`A_fix1`, `A_fix2_dofoff`, `A_fix3_dofon`).
+- So an install needs nothing done to it: the stamp holds the mode, and a cache made for mode 1 is another
+  translator's to the fixed build. That costs one preparation, and it also drops the right programs a v0.1.1 folder
+  made in play, since their file carries the same stamp.
+- `tests/run_all.py`: 604 passed, 0 failed, 80 skipped. `scripts/rename_full.py`: nothing to rename.
+  `scripts/check_third_party.py`: 14 parts as their notes say.
+
+Not explained: why deleting `cache/` cured it for the reporter. Here a start that prepares by itself (E) was as wrong
+as the build's preparation. Programs translated in play are right (C), so a start whose preparation was skipped or
+stopped would give the right picture; that was not tried.
+
+Not checked: a window (all runs headless), NVIDIA, Windows, 4K, the Depth of field row changed in the menu while
+playing (the option file was edited between starts), the smeared geometry of the second screenshot (not seen in these
+runs; a wrong depth in every vertex stage is a likely cause, not a shown one), and the AMD Anti-Lag 2 row (nothing of
+it is kept on disk or read by the translator).
+
+For Longshot, which has the same path: the mode the host starts with is one game's, and a game that asks for the other
+gets every prepared program wrong with only a log line to show for it. The stamp cannot catch it, because it is read
+before the game's call. A game folder could keep the mode the game last set, or the preparation could wait for it.

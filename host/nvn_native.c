@@ -175,10 +175,20 @@ int nvn_gpu_write(uint64_t gpu, const void *src, uint64_t n) {
 }
 
 /* ---- device ---- */
-static volatile LONG depth_minus_w = 1;   /* (OoT's mode from the start: the shaders prepared before the game made its device were
+static volatile LONG depth_minus_w = -1;  /* (OoT's mode from the start: the shaders prepared before the game made its device were
                                             translated without the depth conversion, and the menu's text and logo fell outside the depth range
                                             on a first start. d3zessete, Inhale PR 54) */
-int nvn_depth_minus_w(void) { return depth_minus_w != 0; }
+/* (inhale) -1 above: no mode yet. The first to ask gets the game's own: 1 (near = -w) for upstream's game, as upstream starts
+   with for every game, and 0 for this one, which asks for near = 0 (nvnDeviceSetDepthMode at its start). A shader preparation
+   translates with no game, or before the game makes its device, so with upstream's 1 every prepared vertex stage of this game
+   converted a depth that needed none (z' = (z + w) / 2): the scene's depth in 0.5..1, the depth of field at full strength over
+   the whole picture, at every start until cache/ was deleted and the programs were made in play (docs/design.md, "the picture
+   that stays wrong until cache/ is deleted"; tests/test_depth_mode_start.py). */
+static LONG depth_mode_now(void) {
+    InterlockedCompareExchange(&depth_minus_w, hos_game_is_oot() != 0, -1);
+    return depth_minus_w;
+}
+int nvn_depth_minus_w(void) { return depth_mode_now() != 0; }
 /* (inhale) NVN's window origin: the lower left unless the game asks for the upper left (the two games before this one
    did; Kirby never calls nvnDeviceSetWindowOriginMode). The back end reads it at each draw and present (vk_api.h). */
 static volatile LONG origin_upper_left;
@@ -275,6 +285,7 @@ NV(nvnDeviceSetWindowOriginMode) {
 }
 NV(nvnDeviceSetDepthMode) {
     ((nvn_dev *)P(0))->depth_mode = U32(1);
+    depth_mode_now();   /* (inhale) `was` is then a mode, never the -1 of "no mode yet" */
     const LONG was = InterlockedExchange(&depth_minus_w, U32(1) == NVN_DEPTH_MODE_NEAR_IS_MINUS_W);
     hos_log("nvn: depth mode %s", U32(1) == NVN_DEPTH_MODE_NEAR_IS_MINUS_W ? "near = -w (GL)" : "near = 0");
     if (was != (LONG)(depth_minus_w != 0))
