@@ -72,7 +72,7 @@ uint64_t next_handle = 0x1000;
 template <class T> T handle() { return (T)(uintptr_t)(next_handle += 0x10); }
 int made_images = 0, made_pipes = 0;
 bool make_pipe(Pipe& p, const uint32_t*, size_t, std::initializer_list<VkDescriptorType> types, uint32_t push) {
-    CHECK(types.size() == 5 && push == 16);
+    CHECK(types.size() == 5 && push == 20);
     p.pipe = handle<VkPipeline>(), p.layout = handle<VkPipelineLayout>(), p.set = handle<VkDescriptorSetLayout>();
     return ++made_pipes, true;
 }
@@ -92,7 +92,7 @@ void vkCmdCopyImage(VkCommandBuffer, VkImage src, VkImageLayout, VkImage dst, Vk
     copies.push_back({src, dst, c->extent.width, c->extent.height});
 }
 // (the mask pass: its pipeline, its bindings, its push constants)
-struct Pass { VkPipeline pipe; std::vector<VkImageView> views; int32_t pc[4]; uint32_t w, h; };
+struct Pass { VkPipeline pipe; std::vector<VkImageView> views; int32_t pc[5]; uint32_t w, h; };
 std::vector<Pass> passes;
 void pass(VkCommandBuffer, const Pipe& p, std::initializer_list<std::pair<VkImageView, VkSampler>> bindings, uint32_t w,
           uint32_t h, const void* push = nullptr, uint32_t push_bytes = 0) {
@@ -171,7 +171,7 @@ int main() {
     alive.push_back({picture.gpu, &picture});
     uint64_t sequence = 0;
     const auto present = [&](int cur) {
-        hud_source(cmd, cur, 2560, 1440, 0, 0, 2560, 1440);
+        hud_source(cmd, cur, 2560, 1440, 0, 0, 2560, 1440, false);
         CHECK(fsr3fi_frames(cmd, set, cur, 2560, 1440, ++sequence, false, t, slot, 1) == 1);
         return fsr3fi::given;
     };
@@ -197,10 +197,17 @@ int main() {
 
     // (a crop of the picture: the mask's corner in it)
     framegen_hud_before(cmd, &picture, 0);
-    hud_source(cmd, 0, 2560, 1440, 320, 0, 1920, 1440);
+    hud_source(cmd, 0, 2560, 1440, 320, 0, 1920, 1440, false);
     CHECK(fsr3fi_frames(cmd, set, 0, 1920, 1440, ++sequence, false, t, slot, 1) == 1 && fsr3fi::given.present);
     CHECK(passes.size() == 2 && passes[1].pc[0] == 320 && passes[1].pc[1] == 0 && passes[1].pc[2] == 1920 &&
-          passes[1].pc[3] == 1440 && passes[1].w == 1920);
+          passes[1].pc[3] == 1440 && passes[1].pc[4] == 0 && passes[1].w == 1920);
+    CHECK(passes[0].pc[4] == 0);   // (SDR: the copy sRGB-encoded under the HUD, fg_hud.comp hudless_colour)
+
+    // (the native HDR picture: the pass told so, the copy taken as it is under the HUD)
+    framegen_hud_before(cmd, &picture, 0);
+    hud_source(cmd, 1, 2560, 1440, 0, 0, 2560, 1440, true);
+    CHECK(fsr3fi_frames(cmd, set, 1, 2560, 1440, ++sequence, true, t, slot, 1) == 1 && fsr3fi::given.present);
+    CHECK(passes.size() == 3 && passes[2].pc[4] == 1);
 
     // (the picture destroyed since the copy, or moved to another image: nothing to copy from, the HUD guessed)
     framegen_hud_before(cmd, &picture, 0);
@@ -217,7 +224,7 @@ int main() {
 
     // (a picture not the presented picture's size: no mark)
     framegen_hud_before(cmd, &picture, 0);
-    hud_source(cmd, 1, 3840, 2160, 0, 0, 3840, 2160);
+    hud_source(cmd, 1, 3840, 2160, 0, 0, 3840, 2160, false);
     CHECK(fsr3fi_frames(cmd, set, 1, 3840, 2160, ++sequence, false, t, slot, 1) == 1 && !fsr3fi::given.present);
 
     // (not the scene's formats: a movie's RGBA8 upscale is not copied; nor anything at another level)

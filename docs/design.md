@@ -1041,3 +1041,44 @@ walk (beach to jungle), `RX_VK_FRAME_TRACE=1`, presents 900 to 4860 (the stage).
   traceback. A second build says "not made again" (0 s). `tests/run_all.py`: 562 passed, 0 failed, 79 skipped (before:
   561, 0, 79).
 - Not checked: NVIDIA, Windows, 4K, the issue's GPU (section 7).
+
+### 2026-11-19: the third sync, to Longshot `v3.0.0`
+
+- `scripts/sync_upstream.py --to v3.0.0` (`09cbdd97`, Longshot's first stable release, 68 commits past `9af4808f`),
+  run by hand in a worktree: 395 files changed in the imported paths, 365 applied (199 of them new, 90 of those
+  `third_party/tracy/`, a new part whose note `scripts/check_third_party.py` accepts), 30 not applied (29 not tracked
+  here, and the stand-in). Six files conflicted, in 10 places:
+  - `gpu/vk/vk_api.h`, `host/rx_backend.c`: Longshot's `ab_frame` (the A/B's side of a frame, its version 34), then
+    this fork's `origin_lower_left`, now version 35. Longshot's new `tests/test_hos_ab.py` asserted that `ab_frame`
+    ends `MkwVkHost` and the table; it now finds it one before this fork's member.
+  - `nx2/make_game.py`: Longshot's hot list (`hot_list_for`, a committed `assets/profiles/hot_funcs.txt`, which is not
+    carried: the build takes a developer's `work/hot_funcs.txt` or none, as before) beside this fork's `npdm_name`
+    and prompts, and the environment of nx2/kit.py's names. Longshot's first install now reads the assets while the
+    game is translated (`overlap_package_read`); its `read_assets` takes this fork's romfs-or-data-title check and
+    moves `aoc/` too. Under that overlap `INHALE_ROMFS` is set before the data title is there (the code title's
+    empty `romfs/`); nothing in the lift or the build reads it. `tests/test_make_game_cache.py` has a check of the
+    data title arriving beside translation, and Longshot's overlap check expects this fork's message.
+  - `tests/test_bound_keys.py`: Longshot's check of the side mouse buttons in the game's menus gives them to X and Y
+    here, since this fork's left and right buttons are B's and L's.
+  - `nx2/test_leaf.py`: Longshot's timing file beside this fork's `map_rw` and signal handlers.
+- The stand-in `nx2/oot_patches.py` gained `touches` (never) and `mentioned_addresses` (none): the lift now asks
+  them which functions keep their registers in the context, as Longshot's registers as locals arrive (`A64_LOCAL_REGS`,
+  on by default). The 45 other new names are used only by Longshot's checks of its own patches, which are left out.
+- Longshot's new marking rule for host writes to guest memory (`hos_guest_copy`, `HOS_WRITTEN`) found this fork's
+  built-in font copy in `host/kirby_hle.c`; it uses `hos_guest_copy` now. Its check,
+  `tests/test_host_guest_writes.py`, fails in Longshot's own tree at `v3.0.0` (Longshot's `host/nn_nfp.c`,
+  `host/hos_main.c`, `host/oot_menu.c`) and is left out.
+- `gpu/vk/perf_report.h` had one em dash in a comment (the punctuation rule, `tests/test_hygiene.py`): a colon now.
+- Telemetry stays off: the renderer's performance summaries post to `perf_reports=` of the game folder's
+  `inhale_version.txt`, which `make_game.py` writes from `nx2/addresses.ini`, whose keys are empty. The Discord
+  status has no application id.
+- Checks: before the sync `tests/run_all.py` had 561 passed, 0 failed, 79 skipped (no Vulkan or SPIR-V headers given).
+  After it, 18 failed; Longshot's own tree at `v3.0.0` on the same machine had 39 failed. Five of the 18 fail there
+  too and are left out with the C file one compiles; 13 are bound to things left out (`builder/`, `assets/`,
+  `mise.toml`, `.forgejo/`, `scripts/tools.py`, `scripts/check_windows_files.py`, and the text of Longshot's
+  `nx2/oot_patches.py`). `PROVENANCE.md` has the lists. After that: 600 passed, 0 failed, 80 skipped;
+  `scripts/rename_full.py` 0 places, `scripts/check_third_party.py` 14 parts as their notes say.
+- Not run in the game. Changes that alter what this game runs by default, none measured here: registers as locals in
+  the lift, lifted stores marking only GPU pages (`RX_MARK_BITMAP`), `nn::os::YieldThread` giving up the virtual core
+  only (`HOS_OS_YIELD=1` as before), temporary pipelines for required draws, threaded rendering's Auto by physical
+  cores, the correctly rounded FMA on CPUs without FMA3, and the first install's overlapped unpack.

@@ -26,3 +26,13 @@ def output_size_file(s, name):
 
 def check_output_size(found, required=False):
     """found: each place's count over all the files"""
+
+
+def touches(text):
+    """(nx2/guest_locals.py) Whether the edits here would change this lifted function's text: never"""
+    return False
+
+
+def mentioned_addresses():
+    """(nx2/guest_locals.py) The guest code addresses the edits here are pinned to: none"""
+    return set()

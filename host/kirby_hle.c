@@ -79,7 +79,7 @@ HLE(_ZN2nn2pl21GetBuiltInFontDataSetEPiPNS0_20BuiltInFontDataOunceEPKNS0_20Built
     const uint64_t size = inhale_font_body_size;
     if (!font) {
         const uint64_t at = hos_sys_alloc(size, 0x1000);
-        memcpy(GP(at), inhale_font_body, size);
+        hos_guest_copy(at, inhale_font_body, size);
         font = at;
     }
     const int n = (int)ARG(3) < 6 ? (int)ARG(3) : 6;

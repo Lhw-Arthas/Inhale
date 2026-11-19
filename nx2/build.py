@@ -51,6 +51,7 @@ import object_store
 import ui_fonts
 import toolchain
 import third_party_objects
+import tracy_funcs
 import translator_files
 import version
 import win_manifest
@@ -59,7 +60,8 @@ NX2_RT = os.path.join(kit.HERE, "rt")
 HOST = os.path.join(kit.HERE, "..", "host")
 OPUS = os.path.join(kit.HERE, "..", "third_party", "opus")
 ZSTD = os.path.normpath(os.path.join(kit.HERE, "..", "third_party", "zstd", "lib"))
-ZSTD_HOST = ("prompts.c", "hos_zstd.c")   # (the host files that use it: a mod's size table; the game's stream decode)
+ZSTD_HOST = ("prompts.c", "hos_zstd.c", "oot_heart_containers.c")   # (the host files that use it: a mod's size table; the game's
+# stream decode; the boss heart containers' ids, read from the map files for the Discord status)
 OBJ_CACHE = os.path.join(kit.WORK, "objcache")
 # (INHALE_OBJ_STORE: one store of objects for every work folder, nx2/object_store.py. Its folder for this work folder's compiler
 # and headers, or None)
@@ -108,6 +110,8 @@ def check_vk_symbols(so):
             continue
         name = parts[1]
         if "@GLIBC" in name or "@CXXABI" in name or "@GLIBCXX" in name or "@GCC" in name:
+            continue
+        if TRACY and name.startswith("___tracy_"):   # (INHALE_TRACY: the client's C API, which the executable exports)
             continue
         bad.append(name)
     if not bad:
@@ -422,14 +426,50 @@ GPU = os.path.join(kit.HERE, "..", "gpu")
 FFMPEG = None   # (found in the CPM caches below, once cpm_dirs is defined)
 
 
-def exe_resources():
-    """(Windows) the .res with the exe's icon (and the name Windows shows for it) to link: the game's own, which the builder made
-    from its .nup (work/inhale_game.res, nx2/game_title.py), else a developer's picture (work/inhale.res, nx2/make_icon.py),
-    else none. Only one: both are icon 1"""
-    for name in ("inhale_game.res", "inhale.res"):
-        if os.path.exists(os.path.join(kit.WORK, name)):
-            return [os.path.join(kit.WORK, name)]
-    return []
+BRAND_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "builder", "setup", "inhale.ico")
+BRAND_RES = "inhale_brand.res"
+
+
+def exe_resources(work=None, brand=BRAND_ICON):
+    """(Windows) the .res files to link into the exe: Inhale's icon, always (builder/setup/inhale.ico, the builder's and the
+    launcher's, made into work/inhale_brand.res: icon 1, which the window loads, host/display.c), so every build has it in
+    its window and taskbar, a release's too; and the name Windows shows for the exe when the builder read the game's from its
+    .nup (work/inhale_game.res, nx2/game_title.py: version strings only)"""
+    work = work or kit.WORK
+    out = []
+    try:
+        with open(brand, "rb") as f:
+            data = f.read()
+    except OSError:
+        data = None
+    if data:
+        import make_icon
+        res = os.path.join(work, BRAND_RES)
+        made = make_icon.res_of(make_icon.images_of_ico(data))
+        try:
+            with open(res, "rb") as f:
+                same = f.read() == made
+        except OSError:
+            same = False
+        if not same:
+            os.makedirs(work, exist_ok=True)
+            with open(res, "wb") as f:
+                f.write(made)
+        out.append(res)
+    named = os.path.join(work, "inhale_game.res")
+    if os.path.exists(named):
+        if out:   # (a standalone build may reuse a pre-branding resource containing a game icon)
+            import game_title
+            with open(named, "rb") as f:
+                cached = f.read()
+            title_only = make_icon.without_icons(cached)
+            if title_only != cached:
+                if title_only == make_icon.res_of():
+                    return out
+                named = os.path.join(work, "inhale_game_title_only.res")
+                game_title.write_if_changed(named, title_only)
+        out.append(named)
+    return out
 
 
 def tree_headers(*roots, skip=()):
@@ -544,6 +584,34 @@ NGX_MSVC_RT = "vk_ngx_msvc_rt.cpp"
 # it; the camera jitter it needs is in every build: nx2/oot_jitter.py). A Linux build with it compiles the back end from the
 # headers the AppImage carries (FSR_HEADERS, which make_game.py's Linux check looks for before the game is read)
 FSR = os.environ.get("INHALE_FSR", "") == "1"
+# INHALE_TRACY=1 (a developer's build, never a player's: docs/development/tracy.md): the game and the Vulkan back end with
+# the Tracy profiler's zones (host/hos_tracy.h) and Tracy's client (third_party/tracy), compiled into the executable alone,
+# which exports its C API; the back end's module calls that one client. It listens on 127.0.0.1 only and announces nothing
+# (TRACY_ONLY_LOCALHOST, TRACY_NO_BROADCAST), records only while a viewer is connected (TRACY_ON_DEMAND), leaves the
+# crashes to the host's own handlers (TRACY_NO_CRASH_HANDLER), sends no machine code (TRACY_NO_CODE_TRANSFER) and is
+# started by the game's main, not before it (TRACY_MANUAL_LIFETIME: the crash window's helper process has none). The
+# frame pointers kept, for its sampler's call stacks. Unset: none of this, the same flags and objects as before.
+TRACY = os.environ.get("INHALE_TRACY", "") == "1"
+TRACY_PUBLIC = os.path.normpath(os.path.join(kit.HERE, "..", "third_party", "tracy", "public"))
+TRACY_FLAGS = ["-DTRACY_ENABLE", "-DTRACY_ON_DEMAND", "-DTRACY_ONLY_LOCALHOST", "-DTRACY_NO_BROADCAST",
+               "-DTRACY_NO_CRASH_HANDLER", "-DTRACY_NO_CODE_TRANSFER", "-DTRACY_DELAYED_INIT", "-DTRACY_MANUAL_LIFETIME", "-fno-omit-frame-pointer", "-I" + TRACY_PUBLIC] if TRACY else []
+# (INHALE_TRACY_FIBERS=1 with it: the game's fibers told to Tracy, TRACY_FIBERS. Every zone then goes through one queue
+# under a lock, which costs a capture much of its frame rate: only for a capture whose zones cross a fiber's move
+# between threads)
+if TRACY and os.environ.get("INHALE_TRACY_FIBERS", "") == "1":
+    TRACY_FLAGS = ["-DTRACY_FIBERS"] + TRACY_FLAGS
+TRACY_IMPLIB = "inhale_tracy.lib"   # (Windows: the executable's import library, which the back end's module links)
+
+
+def tracy_tree():
+    """Every file of Tracy's client, as one dependency blob (TracyClient.cpp includes its other .cpp files)"""
+    h = hashlib.sha1(b"tracy\0", usedforsecurity=False)
+    for d, dirs, files in os.walk(TRACY_PUBLIC):
+        dirs.sort()
+        for f in sorted(files):
+            with open(os.path.join(d, f), "rb") as fh:
+                h.update(f.encode() + fh.read())
+    return h.hexdigest().encode()
 FSR_HEADERS = os.path.join(kit.HERE, "..", "third_party", "fidelityfx")
 
 
@@ -712,7 +780,7 @@ def chunk_opt_o2(gen):
                 continue
             with open(os.path.join(gen, name), "rb") as f:
                 text = f.read()
-            if any(m.group(1) in want for m in lifted_c.HEAD_BYTES.finditer(text)):
+            if any(m.group(1) in want for m in lifted_c.definitions(text)):
                 chunks.add(name)
     return chunks
 
@@ -899,7 +967,7 @@ def rss_mb(proc):
 def largest_function(text):
     """The largest function of a lifted file's text, in bytes: each function from the newline before its definition, as mem_need
     was first measured; a giant's pieces are functions of their own (split_giants.py, the copy compile_one compiles)"""
-    starts = [m.start() - 1 for m in lifted_c.HEAD_BYTES.finditer(text)]
+    starts = [m.start() - 1 for m in lifted_c.definitions(text)]
     i = text.find(b"\nstatic __attribute__((noinline)) uintptr_t s_")
     while i >= 0:
         starts.append(i)
@@ -1079,6 +1147,10 @@ def ffmpeg_version_key():
 # instead of Windows' write watch (GetWriteWatch over the 6 GB MKW's GPU sees took ~20 ms a scan, in one thread or
 # four: the race's replay waited ~12 ms a frame for it). Always: the guest window is not write-watched
 WRITE_TRACK = ["-DA64_WRITE_TRACK"]
+# (longshot) the lifted game's stores mark their page only where the page is a GPU page (host/mark_bitmap.c, nx2/rtgen.py
+# A64_MARK_BITMAP); the host's own marks stay. On by default; RX_MARK_BITMAP=0 builds the lifted game marking every page
+# it stores to, as before
+MARK_BITMAP = [] if os.environ.get("RX_MARK_BITMAP", "").strip().lower() in ("0", "off", "false", "no") else ["-DA64_MARK_BITMAP"]
 
 # (longshot) the host CPU the lifted game and the runtime are built for: x86-64-v3 (AVX2, FMA, BMI1/2, LZCNT,
 # MOVBE; Haswell and Zen 1 on). With FMA the FPX1 fast paths cover double-precision FMA (RECOMP_FPX_FMA64; it took
@@ -1128,7 +1200,7 @@ def flags(gen, rt64, opt, polls):
         "-I" + rt64, "-I" + gen, "-I" + os.path.join(kit.KIT, "rt"), "-I" + NX2_RT, "-Wno-everything",
         "-fno-strict-aliasing", "-mcx16", "-" + opt, "-g0", "-mllvm", "-rotation-max-header-size=0",
         "-ffunction-sections", "-mllvm", "-capture-tracking-max-uses-to-explore=5000"] + \
-        (["-DA64_POLLING"] if polls else []) + WRITE_TRACK
+        (["-DA64_POLLING"] if polls else []) + WRITE_TRACK + MARK_BITMAP
 
 
 # LONGSHOT_LIGHT_PASSES (on by default; 0 turns it off): ordinary lifted chunks compile at -O1 without its module passes (the
@@ -1684,6 +1756,7 @@ def main():
         # (EvilOOT) host/rx_nowgpu.c stands in for the WebGPU renderer, which is built no more (the Vulkan back end is the
         # only renderer); Linux has its own stand-ins, host/posix/linux_stubs.c
         host_srcs = sorted(os.path.join(HOST, f) for f in os.listdir(HOST) if f.endswith(".c") and (f != "pgo_rt.c" or PGO == "gen")
+                           and (f != "hos_tracy_game.c" or TRACY)   # (INHALE_TRACY's alone: no other build compiles it)
                            and not (LINUX and f in ("display.c", "mf_av1.c", "rx_nowgpu.c"))
                            and (f != "dav1d_av1.c" or dav1d_windows()))
         if LINUX:   # (the window on SDL2, the Win32 calls on POSIX, no Media Foundation)
@@ -1769,7 +1842,8 @@ def main():
     # as the three gpu headers the blob named before, so an edit to one of those kept their old objects.) What a file reads
     # from elsewhere (FFmpeg, dav1d, the system's) is in extras, as before
     host_fl = target() + CPU + (["-I" + POSIX, "-D_GNU_SOURCE"] if LINUX else []) + \
-        ["-I" + HOST, "-I" + rt64, "-I" + gen, "-Wno-everything", "-O2", "-g0", "-mcx16", "-DA64_POLLING"] + WRITE_TRACK
+        ["-I" + HOST, "-I" + rt64, "-I" + gen, "-Wno-everything", "-O2", "-g0", "-mcx16", "-DA64_POLLING"] + WRITE_TRACK + \
+        (TRACY_FLAGS + ["-DTRACY_EXPORTS"] if TRACY else [])
     host_roots = (HOST, gen, rt64, GPU, os.path.join(OPUS, "include"), ZSTD)
     host_blob = deps + tree_headers(HOST) + tree_headers(GPU, skip=("eden", "sirit", "third_party"))
     host_extras = ffmpeg_version_key()
@@ -1791,6 +1865,57 @@ def main():
                      (["-I" + ZSTD] if os.path.basename(s) in ZSTD_HOST else []) +
                      (dav1d_fl if os.path.basename(s) in ("nn_video.c", "dav1d_av1.c") else []),
                      renderer_deps(host_blob, host_roots, obj) + extras))
+    # (INHALE_TRACY) the lifted game code's own zones: nx2/tracy_funcs.py. The listed functions' wrappers are a file of
+    # the build's own; a chunk whose listed function's indirect calls are zones too (`calls`) is compiled again with a
+    # header that says where; the chunks' objects are given their wrappers' names after the compile (tracy_patch, below).
+    # ELF objects: Linux
+    tracy_patch = {}
+    if TRACY and LINUX and host_srcs and not a.dry_run and not a.third_party_objects and not kit.env_on("RX_VK_ONLY"):
+        entries = tracy_funcs.read_list(tracy_funcs.list_paths())
+        chunk_jobs = {j[1]: i for i, j in enumerate(jobs) if os.path.basename(j[1]).startswith("code_") and j[1].endswith(".c")}
+        where = tracy_funcs.defined_in(sorted(chunk_jobs), [tracy_funcs.name_of(e[0]) for e in entries])
+        absent = [tracy_funcs.name_of(e[0]) for e in entries if tracy_funcs.name_of(e[0]) not in where]
+        if absent:
+            print("INHALE_TRACY: %d listed functions are not functions of this game's translation, left out: %s"
+                  % (len(absent), " ".join(absent[:12])), flush=True)
+        entries = [e for e in entries if tracy_funcs.name_of(e[0]) in where]
+        if entries:
+            os.makedirs(gen_dir, exist_ok=True)
+            text = tracy_funcs.wrappers(entries)
+            wsrc = os.path.join(gen_dir, "tracy_funcs.c")
+            if not os.path.exists(wsrc) or open(wsrc, encoding="utf-8").read() != text:
+                with open(wsrc, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(text)
+            with open(os.path.join(HOST, "hos_tracy.h"), "rb") as f:
+                tracy_h = f.read()
+            jobs.append((cc, wsrc, os.path.join(obj_dir, "host_tracy_funcs.o"), host_fl, text.encode() + tracy_h + deps))
+            sizes = tracy_funcs.extents(os.path.join(gen, "a64_table.c"), [e[0] for e in entries if e[1]])
+            ranges = {}
+            for addr, calls, _label in entries:
+                src = where[tracy_funcs.name_of(addr)]
+                tracy_patch.setdefault(jobs[chunk_jobs[src]][2], []).append(tracy_funcs.name_of(addr))
+                if calls:
+                    ranges.setdefault(src, []).append((addr, sizes[addr]))
+            for src, rs in sorted(ranges.items()):
+                header = tracy_funcs.calls_header(rs)
+                hpath = os.path.join(gen_dir, "tracy_calls_%s.h" % os.path.basename(src)[:-2])
+                if not os.path.exists(hpath) or open(hpath, encoding="utf-8").read() != header:
+                    with open(hpath, "w", encoding="utf-8", newline="\n") as f:
+                        f.write(header)
+                j = jobs[chunk_jobs[src]]
+                jobs[chunk_jobs[src]] = (j[0], j[1], j[2], j[3] + ["-include", hpath, "-DINHALE_TRACY_CALLS=0x" + tracy_funcs.digest(header)],
+                                         j[4] + header.encode())
+            print("INHALE_TRACY: %d lifted functions are zones (%d chunks' objects renamed at the link); the indirect calls of "
+                  "%d of them too (%d chunks compiled again: %s)" % (
+                      len(entries), len(tracy_patch), sum(1 for e in entries if e[1]), len(ranges),
+                      " ".join(sorted(os.path.basename(x) for x in ranges))), flush=True)
+    # (INHALE_TRACY) Tracy's client, the process's one, in the executable
+    if TRACY and host_srcs:
+        print("the game: with the Tracy profiler's client (INHALE_TRACY: 127.0.0.1 only, a developer's build)", flush=True)
+        jobs.append((toolchain.need(toolchain.find("clang++")), os.path.join(TRACY_PUBLIC, "TracyClient.cpp"),
+                     os.path.join(obj_dir, "host_tracy_client.o"),
+                     target() + CPU + ["-std=c++17", "-O2", "-g0", "-DNDEBUG", "-Wno-everything"] + TRACY_FLAGS + ["-DTRACY_EXPORTS"],
+                     tracy_tree()))
     # libopus 1.5.2 (third_party/opus, from TOTKPort): nn::codec's hardware Opus decoder (host/nn_codec.c)
     # (longshot: built for the same CPU target as the rest (CPU), so its float code can be vectorized where the target has
     # AVX2: the vendored copy has no x86 intrinsics files of its own)
@@ -1920,6 +2045,14 @@ def main():
                 vk_pgo_flags = ["-fprofile-instr-use=" + vk_pgo,
                                 "-DINHALE_VK_PROFILE_SHA1=" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
             print("the Vulkan back end: built with the profile %s" % vk_pgo, flush=True)
+        # (INHALE_TRACY: the back end's own files' zones call the client in the executable. With the profile's flags, which
+        # those files alone take. host/hos_tracy.h, which they include then from outside the folders their keys follow: its
+        # contents in a flag. No other build reads it)
+        if TRACY:
+            with open(os.path.join(HOST, "hos_tracy.h"), "rb") as f:
+                vk_pgo_flags = vk_pgo_flags + TRACY_FLAGS + [
+                    "-DTRACY_IMPORTS", "-DINHALE_TRACY_H=0x" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
+            print("the Vulkan back end: with the Tracy profiler's zones (INHALE_TRACY)", flush=True)
         for src in vk_sources():
             name = os.path.relpath(src, vk).replace(os.sep, "_")[:-4]
             lib = os.path.relpath(src, vk).split(os.sep)[0] in ("eden", "sirit")
@@ -2079,14 +2212,28 @@ def main():
         write_kept(gen, jobs)
     vk_objs = {j[2] for j in vk_jobs}
     objs = [j[2] for j in jobs if j[2] not in vk_objs]
+    if tracy_patch and not vk_only:   # (INHALE_TRACY: the listed functions' chunks, as copies whose symbols name the wrappers)
+        renamed = {}
+        for obj, names in sorted(tracy_patch.items()):
+            renamed[obj] = os.path.join(obj_dir, "tracyfn_" + os.path.basename(obj))
+            done = tracy_funcs.patch_object(obj, renamed[obj], names)
+            if sorted(done) != sorted(names):
+                print("INHALE_TRACY: %s does not define %s as a global function: no zone for it" % (
+                    os.path.basename(obj), " ".join(sorted(set(names) - set(done)))), flush=True)
+                return 1
+        objs = [renamed.get(o, o) for o in objs]
     rsp = os.path.join(out, "objs.rsp")
     open(rsp, "w", encoding="utf-8").write("\n".join('"%s"' % o.replace("\\", "/") for o in objs))
     if a.standalone and not vk_only and LINUX:
         exe = os.path.join(out, EXE)   # (+ inhale.map: crash offsets -> f_<guest address>)
         t = time.time()
         # (--export-dynamic-symbol: the window's state, which the Vulkan back end's own Win32 calls read by name)
-        r = run_link([cc] + target() + ["-fuse-ld=lld", "-o", exe] + linker("-Map=" + exe + ".map") +
+        # (INHALE_TRACY: Tracy's client is C++, so the C++ driver links, its runtime inside as the back end's is, and the
+        # client's C API is exported for the back end's module)
+        r = run_link([toolchain.need(toolchain.find("clang++")) if TRACY else cc] + target() + ["-fuse-ld=lld", "-o", exe] +
+                     linker("-Map=" + exe + ".map") +
                      ["-Wl,--gc-sections", "-Wl,--export-dynamic-symbol=hos_posix_*", "@" + rsp] + HOT_ORDER() +
+                     (["-Wl,--export-dynamic-symbol=___tracy_*", "-static-libstdc++", "-static-libgcc"] if TRACY else []) +
                      (["-fprofile-instr-generate"] if PGO == "gen" else []) +
                      (FFMPEG_LX[1] if FFMPEG_LX else []) + HOST_LIBS, exe)
         undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})
@@ -2115,7 +2262,9 @@ def main():
                            ([os.path.join(FFMPEG, "lib", l + ".lib") for l in ("avcodec", "swscale", "swresample", "avutil")] +
                             ["-lbcrypt", "-lmfplat", "-lmfuuid", "-lstrmiids", "-lole32"] if FFMPEG else []) +
                            ([os.path.join(dav1d_windows(), "lib", "libdav1d.a")] if dav1d_windows() else []) +
-                           (["-lc++", "-lunwind"] if toolchain.mingw() else []),   # (llvm-mingw: the C++ parts' runtime, linked in; MSVC's comes by itself)
+                           (["-lc++", "-lunwind"] if toolchain.mingw() else []) +   # (llvm-mingw: the C++ parts' runtime, linked in; MSVC's comes by itself)
+                           # (INHALE_TRACY: the client's sockets, and its exported C API's import library for the back end)
+                           (["-lws2_32"] + linker("/implib:" + os.path.join(out, TRACY_IMPLIB)) if TRACY else []),
                            exe)
         undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})
         if r.returncode:
@@ -2159,7 +2308,8 @@ def main():
             link = [cc] + toolchain.native_target() + toolchain.native_link() + \
                 ["-shared", "-o", vdll] + linker("/map:" + vdll[:-4] + ".map") + ["@" + vrsp, "-luser32"] + \
                 (linker("/nodefaultlib:clang_rt.profile.lib") if os.environ.get("RX_VK_PGO") == "gen" else []) + \
-                (["-lc++", "-lunwind"] if toolchain.mingw() else []) + ngx_link(NGX_SDK, toolchain.mingw())
+                (["-lc++", "-lunwind"] if toolchain.mingw() else []) + ngx_link(NGX_SDK, toolchain.mingw()) + \
+                ([os.path.join(out, TRACY_IMPLIB)] if TRACY else [])   # (the client in the executable: its import library)
         r = run_link(link, vdll)
         if r.returncode:
             undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})

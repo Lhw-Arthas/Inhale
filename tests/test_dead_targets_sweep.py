@@ -97,8 +97,8 @@ def wiring():
         need(frame.index("pool_trim();") < gate, "the pool is trimmed before the gate, every present")
     sweep = block(tex, "void dead_targets_sweep(uint64_t completed)")
     for part in ("dead_min_unused_presents()", "dead_targets::candidate(frame_no, tex->last_frame, need, tex->last_value, completed,",
-                 "tex->levels == 1 && tex->layers == 1 && tex->depth <= 1", "target_overlap::shifted_over(lo, hi, tex->last_frame,",
-                 "(*it)->last_written", "destroy_later(*tex);", "forget_gpu(tex);", "remade.erase(tex);", "textures.erase(it)"):
+                 "tex->levels == 1 && tex->layers == 1 && tex->depth <= 1", "target_overlap::ShiftedOver over{lo, hi, tex->last_frame};",
+                 "(*it)->last_written", "destroy_later(*tex, completed);", "forget_gpu(tex);", "remade.erase(tex);", "textures.erase(it)"):
         need(part in sweep, "the sweep: " + part)
     # (the sweep runs at every present: it walks the rendered textures' list, not the whole table, and every texture that
     # leaves the table has left that list first, so the list never holds a pointer the table has freed)
@@ -120,7 +120,7 @@ def wiring():
     need('getenv("RX_VK_DEAD_EVERY")' in every and ": 1;" in every, "RX_VK_DEAD_EVERY defaults to 1")
     trim = block(tex, "size_t pool_trim()")
     need('getenv("RX_VK_POOL_IDLE")' in trim and "target_pool::kIdlePresents" in trim, "RX_VK_POOL_IDLE defaults to target_pool.h's")
-    need("!target_pool::idle_out(frame_no, v[i].since, idle)" in trim, "the trim uses target_pool::idle_out")
+    need("!target_pool::idle_out(frame_no, oldest.since, idle)" in trim, "the trim uses target_pool::idle_out")
     return fails
 
 

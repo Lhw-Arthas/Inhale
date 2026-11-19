@@ -20,6 +20,9 @@
 #include <cmath>
 
 #include "vk_framegen.h"
+#ifdef TRACY_ENABLE
+#include "../../host/hos_tracy.h"   // (INHALE_TRACY: the profiler's zones; nothing in any other build)
+#endif
 #include "vk_antilag.h"   // (AMD Anti-Lag 2: which game frame a set shows, antilag_frame / antilag_present_frame)
 #include "vk_dlss.h"   // (NVIDIA DLSS Frame Generation through NGX: dlss_fg_frames)
 #include "vk_reflex.h"   // (NVIDIA Reflex: which game frame a set shows, reflex_frame / reflex_present_frame)
@@ -732,6 +735,9 @@ static bool present_ahead_wanted(bool pace, int shown, uint32_t spare) {
 
 void display_main() {
     SetThreadDescription(GetCurrentThread(), L"mkw_vk display");
+#ifdef TRACY_ENABLE
+    HT_THREAD_NAME("mkw_vk display");
+#endif
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     int64_t interval = 16666667, last_at = 0;
     // (by_time: sets on the game's timeline; early: those of them taken while the set before was shown; waited: those whose
@@ -1252,10 +1258,15 @@ VkImage framegen_hdr(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t
     return hdr.out.image;
 }
 
-VkImage framegen_made_image(uint32_t* w, uint32_t* h) {
+VkImage framegen_made_image(uint32_t* w, uint32_t* h, int* index) {
     if (!fg.recorded || !fg.recorded->made) return VK_NULL_HANDLE;
     *w = fg.w, *h = fg.h;
-    return fg.recorded->frame[0].image;
+    // (RX_VK_SHOT_MADE=all: each shot the next of the set's made frames in turn, so a run of shots has every place)
+    static const bool all = [] { const char* e = getenv("RX_VK_SHOT_MADE"); return e && !strcmp(e, "all"); }();
+    static int turn = 0;
+    const int k = all ? turn++ % fg.recorded->made : 0;
+    if (index) *index = all ? k : -1;
+    return fg.recorded->frame[k].image;
 }
 
 // (longshot) The HUD for AMD FSR 3.1's frame interpolation (#1310, #1420). The game draws its HUD (hearts, minimap, button
@@ -1271,7 +1282,9 @@ VkImage framegen_made_image(uint32_t* w, uint32_t* h) {
 // source and was dragged with the scene, and the inpainting spread the HUD's colours into the holes a turn opens beside it.
 // So the copy itself, cropped as the frame (hud.hudless), is what FSR 3.1 interpolates: its own HUD-less colour, the HUD in
 // neither frame, and this frame's HUD laid over the made frame after, where the presented frame differs from it
-// (vk_fsr3fi.h Inputs::present; RX_VK_FSR_FG_HUDLESS=0: the mark as before).
+// (vk_fsr3fi.h Inputs::present; RX_VK_FSR_FG_HUDLESS=0: the mark as before). The copy only where the HUD is: elsewhere the
+// presented frame's own pixels, or FSR 3.1 finds the two different everywhere (the copy is from before the game's last
+// pass) and every made frame is the presented one (shaders/fg_hud.comp).
 namespace {
 struct HudState {
     std::mutex mu;   // (framegen_hud_before is called from the replay's workers)
@@ -1322,7 +1335,7 @@ bool hud_image(VkCommandBuffer cmd, Img& i, uint32_t w, uint32_t h, VkFormat f, 
 /// This present's interpolation source with the HUD marked (hud.source), from the game's frame cropped into fg.frames[cur]
 /// (at x0, y0 of the presented picture, sw x sh): when the picture was copied after its upscale this frame and is the
 /// presented picture's size. False: the frame as it is, the HUD guessed.
-bool hud_source(VkCommandBuffer cmd, int cur, uint32_t sw, uint32_t sh, int x0, int y0, uint32_t w, uint32_t h) {
+bool hud_source(VkCommandBuffer cmd, int cur, uint32_t sw, uint32_t sh, int x0, int y0, uint32_t w, uint32_t h, bool pq) {
     std::lock_guard lk(hud.mu);
     hud_free_dead();
     hud.ready = false;
@@ -1334,7 +1347,7 @@ bool hud_source(VkCommandBuffer cmd, int cur, uint32_t sw, uint32_t sh, int x0, 
     if (!hud.init) {
         hud.init = true;
         const VkDescriptorType S = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, I = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        if (!make_pipe(hud.mask, BUILTIN_SPV_ARGS(FG_HUD_COMP_SPV), {S, S, S, I, I}, 16)) {
+        if (!make_pipe(hud.mask, BUILTIN_SPV_ARGS(FG_HUD_COMP_SPV), {S, S, S, I, I}, 20)) {
             hud.failed = true;
             logf("vk: fsr3fi: the HUD mask's pipeline was not made: the HUD guessed");
             return false;
@@ -1354,7 +1367,8 @@ bool hud_source(VkCommandBuffer cmd, int cur, uint32_t sw, uint32_t sh, int x0, 
                         {sw, sh, 1}};
     vkCmdCopyImage(cmd, hud.picture, VK_IMAGE_LAYOUT_GENERAL, hud.after.image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
     full_barrier(cmd);
-    const int32_t pc[4] = {x0, y0, (int32_t)w, (int32_t)h};
+    // (pq: the native HDR picture, already encoded as the frame is; else linear, sRGB-encoded under the HUD: fg_hud.comp)
+    const int32_t pc[5] = {x0, y0, (int32_t)w, (int32_t)h, pq ? 1 : 0};
     pass(cmd, hud.mask,
          {{fg.frames[cur].view, fg.nearest},
           {hud.before.view, fg.nearest},
@@ -1502,7 +1516,7 @@ bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t
     pass(cmd, fg.copy, {{src, fg.nearest}, {fg.frames[cur].view, VK_NULL_HANDLE}}, uw, uh, pc, sizeof pc);
     pass(cmd, fg.luma, {{fg.frames[cur].view, fg.nearest}, {fg.lumas[cur].view, VK_NULL_HANDLE}}, qw, qh);
     // (AMD FSR 3.1's source with the HUD marked, when it is asked: read by fsr3fi_frames below)
-    hud_source(cmd, cur, sw, sh, x0, y0, uw, uh);
+    hud_source(cmd, cur, sw, sh, x0, y0, uw, uh, native_pq);
     set->made = 0;
     set->shown = -1;
     set->by_time = false;   // (a reused set: only a fixed multiplier's below sets it)

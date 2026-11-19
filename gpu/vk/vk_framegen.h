@@ -25,8 +25,9 @@ bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t
 /// game's own menus, movies and loading screens: vk_dlss.cpp dlss_fg_holds)
 enum class FgMaker { None, BuiltIn, Dlss, Fsr3, DlssPaused };
 FgMaker framegen_maker();
-/// The first frame the last framegen_record made (null when it made none), w x h, GENERAL
-VkImage framegen_made_image(uint32_t* w, uint32_t* h);
+/// The first frame the last framegen_record made (null when it made none), w x h, GENERAL; with RX_VK_SHOT_MADE=all, each
+/// call the next of its made frames in turn, its place in the set in index
+VkImage framegen_made_image(uint32_t* w, uint32_t* h, int* index = nullptr);
 /// (longshot) The gameplay upscale's picture (its output, at level), recorded right after the upscale wrote it, before the
 /// game draws its HUD into it: copied while AMD FSR 3.1's frame interpolation is asked for, so that framegen_record can mark
 /// the HUD for it (what the game drew over the picture since). Anything else (null, another format or shape) is left alone

@@ -87,6 +87,7 @@ struct Texture {   // (the fields the code cut out uses, as gpu/vk/vk_texture.h 
     std::vector<Run> runs;
     uint32_t runs_maps_gen = ~0u;
     bool gpu_written = false, only_cleared = false;
+    uint64_t gpu_draw_value = 0;
     uint32_t gpu_gen = 0;
     bool released = false;
     uint32_t release_gen = 0;
@@ -105,6 +106,7 @@ void logf_at(LogLevel, const char*, ...) {}
 void vw_note(Texture&) {}
 void watch_tex(const Texture*, const char*) {}
 void drawn_writeback_note(Texture*) {}
+void note_drawn_storage(Texture*) {}
 struct nvn_tex;
 void reuse_released(const nvn_tex*) {}   // (decoded ASTC used again, gpu/vk/astc_reuse.h: none here)
 
@@ -354,7 +356,7 @@ int main() {
 # texture_touch's lines the fixture runs: its first-upload seed of a virtual-pool texture's page map, the generation and
 # the check of a texture already uploaded, and the check of one the GPU owns
 SEED = "    if (!tex->uploaded && tex->gpu >= (1ull << 40) && tex->page_map.empty()) {"
-SINCE = "    const uint32_t since = "
+SINCE = "    const uint64_t since = "
 CHECK = "    if (tex->uploaded && !gpu_dirty && !texture_dirty(*tex, since, dirty)) return tex;"
 LIVE = "if (!texture_dirty(*tex, std::max(tex->upload_gen, tex->gpu_gen), cpu)) return tex;"
 
@@ -465,7 +467,7 @@ def main():
     touch = cut(src, "Texture* texture_touch(Texture* tex, bool for_sampling) {", "texture_touch")
     code = FIXTURE
     for name, part in (("CUT_MIX", cut(src, "uint64_t mix(uint64_t h, uint64_t v) {", "mix")),
-                       ("CUT_DIRTY", cut(src, "bool texture_dirty(Texture& tex, uint32_t gen, Ranges& out) {", "texture_dirty")),
+                       ("CUT_DIRTY", cut(src, "bool texture_dirty(Texture& tex, uint64_t gen, Ranges& out) {", "texture_dirty")),
                        ("CUT_DECLARATION", declaration),
                        ("CUT_WRITTEN", cut(src, "void texture_written(Texture* tex, const char* why) {", "texture_written")),
                        ("CUT_RELEASED", cut(src, "void texture_released(const nvn_tex* t) {", "texture_released")),

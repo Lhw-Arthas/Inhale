@@ -9,10 +9,14 @@
    Environment: HOS_TRACE=1 (log HLE calls), HOS_MEMORY_MB (memory the game is told it has),
                 HOS_NVN_CONTINUE=1 (go on past nvnBootstrapLoader). */
 #include "hos.h"
+#ifdef TRACY_ENABLE
+#include "hos_tracy.h"
+#endif
 #ifndef INHALE_ENV_H   /* (env_on: the switches' one rule) */
 #include "../gpu/vk/compat/inhale_env.h"
 #endif
 #include "hos_paths.h"
+#include "oot_heart_containers.h"   /* (the Discord status's pieces of heart) */
 #include "game_layout.h"
 #include "options_path.h"
 #include "hos_wide_size.h"   /* (the widescreen picture's size, shared with the Insert menu) */
@@ -1036,8 +1040,9 @@ static int oot_event_arg(Ctx *c, uint64_t arg, const char *name, uint32_t type, 
     const uint64_t name_buf = recomp_load64(c, entry + 8);
     const uint32_t name_cap = recomp_load32(c, entry + 16);
     const size_t length = strlen(name);
-    if (!name_buf || length + 1 > name_cap) return 0;
-    memcpy(A64_PTR(name_buf), name, length + 1);
+    void *to = name_buf && length + 1 <= name_cap ? hos_guest_range(name_buf, length + 1) : NULL;   /* (longshot) */
+    if (!to) return 0;
+    memcpy(to, name, length + 1);
     if (type == 4) recomp_store8(c, entry + 152, value & 1);
     else recomp_store64(c, entry + 152, value);
     recomp_store32(c, entry, type);
@@ -1120,8 +1125,9 @@ static int oot_teleport(Ctx *c, uint64_t actor, unsigned index) {
     {   /* the event's name: arg+6800 points at its buffer, arg+6808 the capacity */
         const uint64_t buf = recomp_load64(c, arg + 6800);
         const uint32_t cap = recomp_load32(c, arg + 6808);
-        if (!buf || strlen(event) + 1 > cap) ok = 0;
-        else memcpy(A64_PTR(buf), event, strlen(event) + 1);
+        void *to = buf && strlen(event) + 1 <= cap ? hos_guest_range(buf, strlen(event) + 1) : NULL;   /* (longshot) */
+        if (!to) ok = 0;
+        else memcpy(to, event, strlen(event) + 1);
     }
     ok = ok && oot_event_arg(c, arg, "NextBanc", 1, strings);
     ok = ok && oot_event_arg(c, arg, "NextStartPos", 1, strings + 128);
@@ -1252,6 +1258,10 @@ static void oot_teleport_followup(Ctx *c) {
 static SRWLOCK oot_map_lock = SRWLOCK_INIT;
 static char oot_map[80];
 static int oot_flags = -1;   /* (1 an event playing, 2 a map loading, 4 the child; -1 not read yet) */
+/* (with the map, for the Discord status: Link's life and its most in quarter hearts, his rupees, his Gold Skulltula
+   tokens, his pieces of heart; -1 not known) */
+static int oot_stats[5] = {-1, -1, -1, -1, -1};
+int hos_oot_gamedata_int(uint32_t hash, int64_t *v);   /* (host/oot_state_tap.c) */
 static void oot_map_refresh(Ctx *c, int64_t now) {
     static int64_t next;
     if (now < next) return;
@@ -1263,10 +1273,37 @@ static void oot_map_refresh(Ctx *c, int64_t now) {
     oot_gamedata_bool(c, 0xcea220d3u, &child);     /* Sequence_IsChildhood */
     const uint64_t events = oot_singleton(c, OOT_EVENTMGR_SLOT);
     const int flags = (events && recomp_load64(c, events + 104) ? 1 : 0) | (loading ? 2 : 0) | (child ? 4 : 0);
+    int stats[5] = {-1, -1, -1, -1, -1};
+    static const uint32_t hashes[3] = {0x31ab5580u, 0xfbe01da1u, 0xa77921d7u};   /* PlayerStatus.Life, .MaxLife, .CurrentRupee */
+    for (int i = 0; i < 3; i++) {
+        int64_t v;
+        if (hos_oot_gamedata_int(hashes[i], &v) && v >= 0 && v < 100000) stats[i] = (int)v;
+    }
+    /* (the Gold Skulltula tokens, as the Cheats page counts them, -1 none: a call into the game, so every 2 s, not 250 ms; the
+       Discord status changes at most every 15 s) */
+    static int tokens = -1, pieces = -1;
+    static unsigned refreshes;
+    if (refreshes++ % 8 == 0) {
+        tokens = oot_pouch_count(c, "Item_Token_Gold");
+        /* (the pieces of heart he found: from those he holds, 0-3, Pouch_Heart_Piece's pouch content by its actor name,
+           his most life and the boss containers he took; -1 until host/oot_heart_containers.c has their ids) */
+        pieces = heart_pieces_total(stats[1], hos_oot_heart_containers_taken(), oot_pouch_count(c, "Obj_Heart_Piece"));
+    }
+    stats[3] = tokens, stats[4] = pieces;
     AcquireSRWLockExclusive(&oot_map_lock);
     memcpy(oot_map, map, sizeof oot_map);
     oot_flags = flags;
+    memcpy(oot_stats, stats, sizeof oot_stats);
     ReleaseSRWLockExclusive(&oot_map_lock);
+}
+/* (with the map, host/discord_rpc.c) Link's life and its most in quarter hearts, his rupees, Gold Skulltula tokens and pieces
+   of heart, each -1 when not known; 0 before any */
+int hos_oot_stats(int *life, int *max_life, int *rupees, int *tokens, int *pieces) {
+    AcquireSRWLockShared(&oot_map_lock);
+    const int have = oot_flags >= 0;
+    *life = oot_stats[0], *max_life = oot_stats[1], *rupees = oot_stats[2], *tokens = oot_stats[3], *pieces = oot_stats[4];
+    ReleaseSRWLockShared(&oot_map_lock);
+    return have;
 }
 /* (with the map) whether an event (a cutscene, a map change's) is playing, a map is loading, Link is the child: 0 before any */
 int hos_oot_state(int *event, int *loading, int *child) {
@@ -1591,6 +1628,16 @@ static void oot_update_player_cheats(Ctx *c, uint64_t actor, uint64_t components
     if (returning) hos_log("cheats: returned to %.2f %.2f %.2f", mark[0], mark[1], mark[2]);
 }
 #endif
+
+/* (host/discord_rpc.c) when Link's update last ran (hos_now_ns), 0 never: the place in the Discord status is his map's while
+   he has been seen lately */
+int64_t hos_oot_player_seen_ns(void) {
+#if defined(_WIN32) || defined(__linux__)
+    return __atomic_load_n(&flight_player_seen, __ATOMIC_RELAXED);
+#else
+    return 0;
+#endif
+}
 
 int hos_oot_player_seen(void) {
 #if defined(_WIN32) || defined(__linux__)   /* (the debug tools: host/posix has what they call) */
@@ -1934,6 +1981,9 @@ static int game_main(int argc, char **argv) {
         const int helper = hos_crash_helper_main(argc, argv);
         if (helper >= 0) return helper;
     }
+#ifdef TRACY_ENABLE
+    hos_tracy_start();   /* (INHALE_TRACY: the profiler's client, in the game alone: host/hos_tracy.h) */
+#endif
     if (!narrow_paths_ok(argc, argv)) return 1;
     hos_game_layout();   /* (the game folder's cache/ and logs/, before anything writes there: host/game_layout.c) */
     {
@@ -2230,6 +2280,7 @@ static int game_main(int argc, char **argv) {
     hos_prof_start();   /* HOS_PROFILE_EVERY=<seconds>, the samplers, HOS_PROFILE=1 */
     void hos_chain_start(void);
     hos_chain_start();  /* HOS_CHAIN=<path> */
+    hos_ab_start();     /* (longshot) HOS_AB=<switch>=<value>: an A/B within the run (host/hos_ab.c), before the game's threads */
 #ifdef _WIN32
     timeBeginPeriod(1);   /* 1 ms timer resolution: the 60 Hz vsync and the game's frame pacing sleep in short steps */
     no_power_throttling();
@@ -2352,6 +2403,9 @@ int main(int argc, char **argv) {
         const int helper = hos_crash_helper_main(argc, argv);
         if (helper >= 0) return helper;
     }
+#ifdef TRACY_ENABLE
+    hos_tracy_start();   /* (INHALE_TRACY: the profiler's client, in the game alone: host/hos_tracy.h) */
+#endif
     int hos_display_init(void);
     void hos_display_loop(void);
     hos_game_layout();   /* (the game folder's cache/ and logs/, before anything writes there, --prepare-shaders too: host/game_layout.c) */

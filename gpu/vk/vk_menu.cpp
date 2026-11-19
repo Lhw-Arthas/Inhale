@@ -162,6 +162,19 @@ const char* tx_compact_menu_key(int v) {
     return names[std::clamp(v, 0, 1)];
 }
 const char* tx_hdr(int v) { return v == 1 ? "Expanded" : v == 2 ? "Native (the game's)" : "Off"; }
+/// HDR: on, when the swapchain stayed SDR, why (dev.hdr_sdr_why, vk_main.cpp create_swapchain). Variants: each reason
+const char* hn_hdr(int v, int variant) {
+    static const char* const t[] = {
+        "The picture stays SDR: the graphics driver offers no HDR output (no VK_EXT_swapchain_colorspace).",
+        "The picture stays SDR: HDR is off for this display in Windows' display settings.",
+        ("The picture stays SDR: Windows has HDR on, but the graphics driver offers the game no HDR output. Reinstall the "
+         "driver with a clean install, then restart the PC (inhale.magicbean.dev/help)."),
+        "The picture stays SDR: the display offers no HDR output. Is HDR on in the display settings?"};
+    const int reasons = hdr_sdr_count - 1;   // (every HdrSdrWhy but hdr_sdr_none)
+    static_assert(sizeof t / sizeof *t == hdr_sdr_count - 1, "hn_hdr: a line for each HdrSdrWhy but hdr_sdr_none");
+    if (variant >= 0) return variant < reasons ? t[variant] : nullptr;
+    return v && dev.hdr_sdr_why != hdr_sdr_none ? t[std::clamp((int)dev.hdr_sdr_why, 1, reasons) - 1] : nullptr;
+}
 const char* tx_tonemap(int v) { return v == 1 ? "PsychoV35" : "Vanilla"; }
 const char* tx_nits(int v) {
     static char b[24];
@@ -355,6 +368,27 @@ const char* hn_dlss_model(int v, int variant) {
     if (variant == 2) return env;
     if (variant == 0 && ur::cnn_for_vram(v, device_vram_bytes())) return cnn;
     return variant == 0 ? t[std::clamp(v, 0, ur::kModels - 1)] : nullptr;
+}
+/// (longshot) The DLAA before the bloom row (opts.dlss_pre_bloom; vk_temporal.cpp pre_bloom_wanted): RX_VK_DLSS_PRE_BLOOM set
+/// for this run wins over it
+bool pre_bloom_env() {
+    static const char* const e = getenv("RX_VK_DLSS_PRE_BLOOM");
+    return e && *e;
+}
+/// Its line: the value chosen; variant 1: DLSS at a Render resolution below Native (the row waits for DLAA); variant 2: set
+/// for this run by RX_VK_DLSS_PRE_BLOOM
+const char* hn_dlss_pre_bloom(int v, int variant) {
+    static const char* const t[] = {
+        "Off: DLAA smooths the finished picture, after the game's bloom and tone map.",
+        "On: DLAA smooths the 3D before the game's bloom and tone map, so the glow is made from a smooth picture.",
+    };
+    static const char* const not_dlaa = "DLAA only: set the Render resolution to Native. DLSS's other modes draw the 3D smaller "
+                                        "than the picture, which this cannot go back into.";
+    static const char* const env = "Set for this run by RX_VK_DLSS_PRE_BLOOM.";
+    if (variant < 0) variant = pre_bloom_env() ? 2 : upscaler() != ur::DLAA ? 1 : 0;
+    if (variant == 1) return not_dlaa;
+    if (variant == 2) return env;
+    return variant == 0 ? t[std::clamp(v, 0, 1)] : nullptr;
 }
 /// The Game language row (opts.game_lang): language.txt's language, written once the row is left (game_lang_tick); the game
 /// reads it at its start
@@ -772,8 +806,10 @@ bool row_fixed(const int* value) {
     return (value == &opts.dlss && ur::upscaler_fixed(upscalers_available())) ||
            (value == &opts.resolution && ur::render_fixed(upscaler())) || (value == &opts.upscale && !filter_needed()) ||
            (value == &opts.dlss_model && ur::model_fixed(upscaler(), dlss_preset_env() != nullptr)) ||
+           (value == &opts.dlss_pre_bloom && ur::pre_bloom_fixed(upscaler(), pre_bloom_env())) ||
            (value == &opts.framegen_by && framegen_by_fixed()) ||   // (its line says why)
            (value == &opts.astc_rgba8 && getenv("RX_VK_ASTC_RGBA8")) ||   // (set for the run: vk_texture.cpp reads it first)
+           (value == &opts.present_queue && getenv("RX_VK_PRESENT_QUEUE") && *getenv("RX_VK_PRESENT_QUEUE")) ||   // (create_device's, first)
            (value == &opts.hud_layout && getenv("HOS_WIDE_UI") && *getenv("HOS_WIDE_UI")) ||   // (host/hos_wide_ui.c's, first)
            (value == &opts.intel_compiles && getenv("RX_VK_NO_INTEL_SERIAL"));
 }
@@ -1297,11 +1333,13 @@ const char* threaded_env() {
     if (getenv("RX_VK_RECORDER")) return "RX_VK_RECORDER";
     return nullptr;
 }
-/// (Auto's line says what Auto is: the CPU's rule with threaded::kAutoEnabled on, Off everywhere were it off)
+/// (Auto's line says what Auto is: the CPU's rule with threaded::kAutoEnabled on, Off everywhere were it off. Its tiers are
+/// threaded::kAutoRenderCores and kAutoRecorderCores, 4 and 6 cores: tests/test_threaded_rendering.py holds the text to them)
 const char* hn_threaded(int v, int variant) {
     static const char* const t[] = {
         threaded::kAutoEnabled
-            ? "On where the processor has 12 or more threads for the game, and nothing rules it out; otherwise Off."
+            ? "On with 6 or more processor cores for the game, the render thread alone with 4 or 5, Off with fewer or where "
+              "ruled out."
             : "The same as Off, on every PC.",
         "The picture is drawn on threads of its own while the game goes on to its next frame. Still being tested: it "
         "can show flashes.",
@@ -1387,6 +1425,12 @@ const char* hn_hud_layout(int v, int variant) {
 const char* hn_astc_rgba8(int, int variant) {
     return variant <= 0 && getenv("RX_VK_ASTC_RGBA8") ? "Set by RX_VK_ASTC_RGBA8 (inhale_env.txt or the environment): remove that line to choose here."
                                        : nullptr;
+}
+/// (the Present queue row's line while RX_VK_PRESENT_QUEUE holds it, as RX_VK_ASTC_RGBA8 the ASTC row)
+const char* hn_present_queue(int, int variant) {
+    const char* e = getenv("RX_VK_PRESENT_QUEUE");
+    return variant <= 0 && e && *e ? "Set by RX_VK_PRESENT_QUEUE (inhale_env.txt or the environment): remove that line to choose here."
+                                   : nullptr;
 }
 const char* tx_intel_compiles(int v) { return v == 1 ? "Side by side" : v == 2 ? "One at a time" : "Auto"; }
 /// (the Intel shader compiles row's line: RX_VK_NO_INTEL_SERIAL holds it, as RX_VK_ASTC_RGBA8 the ASTC row)
@@ -1590,6 +1634,9 @@ Row rows[] = {
      hn_upscaler},
     {TAB_GRAPHICS, "DLSS model", &opts.dlss_model, 0, ur::kModels - 1, 1, tx_dlss_model,
      "Which of NVIDIA's DLSS networks draws the picture.", hn_dlss_model, false, true},
+    {TAB_GRAPHICS, "DLAA before the bloom", &opts.dlss_pre_bloom, 0, 1, 1, tx_onoff,
+     "Where NVIDIA DLAA smooths the picture: after the game's bloom and tone map, or before them. Changes at once.",
+     hn_dlss_pre_bloom, false, true},
     {TAB_GRAPHICS, "Render resolution", &opts.resolution, 0, ur::kValues - 1, 1, tx_resolution,
      "The share of the output the 3D is drawn at; the Upscaler fills in the rest.", hn_resolution},
     {TAB_GRAPHICS, "Sharpness", &opts.sharpness, 0, 100, 10, tx_percent,
@@ -1639,7 +1686,7 @@ Row rows[] = {
     {TAB_GRAPHICS, "HDR", &opts.hdr, 0, 2, 1, tx_hdr,
      "HDR10 out on an HDR display (Windows: Use HDR on in the display settings). Expanded: the game's SDR picture, its white at "
      "the paper white and its highlights up to the peak. Native: the game's own HDR, told the display's peak and paper white.",
-     nullptr, false, true},
+     hn_hdr, false, true},
     {TAB_GRAPHICS, "HDR paper white", &opts.hdr_white, 80, 400, 10, tx_nits,
      "How bright the picture's white is with HDR on. Around 200 for a normal room; higher in a bright one.", nullptr, false, true},
     {TAB_GRAPHICS, "HDR peak brightness", &opts.hdr_peak, 400, 4000, 100, tx_nits,
@@ -1873,8 +1920,9 @@ Row rows[] = {
      "Attach the zip there and paste the report. Nothing is uploaded for you."},
     // (longshot) for testing, not a player's choice: when each made frame is shown (vk_framegen.cpp)
     {TAB_DEBUG, "Frame pacing", &opts.pace, 0, 1, 1, tx_onoff, "When each frame is shown.", hn_pace},
-    // (longshot, threaded_rendering.h: the render thread and the recorder thread together, one row. Auto, On, Off as V-Sync's,
-    // so its text is tx_vsync's. Read once, at the start: menu_threaded_rendering)
+    // (longshot, threaded_rendering.h: the render thread and the recorder thread, one row: On both, Auto by the cores (both,
+    // the render thread alone or neither). Auto, On, Off as V-Sync's, so its text is tx_vsync's. Read once, at the start:
+    // threaded_choice)
     {TAB_DEBUG, "Threaded rendering", &opts.threaded_rendering, 0, 2, 1, tx_vsync,
      "Draws the picture on threads of its own, beside the game's, on a processor with threads to spare. Applies after a "
      "restart.", hn_threaded, true, true},
@@ -1887,6 +1935,11 @@ Row rows[] = {
     {TAB_DEBUG, "Robust buffers", &opts.robust, 0, 2, 1, tx_robust,
      "Bounds-checked buffer reads: a read past a buffer's end is dropped instead of stopping the GPU. Applies after a "
      "restart.", hn_robust, true, true},
+    // (longshot) the presents' own queue (vk_main.cpp create_device; RX_VK_PRESENT_QUEUE over it): off by default since #1549,
+    // here so a player can try it without editing a file and say which way the game runs. Read once, at the start
+    {TAB_DEBUG, "Present queue", &opts.present_queue, 0, 1, 1, tx_onoff,
+     "The presents on a GPU queue of their own, beside the game's: frame generation's frames more even with V-Sync Off on some "
+     "cards, the GPU lost with frame generation on others (an RTX 5080). Applies after a restart.", hn_present_queue, true, true},
     {TAB_DEBUG, "ASTC as RGBA8", &opts.astc_rgba8, 0, 1, 1, tx_onoff,
      "Big ASTC textures kept as decoded RGBA8 instead of re-encoded to BC3: a workaround for texture artifacts seen on some AMD "
      "cards (issues 57 and 1006). Takes far more video memory. Applies after restart.", hn_astc_rgba8, true, true},
@@ -2251,6 +2304,7 @@ bool row_shown(int i) {
            (!is_laptop_row(rows[i]) || laptop_row()) &&
            (v != &opts.dlss || ur::upscaler_shown(upscalers_available())) &&
            (v != &opts.dlss_model || ur::model_shown(dlss_why() == DLSS_OK)) &&
+           (v != &opts.dlss_pre_bloom || ur::pre_bloom_shown(dlss_why() == DLSS_OK, upscaler())) &&
            ((v != &opts.hdr_white && v != &opts.hdr_peak && v != &opts.hdr_contrast) || opts.hdr != 0) &&
            (v != &opts.hdr_tonemap || opts.hdr == 2) &&
            // (longshot) who makes the frames only with Frame generation on; the CRT raster only with a CRT filter
@@ -2345,6 +2399,7 @@ const char* ini_key(const Row& r) {
     if (r.value == &opts.fps_cap) return "frame_rate_cap";   // (host/nn_vi.c reads it at the start, then HOS_OPT_FPS_CAP)
     if (r.value == &opts.upscale) return "upscaling";
     if (r.value == &opts.dlss) return "dlss";   // (as opts.dlss and RX_VK_DLSS)
+    if (r.value == &opts.dlss_pre_bloom) return "dlss_pre_bloom";   // (as RX_VK_DLSS_PRE_BLOOM)
     if (r.value == &opts.handheld) return "handheld_profile";   // (the Profile row; host/nn_applet.c reads it at the start)
     if (r.value == &opts.ultrawide) return "ultrawide";   // (the Aspect ratio row; host/hos_main.c reads it at the start)
     static char k[48];
@@ -4155,16 +4210,42 @@ void draw_options(ui::Ctx& c) {
         hits.add(x, 0, x + tw[i], hh, menu_hit::kTab, i);
         x += tw[i];
     }
-    {   // (which build, at the banner's left, so a report can say it without opening the log: as players see it, version_text,
-        // "Inhale v3.0.0-rc.1" or "Inhale Nightly 46 · 434712bb"; the log and the bug report keep the whole name)
-        std::string ver = std::string("Inhale ") + version_text(INHALE_VERSION);
-        const float room = (c.w - total) * 0.5f - 60 * s - c.safe, px = 15 * s;
+    {   // (the banner's left: the Inhale logo and its name, a little larger than the tabs' ink; at Small and Medium smaller
+        // until it fits, at Large at its size or not at all, as the version)
+        const float room = (c.w - total) * 0.5f - 60 * s - c.safe, px = 24 * s;
+        float aspect = 1;
+        ImTextureData* logo = ui::logo(&aspect);
+        const auto width = [&](float p) {
+            return (logo ? p * 1.25f * aspect + 10 * s : 0) + ui::size_of(c.f.heading, p, "Inhale").x;
+        };
+        const float fit = ui::fit_px(px, opts.menu_size == 3 ? px : 14 * s, 0.5f * s, room, width);
+        if (fit > 0) {
+            float lx = c.safe;
+            if (logo) {
+                const float lh = fit * 1.25f;
+                c.d->AddImage(logo->GetTexRef(), ImVec2(lx, ty - lh * 0.5f), ImVec2(lx + lh * aspect, ty + lh * 0.5f));
+                lx += lh * aspect + 10 * s;
+            }
+            ui::text_mid(c, c.f.heading, fit, lx, ty, ui::kBannerInk, "Inhale");
+        }
+    }
+    {   // (which build, at the banner's right, so a report can say it without opening the log: as players see it, version_text,
+        // "v3.0.0-rc.1" or "Nightly 46 · 434712bb"; the log and the bug report keep the whole name. Under it, a development
+        // run's own name for what it tests, INHALE_BUILD_NAME (mise run run-win -BuildName), when the run sets one)
+        const std::string ver = version_text(INHALE_VERSION);
+        const char* named = getenv("INHALE_BUILD_NAME");
+        const std::string name = named ? named : "";
+        const float room = (c.w - total) * 0.5f - 60 * s - c.safe, px = 15 * s, right = c.w - c.safe;
         const auto width = [&](float p) { return ui::size_of(c.f.body, p, ver.c_str()).x; };
         // (still too long, as a source build's "v2.0.11-821-g7b81752-dirty" since the Audio tab: at Small and Medium smaller
         // until it fits, on half-point steps, 10 points at the least; at Large, the size for a TV across the room, at its size
         // or not at all, as before)
         const float fit = ui::fit_px(px, opts.menu_size == 3 ? px : kVersionMinPt * s, 0.5f * s, room, width);
-        if (fit > 0) ui::text_mid(c, c.f.body, fit, c.safe, ty, ui::kBannerInk, ver.c_str());
+        const auto name_width = [&](float p) { return ui::size_of(c.f.body, p, name.c_str()).x; };
+        const float name_fit = name.empty() ? 0 : ui::fit_px(13 * s, opts.menu_size == 3 ? 13 * s : kVersionMinPt * s, 0.5f * s, room, name_width);
+        const float vy = name_fit > 0 ? ty - 8 * s : ty;
+        if (fit > 0) ui::text_mid_right(c, c.f.body, fit, right, vy, ui::kBannerInk, ver.c_str());
+        if (name_fit > 0) ui::text_mid_right(c, c.f.body, name_fit, right, ty + 9 * s, ui::alpha(ui::kBannerInk, 0.8f), name.c_str());
     }
     // the rows, in the column; the help beside it
     float cx0, cx1, hx0, hx1;
@@ -5546,6 +5627,7 @@ void menu_init() {
     // (the environment over the saved rows, for this run only: env_override, save)
     if (const char* e = getenv("RX_VK_FRAMEGEN_MULT")) env_override(&opts.framegen, std::min(std::max(atoi(e), 2), 8));
     if (const char* e = getenv("RX_VK_PACE")) env_override(&opts.pace, !env_value_off(e));
+    if (const char* e = getenv("RX_VK_DLSS_PRE_BLOOM"); e && *e) env_override(&opts.dlss_pre_bloom, !env_value_off(e));
     if (const char* e = getenv("RX_VK_UPSCALE"))
         for (Row& r : rows)
             if (r.value == &opts.upscale) env_override(r.value, std::min(std::max(atoi(e), r.lo), r.hi));
@@ -5554,6 +5636,8 @@ void menu_init() {
     if (const char* e = getenv("HOS_SKIP_OPENING")) env_override(&opts.skip_opening, !env_value_off(e));
     // (vk_texture.cpp reads RX_VK_ASTC_RGBA8 over the row: the row shows it, fixed (row_fixed), and the ini keeps the player's)
     if (const char* e = getenv("RX_VK_ASTC_RGBA8")) env_override(&opts.astc_rgba8, !env_value_off(e));
+    // (vk_main.cpp create_device reads RX_VK_PRESENT_QUEUE over the Present queue row, an empty value not: the same here)
+    if (const char* e = getenv("RX_VK_PRESENT_QUEUE"); e && *e) env_override(&opts.present_queue, !env_value_off(e));
     if (const char* e = getenv("RX_VK_NO_INTEL_SERIAL")) env_override(&opts.intel_compiles, env_value_off(e) ? 2 : 1);
     if (const char* e = getenv("RX_VK_COMPUTE_QUICK_FIRST")) env_override(&opts.intel_quick, !env_value_off(e));
     if (const char* e = getenv("HOS_OUTPUT_RES")) {
@@ -5614,46 +5698,38 @@ void menu_auto_for_gpu(const VkPhysicalDeviceProperties& props, ::auto_settings:
 // (the switches read once, at the first present: they are for the whole run, and each present asked twice)
 int menu_vsync() { static const int run = env_on("RX_VK_FIFO") ? 1 : env_on("RX_VK_IMMEDIATE") ? 2 : 0; return run ? run : opts.vsync; }
 /// (longshot) The Threaded rendering row, resolved once for the run (threaded_rendering.h): the row as the options file had it
-/// at the start (menu_init, asked here too: a reader can come before the device is picked), the logical processors the process
-/// may run on (usable_cpus: its affinity mask) and, for Auto, whether the mode is safe on this run. Known at the start and
+/// at the start (menu_init, asked here too: a reader can come before the device is picked), the physical cores among the
+/// logical processors the process may run on (usable_cores: its affinity mask, a core's SMT siblings counted once; the
+/// logical count where the cores cannot be read) and, for Auto, whether the mode is safe on this run. Known at the start and
 /// read here: the capture off (RX_VK_CAPTURE=0: a replay behind the game is right only from the capture),
 /// RX_VK_LOW_SPEC, a frame dump (RX_VK_DUMP), a benchmark replay (RX_VK_BENCH), and buffer pools with no mirrors at all
-/// (pools_mirrored: RX_VK_MIRROR=0, an integrated GPU, GCN), asked last and only when Auto would otherwise say yes, since it
-/// reads the device. Not known at the start, so not here: one pool refused its mirror or over the mirrors' budget while the
-/// game runs (that needs the run-time fallback, which is not written). On is the player's word: nothing is checked for it
-bool menu_threaded_rendering() {
-    static const bool on = [] {
+/// (pools_mirrored: RX_VK_MIRROR=0, an integrated GPU, GCN), asked last and only when Auto would otherwise pick a thread, in
+/// either of its tiers, since it reads the device. Not known at the start, so not here: one pool refused its mirror or over the
+/// mirrors' budget while the game runs (that needs the run-time fallback, which is not written). On is the player's word:
+/// nothing is checked for it. Each reader takes its half: menu_render_thread, menu_recorder_thread
+static const threaded::Choice& threaded_choice() {
+    static const threaded::Choice choice = [] {
         menu_init();
-        const unsigned cpus = usable_cpus();
+        const unsigned cpus = usable_cpus(), cores = usable_cores();
         const char* capture = getenv("RX_VK_CAPTURE");
         // (vk_memory.cpp capture_on's reading: 0 none, anything else the capture)
         const char* unsafe = capture && atoi(capture) == 0 ? "RX_VK_CAPTURE" :
                              env_on("RX_VK_LOW_SPEC") ? "RX_VK_LOW_SPEC" : getenv("RX_VK_DUMP") ? "RX_VK_DUMP" :
                              getenv("RX_VK_BENCH") ? "RX_VK_BENCH" : nullptr;
-        threaded::Choice c = threaded::choose(opts.threaded_rendering, cpus, unsafe != nullptr);
-        if (c.why == threaded::Why::AutoCpus && !pools_mirrored()) {
-            c = threaded::Choice{false, threaded::Why::AutoUnsafe};
+        threaded::Choice c = threaded::choose(opts.threaded_rendering, cores, unsafe != nullptr);
+        if (threaded::auto_picked(c) && !pools_mirrored()) {
+            c = threaded::Choice{false, false, threaded::Why::AutoUnsafe};
             unsafe = "the buffer pools have no mirrors";
         }
-        switch (c.why) {
-        case threaded::Why::On: logf("vk: Threaded rendering: On (the render thread and the recorder thread)"); break;
-        case threaded::Why::Off: logf("vk: Threaded rendering: Off"); break;
-        case threaded::Why::AutoGate:
-            logf("vk: Threaded rendering: Auto: off (Auto is turned off in this build; %u logical processors, its rule is on "
-                 "from %u)", cpus, threaded::kAutoCpus);
-            break;
-        case threaded::Why::AutoUnsafe: logf("vk: Threaded rendering: Auto: off (not safe on this run: %s)", unsafe); break;
-        case threaded::Why::AutoFewCpus:
-            logf("vk: Threaded rendering: Auto: off (%u logical processors, on from %u)", cpus, threaded::kAutoCpus);
-            break;
-        case threaded::Why::AutoCpus:
-            logf("vk: Threaded rendering: Auto: on, the render thread and the recorder thread (%u logical processors)", cpus);
-            break;
-        }
-        return c.on;
+        char line[256];
+        threaded::describe(line, sizeof line, c, cores, cpus, unsafe);
+        logf("vk: Threaded rendering: %s", line);
+        return c;
     }();
-    return on;
+    return choice;
 }
+bool menu_render_thread() { return threaded_choice().render_thread; }
+bool menu_recorder_thread() { return threaded_choice().recorder_thread; }
 bool intel_compiles_side_by_side() {   // (RX_VK_NO_INTEL_SERIAL in the row: menu_init. Asked once the device is made)
     return intel_side_by_side_chosen(opts.intel_compiles, dev.props.deviceID, dev.props.driverVersion);
 }
