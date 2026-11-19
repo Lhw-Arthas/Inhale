@@ -27,6 +27,12 @@ OS_NAMESPACES = {"audio", "hid", "oe", "prepo", "nfp", "time", "account", "vi", 
                  "web", "ldn", "irsensor", "aoc", "olsc", "pctl", "apm", "ro",
                  "chat", "camera", "gs", "movie", "npns", "news", "fatal", "lbl", "capture", "syncpt"}
 
+# (inhale) Free functions of an OS-facing namespace that reach no system service: they only read the bytes they are
+# given, so they stay lifted. As stubs, the two that read a vibration file (.bnvib) left its info zeroed and wrote no
+# value, and Kirby played none of its rumble files (issue #2; tests/test_lifted_vibration_file.py).
+LIFTED = {"_ZN2nn3hid18ParseVibrationFileEPNS0_17VibrationFileInfoEPNS0_26VibrationFileParserContextEPKvm",
+          "_ZN2nn3hid22RetrieveVibrationValueEPNS0_14VibrationValueEiPNS0_26VibrationFileParserContextE"}
+
 
 def implemented(host=HOST):
     """C names of the HLE functions in host/*.c: `void imp_x(Ctx` definitions and `HLE(x)` macros"""
@@ -111,7 +117,7 @@ def hle_set(modules):
         if m.name not in ("sdk", "rtld"):   # (every game module: main and the subsdk* the exefs has)
             stubbed |= {s["name"] for s in m.symbols if not s["defined"] and s["name"] and os_facing(s["name"])
                         and kind.get(s["name"], "func") == "func"}
-    return hle | set(nvn_exports(modules)), stubbed - hle
+    return hle | set(nvn_exports(modules)), stubbed - hle - LIFTED   # (inhale) LIFTED: see above
 
 
 def demangle(syms):

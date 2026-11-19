@@ -216,6 +216,9 @@ also name its method for rule 1 (its measure skill), which is not carried here.
   waits while the GPU was busy 4 ms a frame): the same build run headless over ssh gives 60.0 with 0.1 s blocked. The
   remote display adapter paces FIFO presents (V-Sync On); the registry value `DWMFRAMEINTERVAL` = 15 (the RDP frame
   interval, as the user set it) fixed it: 60 in the window afterwards (the player's report). Not a defect of the host or the renderer.
+- Rumble in the game with a pad in hand (section 9, "issue #2"): the SDK's file readers run and read the game's
+  files, but no run here made the game play one. Why the game's script switches a player's rumble off 2.3 s after the
+  last scripted press.
 - `make_game.py`'s `--romfs-from` and its folder input (`--game <folder>`, `--exefs` with `--aoc`) on a real dump:
   covered by tests with made-up files only. The package path and `--update` were run for real (section 9, S6).
 - Whether the profiles add anything to the hot list: the three measured runs differ more among themselves than from
@@ -1318,3 +1321,33 @@ it is kept on disk or read by the translator).
 For Longshot, which has the same path: the mode the host starts with is one game's, and a game that asks for the other
 gets every prepared program wrong with only a log line to show for it. The stamp cannot catch it, because it is read
 before the game's call. A game folder could keep the mode the game last set, or the preparation could wait for it.
+
+### 2026-11-19: issue #2, no rumble in the game
+
+The report: the menu's Rumble strength slider shakes the pad, the game never does.
+
+Cause. The game plays its rumble from files (`aoc1:/hidvib/**/*.bnvib`, 340 of them) with a player of its own, not
+the SDK's `VibrationPlayer`: a play request (main+0x851240) builds the file's object (main+0x850120), which calls
+`nn::hid::ParseVibrationFile`, and plays only when the info's first word (`metaDataSize`) is not 0; each tick
+(main+0x84f280, the second "Vibration" thread) reads a sample with `nn::hid::RetrieveVibrationValue` and sends it
+with `nn::hid::SendVibrationValue`, which `host/nn_hid.c` has. The lift stubbed the two readers, as it does every
+free function of an OS-facing namespace the runtime does not define (`nx2/standalone.py`, `os_facing`): the stub's 0
+is a success with the info left zeroed, so no file ever played. Both are plain code in the sdk that reaches no
+service.
+
+Fix: the two names are in `LIFTED` (`nx2/standalone.py`), so they run as the SDK has them; the lift then says 135
+stubs, not 137. `tests/test_lifted_vibration_file.py` holds it. `make_game.py` lifts again by itself: the file is one
+of the translator's, which the lift's key covers.
+
+Checked in the game (headless, `INHALE_DUMP=$PWD/work/dump work/boot.sh rumble_after 90 --lift`: 60 fps, nothing new
+in the log), and the two lifted functions called from gdb in that build on two of the game's files:
+`ParamatterBlueIcicleLanding.bnvib` gives meta 4, format 3, 200 Hz, 349 samples, no loop, and its first sample (bytes
+`01 76 04 9f`) low 0.0039 at 128.8 Hz, high 0.0157 at 313.1 Hz; `RollingLoop.bnvib` gives meta 12, 680 samples, loop
+396 to 666. So a byte is amplitude / 255 and frequency 10 x 2^(byte / 32) Hz.
+
+Not shown: a file played in the game. Two scripted walks through the first stage (`work/runs/i2/`) made no play
+request at all, before or after the fix, so no run here has the game's own call of the readers or a pad that shook.
+Also seen and not explained: a script of the game switches a player's rumble off (the native at main+0x72e8a0, called
+every frame) about 2.3 s after the last scripted press, in both walks (presents 4218 and 8122), and on again at the
+stage's start. If it follows the pad's activity that is the game's own rule; if it follows something this runtime
+reports about the pad, it is a second cause.
