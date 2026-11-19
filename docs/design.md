@@ -1132,3 +1132,28 @@ every 300 presents) on S5's walk; the scene's size is the colour grading pass's 
 - Not checked: NVIDIA, Windows, a 4K screen (the runs are headless at 3840 x 2160), an output between 2560 and 3840
   wide, the handheld set of sizes (left as the game's), whether a heavy scene steps down further on a slower GPU, and
   the UI at 4K against 1440p (the layouts are drawn after the scene, at the output's size).
+
+### 2026-11-19: issue #1, the depth-of-field switch
+
+The ask: "being able to disable depth of field". The game's DoF is `shader/DepthOfField/DepthOfField.bfsha` of the data
+title: three programs, one vertex stage of their own (`20c3d9b7a221506d`, in no other `shader/` file) and three fragment
+stages, `976a0ce23a971ed0`, `912173d38909e3fd`, `3fe01c0d0629e41f`. Those are the runtime code keys (`vk_shader.cpp`
+`code_key`: FNV-1a 64 over the control section's 0xd8 bytes and the code area it sizes), computed from the file with
+`kirby_shaders.py`'s walk.
+
+- In play (S5's walk with `RX_VK_SKIP_CODE` set to the three keys, `work/runs/i1/dof_off.txt`) one program has them:
+  `0383c5894eee303d` (vertex and `976a0ce23a971ed0`), the composite. It draws once a frame into the scene's HDR target
+  (the deferred shading's), reading depth and the half-size blurred targets, after the colour grading's inputs and
+  before the bloom. Left out, the target keeps the sharp scene, and every later pass reads the same target: the
+  background is sharp, nothing is black or stale (present 1200, the beach's far trees, against a run with it:
+  `work/runs/i1/dof_on_shots`, `dof_off_shots`). The two other programs did not run on the walk (cut scenes, not
+  tried); leaving them out too is safe, since only DoF reads what they write.
+- The row: Graphics, Detail, "Depth of field", On (the game's) or Off; `opts.dof`, saved as `depth_of_field`, out of
+  the Quality presets. Hidden only while the other game runs (`kirby_row` in `row_shown`). Off leaves out the draws of
+  every program with one of the keys (`gpu/vk/kirby_post.h`, a memo by program as `RX_VK_SKIP_CODE`'s; the call in
+  `vk_draw.cpp` right after that block). The row is read at each draw, so it applies at once. The keys are hashes of
+  this game's shaders, so another game's programs cannot match them, and they need no build id gate. Texts:
+  `menu_i18n_inhale.h`.
+- In play with `depth_of_field=0` in the options file (`rowoff`): the far trees sharp, as with `RX_VK_SKIP_CODE`.
+  Tests: `tests/test_kirby_post.py` (the keys on made-up code strings, the memo, the call's place, the row's gate).
+- Not checked: the row changed in the menu while playing (headless runs), cut scenes, later worlds.

@@ -1704,6 +1704,10 @@ Row rows[] = {
     {TAB_GRAPHICS, "Anisotropic filtering", &opts.anisotropy, 0, 4, 1, tx_anisotropy,
      "Keeps textures sharp on surfaces seen at a slant, such as the ground ahead: higher is sharper in the distance, for a "
      "little GPU time. Game's is the console's own (1x or 2x).", nullptr, false, true},
+    // (inhale) this game's depth of field (gpu/vk/kirby_post.h), hidden for the other game (kirby_row)
+    {TAB_GRAPHICS, "Depth of field", &opts.dof, 0, 1, 1, tx_onoff,
+     "The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.",
+     nullptr, false, true},
     {TAB_GRAPHICS, "Shadow resolution", &opts.shadow_res, 0, 3, 1, tx_shadow_res,
      "The size of the sun's shadow maps: higher keeps the shadows of thin things near you, such as chains, fences and "
      "leaves, smooth instead of stair-stepped, for more video memory and a little GPU time. Applies at once.",
@@ -2293,11 +2297,14 @@ bool is_oot_row(const Row& r) {
            // (Frame generation by: DLSS FG makes its frames from the temporal Upscaler's picture, which only the other game has)
            v == &opts.framegen_by;
 }
+// (inhale) the rows made for this game: hidden only while the other game runs (oot_game 1)
+bool kirby_row(const Row& r) { return r.value == &opts.dof; }
 bool is_share_row(const Row& r);   // (defined with share_pipeline_list below)
 bool row_shown(int i) {
     const int* v = rows[i].value;
     // (inhale: Save my pipeline list is hidden, its issue's tracker does not exist: pipeline_share.h kIssueUrl)
     return (oot_rows() || !is_oot_row(rows[i])) && !is_share_row(rows[i]) &&
+           (!kirby_row(rows[i]) || oot_game.load(std::memory_order_relaxed) != 1) &&   // (inhale)
            ((rows[i].cheat < 0 && v != &opts.damage_taken) || cheats_on()) && (v != &opts.reflex || reflex_available()) &&
            (v != &opts.antilag || antilag_available()) && (v != &opts.intel_compiles || intel_compiler_row()) &&
            (v != &opts.intel_quick || intel_compiler_row()) &&

@@ -50,6 +50,7 @@ struct Options {
     int sharpness = 0;    // 0 to 100
     int anisotropy = 4;   // (longshot) Anisotropic filtering: 0 the game's own (1x or 2x), 1 2x, 2 4x, 3 8x, 4 16x (the
                           // device's limit at most; gpu/vk/vk_draw.cpp aniso_override, RX_VK_ANISO over it)
+    int dof = 1;          // (inhale) Depth of field: 1 the game's, 0 its DoF programs left out (gpu/vk/kirby_post.h)
     int shadow_res = 0;   // (longshot) Shadow resolution, the sun's cascades: 0 Auto (the size for the card's memory,
                           // menu_shadow_res), 1 the game's (1600), 2 2200, 3 3072 (host/oot_shadow.c: HOS_OPT_SHADOW_RES, 56).
                           // The Quality presets set it back to Auto (apply_preset)

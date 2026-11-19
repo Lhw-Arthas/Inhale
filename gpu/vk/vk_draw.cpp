@@ -71,6 +71,7 @@
 #include "vk_texture.h"
 #include "movie_upscale_policy.h"
 #include "skip_code.h"
+#include "kirby_post.h"   // (inhale) the Depth of field row
 #include "driver_faults.h"
 #include "fallback_size_policy.h"
 #include "translate_wait.h"
@@ -8010,6 +8011,8 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
             if (skip) return;
         }
     }
+    // (inhale) the Depth of field row Off: this game's DoF programs left out (kirby_post.h), read at each draw so it applies at once
+    if (!opts.dof && kirby_post::is_dof(cp->key, [&] { return program_code_keys(s); })) return;
     // Wait for translation before reading its stages. A pending pipeline may be left out only when no stage writes
     // global memory or storage buffers/images and its targets hold an earlier frame's picture. RX_VK_PIPE_SKIP=0:
     // pipelines are always waited for too.
