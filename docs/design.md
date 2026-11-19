@@ -1157,3 +1157,48 @@ stages, `976a0ce23a971ed0`, `912173d38909e3fd`, `3fe01c0d0629e41f`. Those are th
 - In play with `depth_of_field=0` in the options file (`rowoff`): the far trees sharp, as with `RX_VK_SKIP_CODE`.
   Tests: `tests/test_kirby_post.py` (the keys on made-up code strings, the memo, the call's place, the row's gate).
 - Not checked: the row changed in the menu while playing (headless runs), cut scenes, later worlds.
+
+### 2026-11-19: issue #1, what a DLAA-class anti-aliasing would have to work with (research, nothing built)
+
+The ask: "DLAA/DLSS implementation into this game I think would do wonders". The back end's temporal chain
+(`vk_temporal.cpp`: DLSS, DLAA, FSR 3.1, FSR 4, XeSS) is fed by the other game only: its upscale pass, its camera in
+uniform buffer 3, its jitter (`nx2/oot_jitter.py`). What this game offers, read on a frame of the first stage (present
+1500, 2560 x 1440 output; `RX_VK_DUMP=1500`, `work/runs/i1/dump1.txt`; the uniform buffers written whole by a temporary
+dump, `work/runs/i1/dump2`, `dump3a`, `dump4`; program keys mapped to `shader/` files through `RX_VK_SKIP_CODE`'s log,
+`map1.txt`):
+
+- **No FXAA, no anti-aliasing at all.** `shader/Fxaa/Fxaa.bfsha` (code keys `70a47a2c6cd6f415`, `03a2f72e86791140`) and
+  `shader/ToneMapping` never ran on S5's walk, the title to the jungle, 3600 presents (`map2.txt`). The scene is
+  supersampled only where the output is smaller than the frame (a 1080p screen). So there is no pass to replace; a
+  temporal AA is added, not swapped in.
+- **Where it would sit.** The frame's post chain on the scene target (`#358`, R11G11B10 float, the scene's size):
+  deferred shading `62830cf22f14b2ae`, the blurs, DoF `0383c5894eee303d`, bloom (`6e78d7ac90a71ceb`,
+  `c6179b9128534d74`), then ScreenFilter `5be22000a0782116` (`shader/ScreenFilter`: tone map and the 16x16x16 grading
+  table), which writes the tone-mapped picture (0 to 1) back into `#358`. Then Copy `272f3b6f806b3a33` (`shader/Copy`,
+  the same program as every blit of the frame) draws `#358` into the window texture (`#1`, RGBA8), and the layouts draw
+  after it. So the AA's input is `#358` after ScreenFilter, its output the window texture in place of that one Copy
+  draw (told from the others by its target: the presented texture), and the UI stays out of it. The input's size moves
+  with the dynamic resolution (section 9, "dynamic resolution"): the history must take a size change, or be reset.
+- **Depth.** `#359`, D32S8 (the 24-bit depth's twin, section 9 S5), written by the G-buffer pass and still whole at
+  ScreenFilter (the DoF composite reads it just before). Reversed Z: 0 is far, 0.016 the nearest here.
+- **The camera.** Uniform buffer c16 (288 bytes), bound in the G-buffer, deferred, DoF, SSAO and ScreenFilter passes:
+  +0x00 the projection, row-major, `[1.2063 0 0 0; 0 2.1445 0 0; 0 0 1e-05 0.1; 0 0 -1 0]` (16:9, near 0.1, far
+  all but infinite, reversed Z), +0x40 the view as 3 x 4, then the camera's position, the aspect (1.7778), the
+  half-angle tangents and the inverses. The CPU writes it each frame (`f_8082e090`, `main+0x80e090`; found by a store
+  probe on its address, `0x7f5b5cc000`, which stayed the same over runs) from a camera object, through a 4 x 4 inverse
+  (`main+0x84a060`, called from 14 places). Copies of the projection are elsewhere too: c6 +0x20 (written by
+  `f_807af840`), c8 +0x40 with the product view x projection at +0x80, and a compute stage's c3 +0x1410. **No
+  previous frame's matrix** is in any of them: the host would keep last frame's c16 itself.
+- **Motion vectors: none.** The G-buffer is c0 RGBA16F (normals), c1 RGBA8 (albedo), c2 RGBA8, c3 R11G11B10 (light),
+  c4 R8_UINT, depth: no velocity target. Camera-only vectors from depth and the two frames' view x projection are what
+  FSR 3.1's own-inputs path makes for the other game (`vk_fsr3_inputs.cpp`).
+- **Jitter: a site is not settled.** The projection reaches at least three buffers by different writers, so a jitter
+  added to c16 alone (C after `main+0x80e0c8` in `f_8082e090`) would jitter the deferred pass's reconstruction and not
+  the geometry, which reads c8. The place to add it is where the camera's projection is made, before those copies;
+  that function is not found yet (the camera object `f_8082e090` reads is the lead).
+
+What that costs, against the plan's three conditions (depth at the AA's pass, a reachable camera, a place for the
+jitter): depth is there; the camera is there, but this frame's only; the jitter has no site yet. And without the game's
+own motion vectors, everything that moves on its own (Kirby, enemies, water, particles) gets vectors of the camera's
+motion only: with FSR 3.1 AA, XeSS AA or DLAA that shows as ghosting or smearing behind Kirby. A version without jitter
+(the AA's history only, no sub-pixel offsets) is possible, and anti-aliases far less.
