@@ -191,8 +191,9 @@ also name its method for rule 1 (its measure skill), which is not carried here.
 
 ## 7. Not verified yet
 
-- The 3D frame at the output size (section 9, "issue #1, dynamic resolution") on NVIDIA, on Windows, on a 4K screen,
-  and at an output between 2560 x 1440 and 3840 x 2160.
+- The 3D frame at the output size (section 9, "issue #1, dynamic resolution") on a 4K screen, in a window or full
+  screen, and at an output between 2560 x 1440 and 3840 x 2160. NVIDIA and Windows were checked headless only, with the
+  size in the ini as the menu saves it ("The menu's 4K" in that section).
 - The game's dynamic resolution off by default (the same section, "Off by default"): the fixed 2560 x 1440 scene on a
   weak GPU at a small output (a 1080p monitor), and the handheld profile as that PC's way out, chosen in the menu. Why
   handheld drew at a docked level's size in one run.
@@ -1187,6 +1188,32 @@ this PC's GPU load (`RX_VK_TS_SCALE` did not move it). So `kirby_read_done` now 
 - Not checked: why handheld drew at a docked size in that one run, and whether it does with the game's own table (a
   level below the first then); a weak GPU, where the fixed 2560 x 1440 at a small output costs most; a window; NVIDIA;
   Windows; the Profile row changed in the menu (the runs set `HOS_HANDHELD`).
+
+**The menu's 4K, on Windows and NVIDIA (2026-11-20).** The player then wrote that 4K chosen in the menu gave the same
+picture as 2560 x 1440. The runs above set the output with `HOS_OUTPUT_RES`. These runs set `output_res=` in
+`inhale_options.ini`, as the menu saves it, and leave the variable unset. They use S5's walk and the pass trace, as above.
+
+| run (S5's walk) | `output_res=` | scene sizes seen |
+|---|---|---|
+| Linux, RX 7900 XTX (`work/runs/i1/menu4k`) | 3840x2160 | 3840 x 2160 only |
+| Linux, RX 7900 XTX (`menu1440`) | 2560x1440 | 2560 x 1440 only |
+| Windows, RTX 2080 SUPER (`work/runs/i1/aubox/menu4k`) | 3840x2160 | 3840 x 2160 only |
+| Windows, RTX 2080 SUPER (`aubox/menu1440`) | 2560x1440 | 2560 x 1440 only |
+
+- Each run logged `oe: output resolution` and `kirby: 3D frame` at its size. The Windows runs used v0.2.0's
+  `inhale.exe`, which holds `kirby_res.c`, with a test `inhale_vk.dll` built from this tree (the 780M fix, `48eeccd`).
+  They were headless, so they had no window.
+- So the size reaches the table on both systems and both vendors, from the ini as from the variable. Nothing in the
+  code was found to change.
+- What is left is on the player's side:
+  - The size is read once, at the start (`output_mode` in `nn_applet.c`, `kirby_read_done`). A change closed with
+    "Later" applies at the next start only.
+  - A window smaller than the screen shows the 4K frame scaled down.
+  - The handheld profile keeps the game's sizes.
+- The player's log settles it, from a start with 4K chosen. The lines that matter are `oe: output resolution`,
+  `kirby: 3D frame`, `vk: swapchain` and `display:`.
+- Not checked: a 4K screen, a window or full screen, the menu row changed and Restart now taken (the runs wrote the
+  ini before the start).
 
 ### 2026-11-19: issue #1, the depth-of-field switch
 
