@@ -94,7 +94,8 @@ uint64_t hos_sys_alloc(uint64_t size, uint64_t align) {
     return a;
 }
 
-uint64_t hos_region_alloc(uint64_t size, uint64_t align) {
+/* (inhale) commit 0: the region is left reserved, for the game's own regions (AllocateAddressRegion) */
+static uint64_t region_alloc(uint64_t size, uint64_t align, int commit) {
     if (align < 0x1000) align = 0x1000;
     size = (size + 0xFFF) & ~0xFFFULL;
     LOCK();
@@ -137,15 +138,14 @@ uint64_t hos_region_alloc(uint64_t size, uint64_t align) {
         if (found < region_floor && found >= HOS_HEAP_BASE) region_floor = found;   /* (not the holes below) */
     }
     UNLOCK();
-    // Original code: if (found) hos_commit(found, size);
-    // Optimized: pre-commit only when HOS_HEAP_COMMIT=1 is set; otherwise, let commit_on_touch handle on-demand commit
-    static int commit_region = -1;
-    if (commit_region < 0) commit_region = env_on("HOS_HEAP_COMMIT");
-    if (found && commit_region) hos_commit(found, size);
+    if (found && commit) hos_commit(found, size);   /* (inhale) commit: see region_alloc */
     if (!found) hos_fatal(NULL, "address space exhausted (%#llx bytes asked, heap %#llx)", (unsigned long long)size,
                           (unsigned long long)hos_heap_size);
     return found;
 }
+
+/* (inhale) the renderer's regions stay committed at once: host_guest_alloc zero-fills them as soon as it has them */
+uint64_t hos_region_alloc(uint64_t size, uint64_t align) { return region_alloc(size, align, 1); }
 
 static uint64_t pages_used[(1ULL << 32) / 0x1000 / 64];
 
@@ -295,7 +295,15 @@ HLE(_ZN2nn2os19AllocateMemoryBlockEPmm) {
 /* nn::os::AllocateAddressRegion(unsigned long*, unsigned long) -> Result */
 HLE(_ZN2nn2os21AllocateAddressRegionEPmm) {
     HOS_TRACE_CALL("AllocateAddressRegion");
+#if defined(_WIN32)
+    /* (inhale) Windows: the game's regions are left reserved and committed as they are touched (mkw_glue.c commit_on_touch),
+       as the heap is; committed at once, their whole size counted against the commit charge. HOS_HEAP_COMMIT=1: as before */
+    static int commit_regions = -1;
+    if (commit_regions < 0) commit_regions = env_on("HOS_HEAP_COMMIT");
+    G64(ARG(0)) = region_alloc(ARG(1), 0x10000, commit_regions);
+#else
     G64(ARG(0)) = hos_region_alloc(ARG(1), 0x10000);
+#endif
     RET(0);
 }
 
@@ -398,15 +406,15 @@ HLE(_ZN2nn2os19AllocateMemoryPagesEmm) {
            when the game mapped pages over memory it already used (a heap's list lost its links). Horizon's rule
            instead: only newly mapped pages read as zero. A commit leaves committed pages as they are and gives fresh
            ones zeroed; FreeMemoryPages decommits. */
-        // Original code: hos_commit(a, n);
-        // Optimized: On Windows, the first commit of MEM_RESERVE pages is naturally zero-filled,
-        // so there is no need to pre-commit all pages with hos_commit.
-#if !defined(_WIN32)
-        hos_commit(a, n);
-#else
+#if defined(_WIN32)
+        /* (inhale) Windows: reserved pages read as zero when they are first committed, on touch (mkw_glue.c
+           commit_on_touch), so the pages are left to it rather than counted against the commit charge at once.
+           HOS_HEAP_COMMIT=1: committed here, as before */
         static int commit_pages = -1;
         if (commit_pages < 0) commit_pages = env_on("HOS_HEAP_COMMIT");
         if (commit_pages) hos_commit(a, n);
+#else
+        hos_commit(a, n);
 #endif
     } else if (zero_all || end > (1ULL << 32) || end < a) {
         memset(GP(a), 0, n);
