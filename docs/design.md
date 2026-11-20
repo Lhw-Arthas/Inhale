@@ -75,6 +75,9 @@ pointing here.
 1. **Cross-queue `nvnCommandBufferWaitEvent` is honoured.** A game's queues pass stages back and forth with events;
    replaying them in arrival order on one Vulkan queue flashes. `gpu/vk/vk_replay.cpp` `submit_job` replays each
    submission as far as its waits allow, with per-queue state (`RX_VK_EVENT_WAITS=0` turns it off, for A/B only).
+   A game whose queues share no event can still count on their order: this game's short compute queue is done on the
+   console before its long queue's draws read what it wrote, and arrival order gets that wrong. `host/kirby_queue.c`
+   keeps this game's order (section 9, "issue #6, the crystal overlay drops out for a frame").
    *Check early:* log the game's queues and event waits on the first boot.
 2. **Nothing the replay reads comes from live guest memory.** Games write per-frame data ahead of the GPU: every
    read is from submit-time captures, and pools are captured from their creation, not their first GPU use
@@ -207,7 +210,12 @@ also name its method for rule 1 (its measure skill), which is not carried here.
 - Why the presents sometimes drop to 7 a second while the movie player starts (S4, section 9): seen twice, not explained.
 - One of three runs sampled with `HOS_SAMPLE_ALL` (`work/runs/s5x/c4.txt`) fell below 6 presents a second at the first zone
   change and stayed there; no unsampled run did. The sampler unwinds inside a signal handler: suspected, not proven.
-- That a Star-Crossed World stage (`DlcLevelN`) loads and draws: needs a save past the first world.
+- The Star-Crossed World stages (`DlcLevelN`) but the first, which a player's save reached on 2026-11-20 (section 9,
+  "issue #6").
+- Issue #6's fix as committed, played: the runs that showed it were of a test build that also kept the virtual core
+  during a hand-over (section 9, "issue #6", the open point).
+- Issue #6's fix: the 10 s stall at the start it makes more frequent with the render thread on RADV (section 9,
+  "issue #6", "A regression, open").
 - The Windows build, on Windows 11 with Visual Studio Build Tools 2022, LLVM's clang and FFmpeg from vcpkg
   (`x64-windows-static-md`, in a CPM-style folder named by `RX_CPM`): `tests/run_all.py` passes (3 checks that build the
   lifter fail only with MinGW's clang first on `PATH`; they pass with the Visual Studio environment), `nx2/build.py
@@ -586,7 +594,8 @@ Done:
   romfs (1223 files, 1.53 GB; maps `ubin/Step/Map/DlcLevel0/Stage1` to `DlcLevel8/Stage1`, 13 stages, and
   `DlcArena`). None of those maps has been opened: a Starry stage is entered from the world map, and the game's texts
   say one appears when a world's boss is beaten, so it needs a save past the first world or a long scripted
-  play-through. Left for after S6 unless such a save turns up.
+  play-through. Left for after S6 unless such a save turns up. (2026-11-20: a player's save reached the first one,
+  "issue #6" below.)
 - A profile in the stage (script `"10:A,20:LUP/9000"`, 60.0 presents a second; `work/runs/s5x/c5.txt`, `c6_all.txt`,
   `c7_main.stacks`; helpers `work/runs/s5x/prof_cpu.py`, `prof_all.py`). The whole process uses 101 to 126% of a
   core over ten threads, none above a fifth: `mkw_vk recorder` 17 to 19, `mkw_vk replay` 16 to 18, `MainThread` 14 to
@@ -1575,3 +1584,117 @@ the driver, the parallel replay's threads.
 Found on the way: a row added to `gpu/vk/switches.def` does not compile `vk_main.cpp` again here (`nx2/build.py`
 `HEADER_EXTS` has no `.def`; upstream's has, a sync brings it), so a build that kept its objects says
 `RX_VK_FEEDBACK_COPY is set, and is not a switch of this build` and then obeys it.
+
+### 2026-11-20: issue #6, the crystal overlay drops out for a frame
+
+The report: "texture flickering" in the first Star-Crossed World stage (nightly `5b9dc0c`, an RX 7900 XTX on RADV,
+2560 x 1440). In the player's screencast the stage's crystal covering is missing over large parts of the picture for
+exactly one presented frame (the floor back to grey paving, the walls back to grey) and right again in the next. The
+holes have the shape of 32 pixel tiles. The flash detector's rule run over the screencast finds 5 such frames in 195.
+It shows in a jump and, at another place, while the camera turns.
+
+What it was not, each ruled out by a run of the player's at the place (the logs `i6-*.txt` of those runs):
+
+- The render thread, the write-back at a part's end, the mirror, late data, the frame gate: `RX_VK_ASYNC=0`,
+  `RX_VK_CHUNK=0`, `RX_VK_MIRROR=0`, `RX_VK_SUBMIT_DELAY_US=3000` and `RX_VK_FRAME_GATE=0` each leave the dropout.
+- A draw or a dispatch left out. With the detector and the pass trace on (`RX_VK_FLASH=1 RX_VK_PASS_TRACE=1`,
+  `i6-flash2.txt`), a bad frame and its two neighbours have the same passes, draws and dispatches.
+- Texel buffers. The tables the covering is drawn from are images, 80 x 45 x 32 and 80 x 45 x 64, written by compute
+  dispatches.
+- The capture rules (rule 2 of section 4): `RX_VK_MEM_CHECK=1` counts 0 breaks in 28,800 submits.
+- Upstream has no fix for it (looked at `89c3d21e`, 2026-11-20).
+
+The frame's order (`work/runs/i6/order1.txt`, `HOS_NVN_SYNC_LOG` and the pass trace). The game has two NVN queues, and
+each frame its render thread
+
+1. submits A1 on the first: a chain of tile dispatches, the shadows, the G-buffer, the lighting, the window's blit;
+   takes a fence, flushes;
+2. submits B on the second: three compute dispatches, of which `6c332c13...` builds the 80 x 45 x 64 grid at
+   `0x7f76190000` from lists the CPU wrote, then `2c32cb11...` and `6e448e47...`; takes a fence, flushes;
+3. presents, and submits A2 on the first (the exposure passes); takes a fence, flushes.
+
+The main thread then waits for the three fences. No `nvnCommandBufferWaitEvent` passes between the queues, so rule 1
+of section 4 had nothing to honour.
+
+The cause. A1's G-buffer draws sample the grid that B writes. The replay runs submissions in arrival order on one
+Vulkan queue, so those draws always read the grid of the frame before. On the console the two queues run side by side,
+and B's three dispatches are done long before A1 reaches its G-buffer pass. A grid one frame old is wrong against this
+frame's lists where the lists change: a jump, a camera turn.
+
+The fix (`host/kirby_queue.c`, and the lines of `host/nvn_native.c` that call it): the first queue's submission is
+held, and handed to the replay after the second queue's next one (B, then A1). It also goes before the first queue's
+own next submission, and at a present, a queue finish or a sync wait for its own fence. One submitted right after a
+present or a finish (A2, which nothing would overtake) is not held. A queue flush hands nothing over: the game flushes the
+first queue right after A1. Nothing is held until a second queue has submitted, and the log then names the two
+(`kirby: two queues: ...`). A fence taken on the held submission is set to its number at the hand-over, and a wait for
+that fence hands over first: a first test build that guessed the number stalled twice for 10 s while loading.
+`HOS_KIRBY_QUEUE_ORDER=0` gives arrival order back.
+
+Which waits hand over was settled by two runs. Every wait handing over (the test build, and `work/runs/i6/fix1.txt`)
+lets a wait of the main thread for the frame before, falling between A1 and B, send A1 first: arrival order for that
+frame. Only the wait for the held one's own fence (`fix2.txt`) stalled five times for 10 s while loading: the main
+thread waits for A1's fence first, with A2 still held, and the replay sends a submission's work to the GPU when the
+next one follows it (its batched submits), which A2 was until then; `vk: wait for fence 78 (done 77, pushed 79)` is that
+wait timing out. A2 handed over at any wait (`fix3.txt`) still stalled at the start in 2 of 6 boots with the render
+thread: the main thread handed A2 over just before waiting for it. So A2 is not held at all, and goes at its submit as
+before the fix. That still leaves the stall below.
+
+What the fix changes besides the order:
+
+- A held submission is captured when it is handed over, not at its submit (rule 2 of section 4 captures at the
+  hand-over): A1 at B's submit, A2 at the main thread's first wait or the next frame's A1. Upstream's `HOS_NVN_HOLD`
+  did the same to another game and made it worse; here the runs below show no harm.
+- A1's hand-over is made by the render thread at B's submit; the main thread hands over only in a frame without B.
+- What the game hands the replay that is no submission (a texture's registration or release, rule 3 of section 4)
+  between a held submission's submit and its hand-over gets there before it. The game keeps what a submission names
+  until it has waited for its fence, and that wait hands over; nothing wrong was seen. Not looked for beyond that.
+- A recording's copy is freed once the replay has passed the submissions made when the game let its memory go
+  (`release_copies`, `sweep_overwritten_copies`). A held submission is made and not yet counted by the replay, so
+  those two count it (`kirby_queue_pushed`), as they count upstream's held ones.
+- The first frame in which the second queue submits is still in arrival order, and a first queue made again at
+  another address would no longer be held (the game makes its queues once). The held queue is the one of the first
+  submission ever, not one known by name: a start that submitted on the compute queue first would hold the wrong one,
+  and the log's line would show it.
+
+Checked:
+
+- A test build that handed B over before A1 behind a switch (`TEMP_I6_BFIRST=1`, not in the tree), played by the
+  reporter at every place the dropout had shown, with the detector on: 0 `flash at present` lines in 27,840 presents
+  and none seen (`work/runs/i6/user-bfirst.txt`). The same build without the switch: the dropout, seen and detected
+  (`user-plain.txt`).
+- Headless, the code as committed, S5's walk (`work/runs/i6/fix3.txt`): 60.0 presents a second, 0 polls timed out,
+  GPU time 3.2 ms a frame as before, and the pass trace of frame 4200 has B's dispatches (`2c32cb11...`,
+  `6e448e47...`) first, where `order1.txt` has them last.
+- `tests/test_kirby_queue.py` cuts the six entry points out of `host/nvn_native.c`, compiles them with
+  `host/kirby_queue.c` and stand-ins for the replay and the virtual core, and makes the game's calls: the order B, A1,
+  the present, A2; a frame without B; two submissions in a row; a wait for the held fence, and for another with A1
+  held and with A2 held; a finish;
+  every fence its submission's number; the count for the recordings' copies; the switch both ways and
+  `HOS_NVN_HOLD=1`. Before the fix it fails with `the replay got "A1 B P A2", wanted "B A1 P A2"`. Not modelled:
+  threads (the render thread submits while the main thread waits), timing, the replay, the recordings' copies
+  themselves (that their two places use the count is read from the text).
+- A second reader went through the change cold and found three things in it as first written. Any sync wait handed
+  the held submission over (the paragraph on waits above). The recordings' copies did not count the held submission
+  and could be freed under it: counted now. And the third bullet of the list above, which is left as it is. Its
+  remarks that stand: a thread can wait for the lock with its virtual core held, for as long as another thread's
+  hand-over takes (no deadlock: the core is taken again only after the lock is let go); the held fence is a pointer
+  into the game's sync object, written at the hand-over. The rule for A2 was written after that reading and has had
+  no second reader.
+
+A regression, open: a 10 s stall at the start, with the render thread and batched submits (RADV). Headless boots with
+the sync log (`work/runs/i6/v4boot-*.txt`, `v4off-*.txt`), the frame gate on (this tree's default): with the fix 3 of 6
+stalled once early (fences 80 to 100, the first frames of the title), without it 1 of 6 (fence 2716, the stage's load).
+Each is a wait for the last submission of a frame, `vk: wait for fence N (done N-1, pushed N)`. That submission comes
+after the present, so the frame gate holds it until the wait lets it on (`gate_need_value`); the wait then sends the
+batched submits to the GPU and waits, and the render thread records the submission after that send. It sends a batch
+itself only when the GPU is idle (`batch_gpu_idle`), so the submission stays held until the wait gives up. Before the fix
+the work just before the present was B, which is short, and the GPU was mostly idle; now it is A1. Upstream fixed this
+(`rec::take_flush_owed` in `ed9495bb`, #1866: "a permanent hang with batched submits on RADV (a held last part with a
+waiter)"), inside its recorder's rewrite (#1763, #1866), which a sync brings. With the gate off (`RX_VK_FRAME_GATE=0`)
+every boot stalled twice, with the fix and without it (`v4gate0*-*.txt`). Once in the stage, none of the runs stalled.
+
+The open point. The test build also kept the virtual core during a hand-over (`hos_vcore_away` was not called), and
+`HOS_NVN_HOLD=1`, which has that side effect and the old order, removed the dropout at the jump but not where the
+camera turns (`i6-hold.txt`). So the order is proven together with the kept core, not alone. The fix gives the core
+up for a hand-over as the imported code does, since keeping it costs frame time where the replay runs on the
+submitting thread. Until the code as committed has been played at both places, this is in section 7.

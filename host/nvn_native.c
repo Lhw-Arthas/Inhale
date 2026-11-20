@@ -1155,12 +1155,20 @@ static void held_flush(void) {
 }
 static uint64_t held_count(void) { return (uint64_t)nheld; }
 
+/* (inhale) this game's queue order, host/kirby_queue.c: its first queue's submission goes to the replay after its second
+   queue's next one (issue #6). Its calls below: the submit, the fence, the sync wait, finish and present that hand over
+   what it holds, and the count of submissions that a dead recording copy outlives */
+int kirby_queue_submit(uint64_t queue, const uint64_t *handles, int n);
+void kirby_queue_fenced(uint64_t queue, uint64_t *fence);
+void kirby_queue_flush(const uint64_t *fence);
+uint64_t kirby_queue_pushed(void);
 NV(nvnQueueFenceSync) {
     held_init();
     nvn_sync *s = (nvn_sync *)P(1); s->fenced = 1;
     /* (longshot) the queue's own work: with nothing held, its last submission (a wait for it no longer waits for another
        queue's work stopped at an event wait) */
     s->fence = held_count() ? rx_nvn_fence() + held_count() : rx_nvn_fence_q((uint64_t)(uintptr_t)P(0));
+    kirby_queue_fenced((uint64_t)(uintptr_t)P(0), &s->fence);   /* (inhale) a fence on the submission it holds: set at the hand-over */
     if (sync_log()) hos_log("nvn: FenceSync %p -> %llu (lr %#llx)", (void *)s, (unsigned long long)s->fence, (unsigned long long)c->x[30]);
 }
 /* (the GPU waits the game makes: count and time by kind, logged every 5 s) */
@@ -1182,6 +1190,7 @@ static void wait_note(int kind, int64_t t0) {
 /* never fenced: times out, as on the console; fenced: released once the GPU reached the fence */
 NV(nvnSyncWait) {
     const nvn_sync *s = (const nvn_sync *)P(0);
+    kirby_queue_flush(&s->fence);   /* (inhale) before the fence is read: a wait for the held submission's fence hands it over, which sets it */
     if (sync_log()) hos_log("nvn: SyncWait %p fence %llu timeout %llu (lr %#llx); latest %llu, done %llu", (void *)s,
                             (unsigned long long)s->fence, (unsigned long long)U64(1), (unsigned long long)c->x[30],
                             (unsigned long long)rx_nvn_fence(), (unsigned long long)rx_nvn_replayed());
@@ -1294,6 +1303,7 @@ NV(nvnQueueFinish) {
     HT_ZONE_TEXTF(tz, "lr %#llx", (unsigned long long)c->x[30]);
 #endif
     held_flush();
+    kirby_queue_flush(NULL);   /* (inhale) a finish hands the held submission over */
     const int away = hos_vcore_away();
     const int64_t t0 = hos_now_ns();
     rx_nvn_finish();
@@ -1602,7 +1612,7 @@ static void dead_copy_add(copy_prefix *p, uint64_t after) {   /* (copy_lock held
 }
 static void release_copies(uint64_t lo, uint64_t hi) {
     if (hi <= lo || !rec_buckets) return;
-    const uint64_t after = rx_nvn_pushed() + held_count();   /* (held submits name them too) */
+    const uint64_t after = kirby_queue_pushed() + held_count();   /* (held submits name them too; (inhale) and the one kirby_queue.c holds) */
     AcquireSRWLockExclusive(&copy_lock);
     free_dead_copies();
     /* (a range over 4 GiB: every bucket once instead of every block) */
@@ -1644,7 +1654,7 @@ static size_t sweep_overwritten_copies(void) {   /* (copy_lock held) */
     if (off < 0) off = env_on("HOS_NVN_NO_SWEEP");
     if (off || !rec_buckets) return 0;
     free_dead_copies();
-    const uint64_t after = rx_nvn_pushed() + held_count();
+    const uint64_t after = kirby_queue_pushed() + held_count();   /* (inhale) the submission kirby_queue.c holds names them too */
     size_t swept = 0;
     static unsigned next_slice;   /* (the next slice's first bucket) */
     const unsigned from = next_slice;
@@ -2544,6 +2554,7 @@ NV(nvnQueueSubmitCommands) {
         resolve_deferred((uint8_t *)(uintptr_t)h[i]);
     }
     held_init();
+    if (!hold_on && kirby_queue_submit((uint64_t)(uintptr_t)q, h, n)) return;   /* (inhale) handed over or held, in this game's order */
     if (!hold_on) {
         /* (the replay runs here, on this thread, for ~9 ms a frame (vk_replay.cpp submit_q, RX_VK_ASYNC off): the virtual
            core is given up for it, as Present and AcquireTexture do, so the game's other threads run on it meanwhile.
@@ -2673,6 +2684,7 @@ NV(nvnQueuePresentTexture) {
     int64_t phases[4] = {0};
     if (trace) phases[0] = hos_now_ns();
     held_flush();   /* (a present flushes the queue) */
+    kirby_queue_flush(NULL);   /* (inhale) a present hands the held submission over, before it */
     {
         const int away = hos_vcore_away();
         if (trace) phases[1] = hos_now_ns();

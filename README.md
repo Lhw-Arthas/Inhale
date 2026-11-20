@@ -25,6 +25,7 @@ Early. One player has played it by hand on Linux; the Windows installer has been
 |---|---|
 | Opening, title screen, the first world's stages and its boss, several special stages | ✅ Played through, at 60 fps |
 | Later worlds | ❓ Not played yet |
+| Star-Crossed World stages (the Switch 2 Edition's) | ⚠️ The first one played. Up to v0.2.0 its crystal covering vanished for single frames in a jump or a camera turn. Fixed in the next build |
 | Sound, music, movies, keyboard and saves | ✅ Work |
 | Controllers | ❓ Few reports yet. Rumble is played since v0.2.0, not yet felt on a pad in play |
 | Frame generation | ⚠️ **Auto** works. A fixed **2x** and up can freeze the game for a few seconds now and then (seen on Linux with an AMD card) |
@@ -101,6 +102,10 @@ and at 2560 x 1440 on any other screen. The game's dynamic resolution is off, so
 environment variable `HOS_DYNAMIC_RES=1` to let the game lower it under load. The handheld profile keeps the game's
 own smaller sizes and its steps, for a slower PC. After you update
 Inhale Builder, choose **Update an existing game folder** to build your folder again with the new version.
+
+**If the picture goes wrong where an older version drew it right**, try the environment variable
+`HOS_KIRBY_QUEUE_ORDER=0` and report what you see. It hands the game's graphics work to your PC in the order of v0.2.0
+and before, in which the crystal covering of the Star-Crossed World stages vanishes for single frames.
 
 ## What you need
 
