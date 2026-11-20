@@ -233,7 +233,8 @@ also name its method for rule 1 (its measure skill), which is not carried here.
   target they write (`cb8d129794535ac7`, `e169c16f0c368e7b`), which stay as they are.
 - The Shadow resolution row for this game (section 9, "issue #7, shadow resolution"): checked in the first stage's
   walk on an RX 7900 XTX, docked, and handheld for the size only. Not checked: NVIDIA, Windows, later worlds and
-  their stages (whether one sets a size of its own), shimmer as the camera moves, the menu row in a player's hands.
+  their stages (whether one sets a size of its own), shimmer as the camera moves, the menu row in a player's hands,
+  and its restart in play: the "After restart" tag and the question on closing the menu (game-free test only).
 - The menu rows kept for this game that were not tried in play: Mouse camera, Button prompts, Walk mode, and Output
   resolution on a screen that is not 16:9. The microphone rows are hidden for this game instead: it imports the SDK's
   input-stream API but no game code calls it (section 9, "the microphone rows").
@@ -1464,6 +1465,27 @@ gives it this game's help and hints when the host says which game runs, as the Q
 `hn_shadow_res_kirby`, translated in `gpu/vk/menu_i18n_inhale.h`). Auto keeps upstream's tiers: the game's size on 4 and
 6 GB, High on 8 GB, Highest from 12 GB.
 
+**The restart.** The first build of the row said "Applies after a restart" but did not ask for one: the "After
+restart" tag and the question on closing the menu come only from rows with `Row::restart` set, given a slot once by
+`restart_init`, and upstream's row has it off (the sun's cascades follow it each frame). So, for this game only:
+
+- `menu_option_set`, when the host says which game runs, sets the flag with the help. The host says so in `rx_start`
+  before the renderer starts, so the slot is taken.
+- The restart compares the size drawn, `menu_shadow_res()` with Auto resolved, not the row's value
+  (`inhale_restart_value`, called from upstream's `row_restart_value`; upstream's checks that cut that function stand
+  it in with one line). A preset that moves the memory tier under Auto counts; Auto on the game's own size and Game's
+  do not differ.
+- The start value is the level the game got. `restart_init` runs in `pick_device`, before Auto's tier is known, so its
+  value is a guess. `kirby_shadow_read` sends the level it applied (Game's too) through `option_set`
+  (`HOS_OPT_SHADOW_RES`), only where the read holds the known pair, and the menu takes it as the slot's start value.
+  A file whose pair is not the known one sends nothing, and the start stays the guess.
+
+The other rows were checked the same way, their help against the flag and against what this game reads once:
+upstream's table agrees with its help. Output resolution and the Profile (read at the ScnCommon.bin read), GPU
+device, Game language and Button prompts take a restart already. Depth of field (each draw), Anisotropic filtering
+(the samplers made again) and the controller, mouse and motion rows (polled) apply at once. Shadow resolution was the
+only one wrong.
+
 **Measured** (RX 7900 XTX, Mesa, 3840 x 2160 output, S5's walk, `work/runs/i7/l1.txt` to `l3.txt`):
 
 | Level | Map | Video memory (3 targets, 6 bytes a texel) | GPU time a frame | Presents a second |
@@ -1485,8 +1507,9 @@ kind of name-then-value block holds `ActorFadeStartDistance`, `ActorCullingStart
 `DecorCullingStartDistance`, a place to start.
 
 `tests/test_kirby_shadow.py` holds the patch on made-up bytes (each level, the handheld size, another file, a read
-that does not hold the pair, bytes not known, a level not known), the call from the read hook, and the menu's row and
-texts, their sizes and memory computed from the patch's.
+that does not hold the pair, bytes not known, a level not known), the call from the read hook, the level told to the
+menu only where the known pair was read, the menu's row and texts (their sizes and memory computed from the patch's),
+and the row's restart: the flag in this game only, the size drawn compared, the start value taken under `menu_mu`.
 
 ### 2026-11-20: coloured discs on a Radeon 780M (AMD's Windows driver)
 

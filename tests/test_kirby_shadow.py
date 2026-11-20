@@ -8,6 +8,10 @@ And the source around it: kirby_res.c's read calls it, and the menu shows the ro
 game's rows) with this game's help and hints, whose sizes are the patch's and whose memory is the map's three targets
 (a D16 depth and two R16 blur targets, 6 bytes a texel).
 
+The size is read once, so the row takes a restart in this game: the read tells the menu the level it applied
+(rx_option_set 56), only where the known pair was in it, and the menu takes that as the row's start value, the row
+flagged restart and compared by the size drawn (menu_shadow_res: Auto resolved). The other game's row stays live.
+
     python -I tests/test_kirby_shadow.py --cxx clang++
 """
 import argparse
@@ -33,6 +37,9 @@ FIXTURE = r'''
 void hos_log(const char *fmt, ...) { va_list ap; va_start(ap, fmt); vprintf(fmt, ap); va_end(ap); printf("\n"); }
 static int option = -1, asked;
 int rx_option(int id, int otherwise) { asked = id; return option < 0 ? otherwise : option; }
+static int told_id = -1, told = -1;   /* (what the read told the menu: rx_option_set) */
+void rx_option_set(int id, int value) { told_id = id, told = value; }
+static void untold(void) { told_id = -1, told = -1; }
 int kirby_shadow_patch(const char *guest, int64_t off, uint8_t *buf, uint64_t n, int level);
 void kirby_shadow_read(const char *guest, int64_t off, uint8_t *buf, uint64_t n);
 
@@ -85,6 +92,21 @@ int main(void) {
     option = -1, fresh();
     kirby_shadow_read(path, 0, file, sizeof file);
     assert(same());
+    /* the level applied told to the menu (the row's start value), Game's too; nothing where the pair was not read */
+    option = 2, fresh(), untold();
+    kirby_shadow_read(path, 0, file, sizeof file);
+    assert(told_id == 56 && told == 2 && at(0) == 4096);
+    option = 0, fresh(), untold();
+    kirby_shadow_read(path, AT - 0x10, file + AT - 0x10, 0x20);
+    assert(told_id == 56 && told == 0 && same());
+    option = 1, fresh(), untold();
+    kirby_shadow_read("aoc1:/basil/App.bin", 0, file, sizeof file);
+    kirby_shadow_read(path, 0, file, AT + 4);
+    kirby_shadow_read(path, AT + 4, file + AT + 4, 0x10);
+    assert(told_id == -1 && same());
+    file[AT + 4] ^= 1;   /* (another version of the file: nothing applied, nothing told) */
+    kirby_shadow_read(path, 0, file, sizeof file);
+    assert(told_id == -1 && at(0) == 1400);
     puts("ok");
     return 0;
 }
@@ -105,9 +127,22 @@ def check_source():
     assert "opts.shadow_res" not in block(menu, "bool is_oot_row(const Row& r) {"), \
         "is_oot_row: Shadow resolution must show for this game"
     oot_game = block(menu, "if (id == HOS_OPT_OOT_GAME) {")
-    assert "else if (r.value == &opts.shadow_res) r.help = kShadowHelpKirby, r.hint = hn_shadow_res_kirby;" in oot_game, \
+    kirby_row = between(oot_game, "else if (r.value == &opts.shadow_res)", ";")
+    assert "r.help = kShadowHelpKirby, r.hint = hn_shadow_res_kirby" in kirby_row, \
         "menu_option_set: the Shadow resolution row does not take this game's help and hints"
     help_kirby = between(menu, "const char* const kShadowHelpKirby =", "MENU_HINTS(hn_shadow_res_kirby, 0,")
+    # (the row takes a restart in this game only, compared by the size drawn, its start value the one the read applied)
+    assert "r.restart = true" in kirby_row, \
+        "menu_option_set: the Shadow resolution row does not take a restart in this game"
+    row = between(menu, '{TAB_GRAPHICS, "Shadow resolution", &opts.shadow_res,', "},")
+    assert row.rstrip().endswith("hn_shadow_res"), "the row table's Shadow resolution must stay live (the other game's)"
+    assert "if (int v; inhale_restart_value(r, &v)) return v;" in block(menu, "int row_restart_value("), \
+        "row_restart_value: no longer asks inhale_restart_value"
+    value = block(menu, "bool inhale_restart_value(")
+    assert "if (r.value != &opts.shadow_res || !r.restart) return false;" in value and \
+        "*v = menu_shadow_res();" in value, "inhale_restart_value: Shadow resolution's restart is the size drawn"
+    told = block(menu, "if (id == HOS_OPT_SHADOW_RES) {")
+    assert "std::lock_guard lk(menu_mu);" in told and "restart_state.restart_value(" in told, told
     assert "Applies after a restart." in help_kirby and "sun" not in help_kirby, help_kirby
     hints = between(menu, "MENU_HINTS(hn_shadow_res_kirby, 0,", "const char* const kLaptopHelpPlain =")
     for size in [1400] + sizes:

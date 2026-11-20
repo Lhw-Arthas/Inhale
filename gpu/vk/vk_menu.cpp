@@ -2219,10 +2219,19 @@ namespace mr = menu_restart;
 mr::State restart_state;
 int restart_slot[kRows];             // (a row's slot in restart_state, -1 none)
 const char* restart_names[mr::kMax];
+/// (inhale) Shadow resolution's value as a restart compares it: where the row takes one (this game's, menu_option_set), the
+/// size drawn, Auto resolved, so a preset that moves the memory tier counts and Auto on the game's own size does not. Apart
+/// from row_restart_value, which upstream's checks cut and compile: they stand this in. False: the row's own value
+bool inhale_restart_value(const Row& r, int* v) {
+    if (r.value != &opts.shadow_res || !r.restart) return false;
+    *v = menu_shadow_res();
+    return true;
+}
 /// (longshot) A row's value as a restart compares it: the Output resolution's size itself, so another size of the player's own
 /// (Custom output size), on the same choice, is a change too. Mono and Stereo share a channel layout and change live.
 int row_restart_value(const Row& r) {
     if (r.value == &opts.audio_output && *r.value == 3) return 1;
+    if (int v; inhale_restart_value(r, &v)) return v;   // (inhale)
     if (r.value != &opts.output_res) return *r.value;
     const Out o = output_at(*r.value);
     return (int)(o.w << 16 | o.h);
@@ -5963,9 +5972,16 @@ void menu_option_set(int id, int value) {
         for (Row& r : rows) {   // (the help that spoke of the rows now hidden)
             if (r.value == &opts.preset) r.help = kPresetHelpPlain, r.hint = hn_preset_plain;
             else if (is_laptop_row(r)) r.help = kLaptopHelpPlain;
-            else if (r.value == &opts.shadow_res) r.help = kShadowHelpKirby, r.hint = hn_shadow_res_kirby;   // (inhale)
+            else if (r.value == &opts.shadow_res)   // (inhale: host/kirby_shadow.c sizes the map once, as the file is read)
+                r.help = kShadowHelpKirby, r.hint = hn_shadow_res_kirby, r.restart = true;
         }
         oot_rows_hold();
+        return;
+    }
+    if (id == HOS_OPT_SHADOW_RES) {   // (inhale: the size host/kirby_shadow.c applied, the row's start value for its restart)
+        std::lock_guard lk(menu_mu);
+        for (const Row& r : rows)
+            if (r.value == &opts.shadow_res) restart_state.restart_value(restart_slot_of(r), value);
         return;
     }
     if (id == OOT_CHEAT_AGE_ID) {   // (Link's age: the Switch age row shows it)

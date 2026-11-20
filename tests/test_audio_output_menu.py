@@ -51,6 +51,7 @@ HOST
 struct Row { int tab; const char* name; int* value; };
 struct { int output_res, vsync, resolution, fps_cap, upscale, dlss, dlss_pre_bloom, handheld, ultrawide, audio_output; } opts;   // (ultrawide: the Aspect ratio row's key)
 int monitor_pick; // Unexercised fullscreen selector referenced by the real ini_key().
+bool inhale_restart_value(const Row&, int*) { return false; }   // (inhale: vk_menu.cpp's, this game's Shadow resolution)
 MENU
 int main(int argc, char **argv) {
     assert(argc == 7);

@@ -92,6 +92,7 @@ static int saves = 0;
 void save() { saves++; }
 static const int* released = nullptr;   // (main's env_release: the row the player set is theirs, over HOS_OUTPUT_RES)
 void env_release(const int* value) { released = value; }
+bool inhale_restart_value(const Row&, int*) { return false; }   // (inhale: vk_menu.cpp's, this game's Shadow resolution)
 @@CUT@@
 static const uint32_t K = HOS_TEXT_KEY;
 static void type(TextField& f, const char* s) {

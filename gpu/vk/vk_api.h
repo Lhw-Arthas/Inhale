@@ -72,7 +72,8 @@ enum { HOS_OPT_AUDIO_OUTPUT = 57 };
 enum { HOS_OPT_DAMAGE_TAKEN = 55 };
 /* (HOS_OPT_SHADOW_RES, 56: Graphics' Shadow resolution, host/oot_shadow.c: the sun's cascades as drawn, its Auto resolved
    (gpu/vk/vk_menu.cpp menu_shadow_res), 0 the game's 1600, 1 2200, 2 3072, read each frame. The existing option callback:
-   no new member.) */
+   no new member. (inhale) Also sent to option_set by host/kirby_shadow.c: the level it applied as the file was read, the
+   row's start value for its restart.) */
 enum { HOS_OPT_SHADOW_RES = 56 };
 /* (HOS_OPT_RENDER_THREAD, 58: whether the render thread runs on this run, 1 or 0, as the renderer resolved it once at the
    start (gpu/vk/vk_replay.cpp async_on: RX_VK_ASYNC=1, or unset and the Insert menu's Threaded rendering On, or its Auto's
