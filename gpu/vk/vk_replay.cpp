@@ -62,6 +62,7 @@
 #include "readback_late.h"
 #include "hold_gpu.h"   // (longshot: sync_watch's rule for queues stopped past hold_ms)
 #include "frame_overlap.h"   // (longshot: when the game's frame wait is answered, and where the presents are made)
+#include "flush_owed_inhale.h"   // (inhale: a blocking wait's fence sends the batch its submit lands in; until upstream's #1866)
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
 namespace mkwvk {
@@ -289,6 +290,7 @@ void queue_flush_locked() {   // (dev.present_mu held)
     if (res != VK_SUCCESS && failures++ < 8) logf("vk: batched submit %llu failed (%d)", (unsigned long long)batch_next, (int)res);
     if (res == VK_ERROR_DEVICE_LOST) device_lost();
     if (res == VK_SUCCESS && pend.any_signal) note_timeline_sent(pend.signal);
+    if (res == VK_SUCCESS && pend.any_signal) flush_owed.met(pend.signal);   // (inhale: the waits it sends for owe no more)
     batch_flushed = batch_next;
     st_flushes++, st_batched_cbs += (int64_t)pend.cbs.size();
     st_reason[flush_reason]++;
@@ -958,6 +960,8 @@ void submit_recording(Recording& r, bool signal_value = true, uint64_t signal_at
         static const size_t cap = getenv("RX_VK_BATCH_MAX") ? (size_t)std::max(1, atoi(getenv("RX_VK_BATCH_MAX"))) : 32;
         if (pend.cbs.size() >= cap) flush_reason = FR_CAP, queue_flush_locked();
         if (!pend.cbs.empty() && batch_gpu_idle()) flush_reason = FR_OTHER, queue_flush_locked();   // (#1993)
+        // (inhale) a wait whose own send came before this submit was held: sent now, not when the wait gives up (10 s)
+        if (!pend.cbs.empty() && pend.any_signal && flush_owed.due(pend.signal)) flush_reason = FR_WAIT, queue_flush_locked();
         return;
     }
     PROF(PROF_QSUBMIT);
@@ -3334,6 +3338,7 @@ int wait(uint64_t f, uint64_t timeout_ns) {
     }
     FpsFenceWait fence_kind(recorded);
     if (timeout_ns) gate_need_value(f);   // (the render thread's whole frames: this one's submit goes on without its present)
+    if (timeout_ns) flush_owed.owe(f, timeline_sent.load(std::memory_order_relaxed));   // (inhale: f's submit, held later, sends)
     FpsRender fr;   // (the FPS counter's Breakdown: the replay of stopped work in here is the renderer's, the waits the GPU's)
     queue_flush_for(FR_WAIT);
     // (longshot) a fence of one queue whose work up to it is recorded whole (none of it stopped): that work, not the other

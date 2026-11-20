@@ -214,8 +214,8 @@ also name its method for rule 1 (its measure skill), which is not carried here.
   "issue #6").
 - Issue #6's fix as committed, played: the runs that showed it were of a test build that also kept the virtual core
   during a hand-over (section 9, "issue #6", the open point).
-- Issue #6's fix: the 10 s stall at the start it makes more frequent with the render thread on RADV (section 9,
-  "issue #6", "A regression, open").
+- The fix of the 10 s stall at the start (section 9, "issue #6", "The stall at the start, fixed"): headless only, not
+  played; and the lower waiter's case it does not cover (same place).
 - The Windows build, on Windows 11 with Visual Studio Build Tools 2022, LLVM's clang and FFmpeg from vcpkg
   (`x64-windows-static-md`, in a CPM-style folder named by `RX_CPM`): `tests/run_all.py` passes (3 checks that build the
   lifter fail only with MinGW's clang first on `PATH`; they pass with the Visual Studio environment), `nx2/build.py
@@ -1681,7 +1681,7 @@ Checked:
   into the game's sync object, written at the hand-over. The rule for A2 was written after that reading and has had
   no second reader.
 
-A regression, open: a 10 s stall at the start, with the render thread and batched submits (RADV). Headless boots with
+The stall at the start, fixed: a 10 s stall at the start, with the render thread and batched submits (RADV). Headless boots with
 the sync log (`work/runs/i6/v4boot-*.txt`, `v4off-*.txt`), the frame gate on (this tree's default): with the fix 3 of 6
 stalled once early (fences 80 to 100, the first frames of the title), without it 1 of 6 (fence 2716, the stage's load).
 Each is a wait for the last submission of a frame, `vk: wait for fence N (done N-1, pushed N)`. That submission comes
@@ -1692,6 +1692,42 @@ the work just before the present was B, which is short, and the GPU was mostly i
 (`rec::take_flush_owed` in `ed9495bb`, #1866: "a permanent hang with batched submits on RADV (a held last part with a
 waiter)"), inside its recorder's rewrite (#1763, #1866), which a sync brings. With the gate off (`RX_VK_FRAME_GATE=0`)
 every boot stalled twice, with the fix and without it (`v4gate0*-*.txt`). Once in the stage, none of the runs stalled.
+
+The fix (`gpu/vk/flush_owed_inhale.h`, and the lines of `gpu/vk/vk_replay.cpp` marked `(inhale)` that call it) does
+what upstream's does, keyed on fence values instead of its recorder's parts: a wait with a timeout (not a poll, which
+comes many times a frame) owes its value before its own send, and the submit that holds that value sends the batch at
+once (`FR_WAIT`). A seq_cst fence on each side (the waiter's after it owes, the submitter's after it raises
+`pend_held`) makes sure that one of the two sends it. A value already sent is not owed, else every wait for the frame
+before's fence would send the next submit alone. As upstream's, only the highest owed value is kept, and a send that
+reaches it clears it. The header and its lines go at the sync that brings #1866.
+
+Checked:
+
+- The same headless boots with the fix (`f1boot-*.txt`, `f1off-*.txt`, `f1gate0-*.txt`): no stall in 6 with issue
+  #6's fix (was 3), in 6 with `HOS_KIRBY_QUEUE_ORDER=0` (was 1), in 3 with `RX_VK_FRAME_GATE=0` (was two in each). Each
+  boot was at fence ~5,960 when its 25 s ran out.
+- S5's walk with the render thread on, with the fix and with its lines taken out, twice each, a temporary count of the
+  sends by reason in the build (`f1walk-*.txt`, `f1walk-*/frames.csv`). Both walks without them stalled (fences 2708;
+  80, 2708, 2736); those with them did not and presented 60.0 a second. Frames 1500 on: p50 16.67 ms, p95 16.96 and
+  16.93, p99 17.37 and 17.31, none over 20 ms, as before this fix (`reg-a1-o1`: 16.67, 16.97, 17.21). The batching is unchanged: 2.16 command buffers a
+  send against 2.17, about 1.23 sends per fence value either way. The owed sends (29 and 44 in a run, against 6 and 8
+  sends for a wait without them) all came before the 6,000th send, in the title and the load: none in play.
+- `tests/test_flush_owed.py` compiles a model of the held submits, the two sends and the submit with the header, and
+  makes the cases: the stall's order, the other order, a poll, two waiters, a signal past the owed value, a send below
+  it, a wait for what is already sent, and a waiter and a submitter racing on two threads 100,000 times. It reads the
+  lines' places in `vk_replay.cpp`. Before the fix it fails on the four places. Each of these breaks it: the
+  submitter's fence removed (5 to 6,500 of the 100,000 rounds left the value held), `>=` made `>` or `==`, the owed
+  value never cleared, cleared by any send, owed when already sent, owed after the waiter's send, cleared by a send that
+  failed. The waiter's fence removed does not break it on x86, where the CAS before it is a full barrier already. Not
+  modelled: the wait's later sends, the frame gate, `RX_VK_BATCH_MAX`, the send when the GPU is idle, the recordings'
+  timeline, timing.
+- A second reader went through the header, the lines and the test cold, and found no fault in the fix. What the test
+  lacked (a signal past the owed value, a check that a failed send clears nothing) is in it now. Its remarks that stand:
+  a lower waiter is sent only once the highest owed value is held. With the render thread, the higher waiter's
+  `gate_need_value` lets that submit on. Where it cannot come (it waits behind a queue stopped at an event wait, with
+  `RX_VK_ASYNC=0`; or a wait that gave up leaves a higher value owed), the lower waiter can still wait its 10 s, as
+  before the fix. This game makes no event waits between its queues. `vk_timeline_wait` (upstream's) has the same race
+  and does not owe: it waits 250 ms at most.
 
 The open point. The test build also kept the virtual core during a hand-over (`hos_vcore_away` was not called), and
 `HOS_NVN_HOLD=1`, which has that side effect and the old order, removed the dropout at the jump but not where the
