@@ -26,7 +26,7 @@ Early. One player has played it by hand on Linux; the Windows installer has been
 | Opening, title screen, the first world's stages and its boss, several special stages | ✅ Played through, at 60 fps |
 | Later worlds | ❓ Not played yet |
 | Sound, music, movies, keyboard and saves | ✅ Work |
-| Controllers | ❓ Few reports yet |
+| Controllers | ❓ Few reports yet. Rumble is played since v0.2.0, not yet felt on a pad in play |
 | Frame generation | ⚠️ **Auto** works. A fixed **2x** and up can freeze the game for a few seconds now and then (seen on Linux with an AMD card) |
 | Linux | ✅ The AppImage, tested on CachyOS with an AMD Radeon RX 7900 XTX (Mesa). It also starts in clean Ubuntu 22.04 and Fedora |
 | Windows | ✅ The installer, tested on Windows 11 with an NVIDIA RTX 2080 SUPER, built from the extracted folders. The `.nup` route there is still to be tried |
@@ -83,7 +83,17 @@ In Inhale Builder:
    longer on a smaller one; the window shows the time left. You can stop it: what was compiled is kept for next time.
 4. **Play.** **Create shortcut** adds the game to the applications menu (Linux) or the desktop (Windows).
 
-The **Insert** key opens Inhale's own menu in the game (graphics, frame generation, controls). After you update
+**The first start takes longer.** Before the title screen it prepares the game's shaders and pipelines (about half a
+minute on a 12-core PC), so play does not stutter while they compile. Later starts reuse them. A new version of Inhale
+can prepare them again once.
+
+The **Insert** key opens Inhale's own menu in the game (graphics, frame generation, controls). **Graphics, Detail,
+Depth of field** turns the game's depth of field off or on at once.
+
+**Resolution.** The 3D scene is drawn at your screen's size up to 3840 x 2160 (a 16:9 screen wider than 2560 x 1440),
+and at 2560 x 1440 on any other screen. The game's dynamic resolution is off, so the size stays fixed; set the
+environment variable `HOS_DYNAMIC_RES=1` to let the game lower it under load. The handheld profile keeps the game's
+own smaller sizes and its steps, for a slower PC. After you update
 Inhale Builder, choose **Update an existing game folder** to build your folder again with the new version.
 
 ## What you need

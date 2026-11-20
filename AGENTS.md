@@ -63,4 +63,7 @@ line of an imported file that differs here can meet a change of Longshot's and c
   a run with nothing failed here can still fail there. The Vulkan headers are found only by
   `INHALE_VULKAN_HEADERS=<folder holding vulkan/vulkan.h>` (not in `/usr/include`); set it, add `--strict`, and read
   what is still skipped.
+- **A change a player sees updates `README.md` in the same commit**: a menu row, a setting or environment variable a
+  player may set, what the first start does, a line of the status table. `docs/design.md` is for how and why; the
+  README is what a player reads. Before a release, check that the README says what the release changes.
 - **Builds go under `work/`**, which git ignores, and never on a RAM file system (`/tmp` is often one).
