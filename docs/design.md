@@ -230,6 +230,9 @@ also name its method for rule 1 (its measure skill), which is not carried here.
   Not checked: the fix in a window in the player's hands, other stages, AMD's older Windows driver branch (RX 5000
   and RX 6000) and AMDVLK, what the two copies cost at other scene sizes, and the two programs that sample the depth
   target they write (`cb8d129794535ac7`, `e169c16f0c368e7b`), which stay as they are.
+- The Shadow resolution row for this game (section 9, "issue #7, shadow resolution"): checked in the first stage's
+  walk on an RX 7900 XTX, docked, and handheld for the size only. Not checked: NVIDIA, Windows, later worlds and
+  their stages (whether one sets a size of its own), shimmer as the camera moves, the menu row in a player's hands.
 - The menu rows kept for this game that were not tried in play: Mouse camera, Button prompts, Walk mode, and Output
   resolution on a screen that is not 16:9. The microphone rows are hidden for this game instead: it imports the SDK's
   input-stream API but no game code calls it (section 9, "the microphone rows").
@@ -1403,6 +1406,60 @@ The kind is one of `trap`, `branch to a non-function`, `indirect call`, `indirec
 runtime's text (an svc's has a number formatted into it, and a text this does not know becomes `other`). A fatal that
 is no trap has no such line. `tests/test_crash_record.py` holds it with three trapping children. Not checked: the
 Windows build's record (the test and the game ran on Linux).
+
+### 2026-11-20: issue #7, shadow resolution
+
+The issue asks for a higher LOD, texture quality and shadow quality. Shadows first, as the Graphics tab's Shadow
+resolution row (upstream's, `opts.shadow_res`, option 56, its Auto by the card's memory), which was hidden here as one
+of the other game's rows.
+
+**What the game draws.** One square shadow map, a D16 depth target, drawn in three passes a frame (the first clears it:
+land, decor, characters, by the names `ParallelShadowMapLand`, `ParallelShadowMapDecorDefault` and
+`ParallelShadowMapEffectAndChara` in `basil/ScnCommon.bin`), then blurred twice through two R16 targets of its size
+(program `21240c5afa2d2e61`, which the bloom uses too). In the pass trace (`RX_VK_PASS_TRACE=1
+RX_VK_PASS_TRACE_AT=300`, S5's walk, `work/runs/i7/base.txt`): 1000 x 1000 in two passes before the stage (presents 300
+and 600), 1400 x 1400 at every traced frame of the stage from 900 to 3900. It did not change over the walk: no sign of
+`_changeShadowMapSizeAuto` stepping it. Handheld (`HOS_HANDHELD=1`, `hh3.txt`): 980 x 980.
+
+**Where the size comes from.** Data. `basil/ScnCommon.bin` of the data title holds, after the names
+`UseCustomShadowMapResolution`, `ShadowMapResolutionConsole` and `ShadowMapResolutionHandheld`, the u32 pair 1400, 980
+at 0x173ec40, the only such pair in the dump. Written to 2800 as the file was read (a test build), the stage's map was
+2800 x 2800 at every traced frame (`x2800.txt`). The file is read once, whole, at the start, after the renderer has
+resolved its Auto (the log's `policy: auto settings` line comes first), so the row's value is known then, and a change
+applies after a restart. Not found: the body of `get_CurrentShadowMapResolution` and what
+`GetResolutionArrayForShadowMap` holds, so the game's own larger sizes, if it has any, are not known.
+
+**The change.** `host/kirby_shadow.c`, called from `kirby_res.c`'s read hook: the console size becomes 2800 (High,
+twice the game's) or 4096 (Highest; the largest side every Vulkan device must allow, so no limit to ask for), never
+lower than the file's, and only where the pair is the one known (another version of the file is left, and the log
+says so). The handheld size stays the game's. The menu shows the row for this game (`is_oot_row` no longer lists it) and
+gives it this game's help and hints when the host says which game runs, as the Quality preset's (`kShadowHelpKirby`,
+`hn_shadow_res_kirby`, translated in `gpu/vk/menu_i18n_inhale.h`). Auto keeps upstream's tiers: the game's size on 4 and
+6 GB, High on 8 GB, Highest from 12 GB.
+
+**Measured** (RX 7900 XTX, Mesa, 3840 x 2160 output, S5's walk, `work/runs/i7/l1.txt` to `l3.txt`):
+
+| Level | Map | Video memory (3 targets, 6 bytes a texel) | GPU time a frame | Presents a second |
+|---|---|---|---|---|
+| Game's | 1400 | about 12 MB | 2.7 ms | 60.0 |
+| High | 2800 | about 47 MB | 2.9 ms | 60.0 |
+| Highest | 4096 | about 101 MB | 3.2 ms | 60.0 |
+
+Shots at full size (`fshots_l1/`, `fshots_l3/`, present 2400 the same pose in both): no acne and no other new fault on
+the ground or the characters; the gain is small, because the game blurs its map, so its edges were soft already: they
+are a little tighter. `RX_VK_LOG_CASCADE_BIAS=1` (`bias3.txt`, Highest) logs its first 40 draws only, all the title's
+1000 x 1000 map: no depth bias asked (enabled 0, units 0, slope 0); the stage's draws were not reached by it. Whether
+the projection snaps to the texel size (shimmer as the camera moves) is not seen in still shots.
+
+**Leads for the rest of the issue, nothing built.** Textures: the game ships one size of each; the Anisotropic
+filtering row (up to 16x) already shows for this game. LOD: `LodCullingController`, `UseLodModel`, `IsUseLodCulling`,
+`FarDistCullingDist`, `_bf_ViewDistance` and `EffectLodLv` in `basil/ScnCommon.bin`; near `IsUseLodCulling` the same
+kind of name-then-value block holds `ActorFadeStartDistance`, `ActorCullingStartDistance`, `DecorFadeStartDistance` and
+`DecorCullingStartDistance`, a place to start.
+
+`tests/test_kirby_shadow.py` holds the patch on made-up bytes (each level, the handheld size, another file, a read
+that does not hold the pair, bytes not known, a level not known), the call from the read hook, and the menu's row and
+texts, their sizes and memory computed from the patch's.
 
 ### 2026-11-20: coloured discs on a Radeon 780M (AMD's Windows driver)
 

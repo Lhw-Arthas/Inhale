@@ -66,4 +66,6 @@ void kirby_read_done(const char *guest, int64_t off, uint8_t *buf, uint64_t n) {
     if (!guest || !strstr(guest, "ScnCommon")) return;
     const char *e = getenv("HOS_DYNAMIC_RES");
     kirby_scn_patch(guest, off, buf, n, hos_output_size(0), hos_output_size(1), !hos_handheld() && !(e && atoi(e)));
+    void kirby_shadow_read(const char *guest, int64_t off, uint8_t *buf, uint64_t n);   /* (the shadow map's size: kirby_shadow.c) */
+    kirby_shadow_read(guest, off, buf, n);
 }

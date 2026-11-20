@@ -1163,6 +1163,16 @@ MENU_HINTS(hn_preset_plain, 0, "Each row as you set it. Changing most rows yours
 const char* const kPresetHelpPlain =
     "Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays "
     "yours.";
+// (inhale) Shadow resolution's help where it sizes this game's shadow map (host/kirby_shadow.c), taken as the preset's
+const char* const kShadowHelpKirby =
+    "The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more "
+    "video memory and a little GPU time. Applies after a restart.";
+MENU_HINTS(hn_shadow_res_kirby, 0,
+           "Chosen from the graphics card's memory: the game's size on 4 and 6 GB, High on 8 GB, Highest on 12 GB or "
+           "more.",
+           "1400 pixels a side, the console's. About 12 MB of video memory.",
+           "2800 pixels a side. About 47 MB of video memory.",
+           "4096 pixels a side. About 101 MB of video memory.")
 const char* const kLaptopHelpPlain =
     "For integrated graphics with 4 CPU threads or fewer (an i3 laptop's UHD Graphics): the plain window scale without "
     "sharpening, the handheld profile, smaller textures, Intel's shaders one at a time and quick compute builds. The "
@@ -2289,7 +2299,7 @@ bool is_oot_row(const Row& r) {
     return r.cheat >= 0 || v == &opts.mic || v == &opts.microphone_gain ||
            (r.tab == TAB_AUDIO && !v && !strcmp(r.name, "Test microphone")) ||
            v == &opts.debug_tools || v == &opts.transition_autosave || v == &opts.damage_taken ||
-           v == &opts.fov || v == &opts.shadow_res || v == &opts.wide_menus || v == &opts.hud_layout ||
+           v == &opts.fov || v == &opts.wide_menus || v == &opts.hud_layout ||   // (inhale: not Shadow resolution, kirby_shadow.c)
            v == &opts.text_speed || v == &opts.text_size || v == &opts.camera_speed || v == &opts.skip_title ||
            v == &opts.skip_opening || v == &opts.resolution || v == &opts.dlss || v == &opts.dlss_model ||
            v == &opts.fps_cap || v == &opts.realtime || v == &opts.disable_camera_centering ||
@@ -5953,6 +5963,7 @@ void menu_option_set(int id, int value) {
         for (Row& r : rows) {   // (the help that spoke of the rows now hidden)
             if (r.value == &opts.preset) r.help = kPresetHelpPlain, r.hint = hn_preset_plain;
             else if (is_laptop_row(r)) r.help = kLaptopHelpPlain;
+            else if (r.value == &opts.shadow_res) r.help = kShadowHelpKirby, r.hint = hn_shadow_res_kirby;   // (inhale)
         }
         oot_rows_hold();
         return;

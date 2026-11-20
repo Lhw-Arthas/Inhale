@@ -33,6 +33,7 @@ static uint32_t out_w = 3840, out_h = 2160;
 static int handheld;
 uint32_t hos_output_size(int height) { return height ? out_h : out_w; }
 int hos_handheld(void) { return handheld; }
+void kirby_shadow_read(const char *guest, int64_t off, uint8_t *buf, uint64_t n) { (void)guest, (void)off, (void)buf, (void)n; }
 int kirby_scn_patch(const char *guest, int64_t off, uint8_t *buf, uint64_t n, uint32_t out_w, uint32_t out_h, int fixed);
 void kirby_read_done(const char *guest, int64_t off, uint8_t *buf, uint64_t n);
 

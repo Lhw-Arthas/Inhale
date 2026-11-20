@@ -15,6 +15,9 @@ inline constexpr const char* kRetired[] = {
     "What the ocarina hears when the game's microphone option is on (playing an instrument, or humming).",
 };
 inline constexpr Entry kpt_BR[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "1400 pixels de lado, a do console. Cerca de 12 MB de memória de vídeo."},
+    {"2800 pixels a side. About 47 MB of video memory.", "2800 pixels de lado. Cerca de 47 MB de memória de vídeo."},
+    {"4096 pixels a side. About 101 MB of video memory.", "4096 pixels de lado. Cerca de 101 MB de memória de vídeo."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "E um gráfico dos tempos de quadro dos últimos 4 segundos, com uma linha no tempo do limite de fps."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, Nitidez 30%."},
     {"Depth of field", "Profundidade de campo"},
@@ -25,8 +28,12 @@ inline constexpr Entry kpt_BR[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "Ajusta o Filtro de escala, a Nitidez e o Perfil para uma GPU com essa memória. A Geração de quadros continua sendo escolha sua."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "O desfoque que o jogo aplica ao que está longe da câmera. Desligado mantém a imagem inteira nítida. Aplica na hora."},
     {"The microphone the game listens to, when it uses one.", "O microfone que o jogo escuta, quando usa um."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "O tamanho do mapa de sombras: maior mantém nítidas, em vez de quadriculadas, as sombras dos personagens e do cenário, em troca de mais memória de vídeo e um pouco de tempo de GPU. Aplica após reiniciar."},
 };
 inline constexpr Entry kes_419[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "1400 píxeles por lado, la de la consola. Unos 12 MB de memoria de video."},
+    {"2800 pixels a side. About 47 MB of video memory.", "2800 píxeles por lado. Unos 47 MB de memoria de video."},
+    {"4096 pixels a side. About 101 MB of video memory.", "4096 píxeles por lado. Unos 101 MB de memoria de video."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "Y un gráfico de los tiempos de cuadro de los últimos 4 segundos, con una línea en el tiempo del límite de fps."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, Nitidez 30%."},
     {"Depth of field", "Profundidad de campo"},
@@ -37,8 +44,12 @@ inline constexpr Entry kes_419[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "Ajusta el Filtro de escalado, la Nitidez y el Perfil para una GPU con esa memoria. La Generación de cuadros sigue siendo elección tuya."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "El desenfoque que el juego aplica a lo que está lejos de la cámara. Apagado mantiene nítida toda la imagen. Se aplica al instante."},
     {"The microphone the game listens to, when it uses one.", "El micrófono que escucha el juego, cuando usa uno."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "El tamaño del mapa de sombras: más alto mantiene nítidas, en lugar de pixeladas, las sombras de los personajes y del escenario, a cambio de más memoria de video y algo de tiempo de GPU. Se aplica al reiniciar."},
 };
 inline constexpr Entry kes[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "1400 píxeles por lado, la de la consola. Unos 12 MB de memoria de vídeo."},
+    {"2800 pixels a side. About 47 MB of video memory.", "2800 píxeles por lado. Unos 47 MB de memoria de vídeo."},
+    {"4096 pixels a side. About 101 MB of video memory.", "4096 píxeles por lado. Unos 101 MB de memoria de vídeo."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "Y un gráfico de los tiempos de fotograma de los últimos 4 segundos, con una línea en el tiempo del límite de fps."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, Nitidez 30%."},
     {"Depth of field", "Profundidad de campo"},
@@ -49,8 +60,12 @@ inline constexpr Entry kes[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "Ajusta el Filtro de escalado, la Nitidez y el Perfil para una GPU con esa memoria. La Generación de fotogramas sigue siendo elección tuya."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "El desenfoque que el juego aplica a lo que está lejos de la cámara. Desactivado mantiene nítida toda la imagen. Se aplica al instante."},
     {"The microphone the game listens to, when it uses one.", "El micrófono que escucha el juego, cuando usa uno."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "El tamaño del mapa de sombras: más alto mantiene nítidas, en lugar de pixeladas, las sombras de los personajes y del escenario, a cambio de más memoria de vídeo y algo de tiempo de GPU. Se aplica al reiniciar."},
 };
 inline constexpr Entry kfr[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "1400 pixels de côté, celle de la console. Environ 12 Mo de mémoire vidéo."},
+    {"2800 pixels a side. About 47 MB of video memory.", "2800 pixels de côté. Environ 47 Mo de mémoire vidéo."},
+    {"4096 pixels a side. About 101 MB of video memory.", "4096 pixels de côté. Environ 101 Mo de mémoire vidéo."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "Et un graphique des temps d'image des 4 dernières secondes, avec une ligne à celui de la limite d'images."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, Netteté 30%."},
     {"Depth of field", "Profondeur de champ"},
@@ -61,8 +76,12 @@ inline constexpr Entry kfr[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "Règle le Filtre d'échelle, la Netteté et le Profil pour un GPU doté d'autant de mémoire. La Génération d'images reste votre choix."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "Le flou que le jeu applique à ce qui est loin de la caméra. Désactivé garde toute l'image nette. S'applique immédiatement."},
     {"The microphone the game listens to, when it uses one.", "Le micro que le jeu écoute, quand il en utilise un."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "La taille de la carte d'ombres : plus elle est grande, plus les ombres des personnages et du décor restent nettes au lieu de pixelisées, pour plus de mémoire vidéo et un peu de temps GPU. S'applique après un redémarrage."},
 };
 inline constexpr Entry kde[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "1400 Pixel Kantenlänge, wie auf der Konsole. Etwa 12 MB Videospeicher."},
+    {"2800 pixels a side. About 47 MB of video memory.", "2800 Pixel Kantenlänge. Etwa 47 MB Videospeicher."},
+    {"4096 pixels a side. About 101 MB of video memory.", "4096 Pixel Kantenlänge. Etwa 101 MB Videospeicher."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "Dazu ein Graph der Frame-Zeiten der letzten 4 Sekunden, mit einer Linie beim FPS-Limit."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, Schärfe 30%."},
     {"Depth of field", "Tiefenschärfe"},
@@ -73,8 +92,12 @@ inline constexpr Entry kde[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "Stellt den Skalierungsfilter, die Schärfe und das Profil für eine GPU mit so viel Speicher ein. Die Frame-Generierung bleibt unverändert."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "Die Unschärfe, die das Spiel auf Entferntes legt. Aus hält das ganze Bild scharf. Wirkt sofort."},
     {"The microphone the game listens to, when it uses one.", "Das Mikrofon, auf das das Spiel hört, wenn es eins verwendet."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "Die Größe der Schattenkarte: höher hält die Schatten von Figuren und Umgebung scharf statt pixelig, für mehr Videospeicher und etwas GPU-Zeit. Gilt nach einem Neustart."},
 };
 inline constexpr Entry kit[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "1400 pixel per lato, quella della console. Circa 12 MB di memoria video."},
+    {"2800 pixels a side. About 47 MB of video memory.", "2800 pixel per lato. Circa 47 MB di memoria video."},
+    {"4096 pixels a side. About 101 MB of video memory.", "4096 pixel per lato. Circa 101 MB di memoria video."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "E un grafico dei tempi dei fotogrammi degli ultimi 4 secondi, con una linea a quello del limite fps."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, Nitidezza 30%."},
     {"Depth of field", "Profondità di campo"},
@@ -85,8 +108,12 @@ inline constexpr Entry kit[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "Imposta il Filtro di scala, la Nitidezza e il Profilo per una GPU con quella memoria. La Generazione fotogrammi resta a tua scelta."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "La sfocatura che il gioco applica a ciò che è lontano dalla telecamera. Disattivata mantiene nitida tutta l'immagine. Si applica subito."},
     {"The microphone the game listens to, when it uses one.", "Il microfono che il gioco ascolta, quando ne usa uno."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "La dimensione della mappa d'ombra: più alta mantiene nitide, invece che squadrettate, le ombre dei personaggi e dello scenario, in cambio di più memoria video e un po' di tempo GPU. Si applica dopo un riavvio."},
 };
 inline constexpr Entry knl[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "1400 pixels per zijde, die van de console. Ongeveer 12 MB videogeheugen."},
+    {"2800 pixels a side. About 47 MB of video memory.", "2800 pixels per zijde. Ongeveer 47 MB videogeheugen."},
+    {"4096 pixels a side. About 101 MB of video memory.", "4096 pixels per zijde. Ongeveer 101 MB videogeheugen."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "En een grafiek van de frametijden van de laatste 4 seconden, met een lijn bij die van de framelimiet."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, Scherpte 30%."},
     {"Depth of field", "Scherptediepte"},
@@ -97,8 +124,12 @@ inline constexpr Entry knl[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "Stelt het Schaalfilter, de Scherpte en het Profiel in voor een GPU met zoveel geheugen. Framegeneratie blijft jouw keuze."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "De vervaging die het spel toepast op wat ver van de camera is. Uit houdt het hele beeld scherp. Werkt meteen."},
     {"The microphone the game listens to, when it uses one.", "De microfoon waarnaar het spel luistert, als het er een gebruikt."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "De grootte van de schaduwkaart: hoger houdt de schaduwen van personages en omgeving scherp in plaats van blokkerig, voor meer videogeheugen en wat GPU-tijd. Werkt na een herstart."},
 };
 inline constexpr Entry kpl[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "1400 pikseli na bok, jak na konsoli. Około 12 MB pamięci wideo."},
+    {"2800 pixels a side. About 47 MB of video memory.", "2800 pikseli na bok. Około 47 MB pamięci wideo."},
+    {"4096 pixels a side. About 101 MB of video memory.", "4096 pikseli na bok. Około 101 MB pamięci wideo."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "Do tego wykres czasów klatek z ostatnich 4 sekund, z linią na poziomie limitu klatek."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, Ostrość 30%."},
     {"Depth of field", "Głębia ostrości"},
@@ -109,8 +140,12 @@ inline constexpr Entry kpl[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "Ustawia Filtr skalowania okna, Ostrość i Profil dla GPU z taką ilością pamięci. Generowanie klatek pozostaje twoim wyborem."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "Rozmycie, które gra nakłada na to, co jest daleko od kamery. Wyłączone zachowuje ostrość całego obrazu. Działa od razu."},
     {"The microphone the game listens to, when it uses one.", "Mikrofon, którego słucha gra, gdy z niego korzysta."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "Rozmiar mapy cieni: wyższy sprawia, że cienie postaci i otoczenia są ostre zamiast kanciastych, kosztem większej ilości pamięci wideo i odrobiny czasu GPU. Działa po ponownym uruchomieniu."},
 };
 inline constexpr Entry kru[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "1400 пикселей по стороне, как на консоли. Около 12 МБ видеопамяти."},
+    {"2800 pixels a side. About 47 MB of video memory.", "2800 пикселей по стороне. Около 47 МБ видеопамяти."},
+    {"4096 pixels a side. About 101 MB of video memory.", "4096 пикселей по стороне. Около 101 МБ видеопамяти."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "И график времени кадров за последние 4 секунды, с линией на уровне лимита кадров."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, резкость 30%."},
     {"Depth of field", "Глубина резкости"},
@@ -121,8 +156,12 @@ inline constexpr Entry kru[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "Задаёт «Фильтр масштабирования», «Резкость» и «Профиль» для GPU с таким объёмом памяти. «Генерация кадров» остаётся на ваш выбор."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "Размытие, которое игра накладывает на то, что далеко от камеры. «Выкл.» оставляет всю картинку резкой. Применяется сразу."},
     {"The microphone the game listens to, when it uses one.", "Микрофон, который слушает игра, когда он ей нужен."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "Размер карты теней: чем он больше, тем чётче, без квадратиков, тени персонажей и окружения, ценой большего объёма видеопамяти и немного времени GPU. Применяется после перезапуска."},
 };
 inline constexpr Entry kja[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "一辺1400ピクセル、本体と同じです。ビデオメモリーは約12 MB。"},
+    {"2800 pixels a side. About 47 MB of video memory.", "一辺2800ピクセル。ビデオメモリーは約47 MB。"},
+    {"4096 pixels a side. About 101 MB of video memory.", "一辺4096ピクセル。ビデオメモリーは約101 MB。"},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "さらに、直近4秒間のフレームタイムのグラフを表示します。フレームレート上限の位置に線が引かれます。"},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom、シャープネス30%。"},
     {"Depth of field", "被写界深度"},
@@ -133,8 +172,12 @@ inline constexpr Entry kja[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "そのメモリー量のGPUに合わせて、拡大縮小フィルター、シャープネス、プロファイルを設定します。フレーム生成は変わりません。"},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "カメラから遠いものにゲームがかけるぼかしです。オフにすると画面全体がくっきりします。すぐに反映されます。"},
     {"The microphone the game listens to, when it uses one.", "ゲームがマイクを使うときに、音を聞き取るマイクです。"},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "影マップのサイズです。高いほど、キャラクターや背景の影がカクカクせずくっきりしますが、ビデオメモリーとGPU時間を少し多く使います。再起動後に反映されます。"},
 };
 inline constexpr Entry kko[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "한 변 1400픽셀, 콘솔과 같습니다. 비디오 메모리 약 12MB."},
+    {"2800 pixels a side. About 47 MB of video memory.", "한 변 2800픽셀. 비디오 메모리 약 47MB."},
+    {"4096 pixels a side. About 101 MB of video memory.", "한 변 4096픽셀. 비디오 메모리 약 101MB."},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "여기에 최근 4초간의 프레임 시간 그래프도 표시하며, 프레임 제한 위치에 선을 긋습니다."},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom, 선명도 30%."},
     {"Depth of field", "피사계 심도"},
@@ -145,8 +188,12 @@ inline constexpr Entry kko[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "해당 메모리 용량의 GPU에 맞춰 창 스케일링 필터, 선명도, 프로필을 설정합니다. 프레임 생성은 직접 고른 대로 유지됩니다."},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "카메라에서 먼 곳에 게임이 주는 흐림 효과입니다. 끄면 화면 전체가 선명하게 유지됩니다. 즉시 적용됩니다."},
     {"The microphone the game listens to, when it uses one.", "게임이 마이크를 사용할 때 소리를 듣는 마이크입니다."},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "그림자 맵의 크기입니다. 높을수록 캐릭터와 배경의 그림자가 각지지 않고 선명해지지만, 비디오 메모리와 GPU 시간을 조금 더 씁니다. 다시 시작한 후 적용됩니다."},
 };
 inline constexpr Entry kzh_Hans[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "边长1400像素，与主机相同。约占12 MB显存。"},
+    {"2800 pixels a side. About 47 MB of video memory.", "边长2800像素。约占47 MB显存。"},
+    {"4096 pixels a side. About 101 MB of video memory.", "边长4096像素。约占101 MB显存。"},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "另外显示最近4秒的帧时间图表，并在帧率上限处画一条线。"},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom、锐度30%。"},
     {"Depth of field", "景深"},
@@ -157,8 +204,12 @@ inline constexpr Entry kzh_Hans[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "按该显存容量的GPU设置窗口缩放滤镜、锐度和配置。帧生成保持你的选择。"},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "游戏对远离镜头之处施加的模糊。关闭可让整个画面保持清晰。立即生效。"},
     {"The microphone the game listens to, when it uses one.", "游戏使用麦克风时所听取的麦克风。"},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "阴影贴图的大小：越高，角色和场景的阴影越清晰，不再呈块状，但会占用更多显存和少量GPU时间。重新启动后生效。"},
 };
 inline constexpr Entry kzh_Hant[] = {
+    {"1400 pixels a side, the console's. About 12 MB of video memory.", "邊長1400像素，與主機相同。約佔12 MB顯示記憶體。"},
+    {"2800 pixels a side. About 47 MB of video memory.", "邊長2800像素。約佔47 MB顯示記憶體。"},
+    {"4096 pixels a side. About 101 MB of video memory.", "邊長4096像素。約佔101 MB顯示記憶體。"},
     {"And a graph of the last 4 seconds' frame times, with a line at the frame rate cap's.", "另外顯示最近4秒的畫格時間圖表，並在畫格率上限處畫一條線。"},
     {"Catmull-Rom, Sharpness 30%.", "Catmull-Rom、銳利度30%。"},
     {"Depth of field", "景深"},
@@ -169,6 +220,7 @@ inline constexpr Entry kzh_Hant[] = {
     {"Sets the window scaling filter, the Sharpness and the Profile for a GPU with that much memory. Frame generation stays yours.", "依該顯示記憶體容量的GPU設定視窗縮放濾鏡、銳利度和設定檔。畫格生成維持你的選擇。"},
     {"The blur the game puts on what is far from the camera. Off keeps the whole picture sharp. Applies at once.", "遊戲對遠離鏡頭之處施加的模糊。關閉可讓整個畫面保持清晰。立即生效。"},
     {"The microphone the game listens to, when it uses one.", "遊戲使用麥克風時所聽取的麥克風。"},
+    {"The size of the shadow map: higher keeps the shadows of characters and scenery sharp instead of blocky, for more video memory and a little GPU time. Applies after a restart.", "陰影貼圖的大小：越高，角色和場景的陰影越清晰，不再呈塊狀，但會佔用更多顯示記憶體和少量GPU時間。重新啟動後生效。"},
 };
 // (the languages of menu_i18n.h's kLangs, in its order: vk_menu_i18n.cpp takes both by one index)
 inline constexpr Lang kLangs[] = {

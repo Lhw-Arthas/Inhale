@@ -89,7 +89,12 @@ minute on a 12-core PC), so play does not stutter while they compile. Later star
 can prepare them again once.
 
 The **Insert** key opens Inhale's own menu in the game (graphics, frame generation, controls). **Graphics, Detail,
-Depth of field** turns the game's depth of field off or on at once.
+Depth of field** turns the game's depth of field off or on at once. **Graphics, Detail, Shadow resolution** sets the
+size of the game's shadow map, after a restart: **Game's** is the console's 1400 pixels a side (about 12 MB of video
+memory), **High** 2800 (about 47 MB), **Highest** 4096 (about 101 MB). **Auto**, the default, picks it from the
+graphics card's memory: the game's size on 4 and 6 GB, High on 8 GB, Highest on 12 GB or more. The game softens its
+shadows' edges, so the gain is small: edges a little tighter. On an RX 7900 XTX at 3840 x 2160, Highest costs about
+0.5 ms of GPU time a frame over the game's size. The handheld profile keeps the game's own size.
 
 **Resolution.** The 3D scene is drawn at your screen's size up to 3840 x 2160 (a 16:9 screen wider than 2560 x 1440),
 and at 2560 x 1440 on any other screen. The game's dynamic resolution is off, so the size stays fixed; set the
