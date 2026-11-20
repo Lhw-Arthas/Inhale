@@ -64,6 +64,8 @@
 #include <unistd.h>          // (sysconf: the RAM, pcache_load_off)
 #endif
 #include "vk_reactive.h"   // (the upscalers' reactive mask: the scene copied before its transparent draws)
+#include "feedback_copy.h"   // (inhale: a draw that samples a colour target it writes draws into a copy)
+#include "vk_feedback.h"
 #include "vk_dump.h"
 #include "vk_gprof.h"
 #include "vk_jobs.h"
@@ -8273,6 +8275,21 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         FINE_SCOPE(FT_HAZARD);
         writes = draw_hazards(cmd, p, s, at, samples);
     }
+    // (inhale) A draw that samples a colour target it writes (this game's lighting pass and its tone map, each one draw
+    // over the scene's target) is drawn into a copy of that target, which is copied back when the draw ends: vk_feedback.h.
+    // AMD's Windows driver read garbage from the target in the blocks the draw's two triangles share (a Radeon 780M:
+    // coloured discs along the picture's diagonal). Declared after the guards above: the copy back runs before them
+    feedback::Draw feedback_draw;
+    std::optional<Targets> at_copy;
+    const Targets* at_pass = &at;
+    static const bool feedback_on = feedback::wanted();
+    if (const uint16_t fb = feedback_copy::targets(feedback_on, samples, writes, at.samples == VK_SAMPLE_COUNT_1_BIT)) {
+        end_pass(cmd);   // (a copy cannot be made in a pass)
+        at_copy = at;
+        if (feedback::begin(feedback_draw, cmd, fb, at_copy->color, at_copy->color_view, at_copy->color_format, at_copy->color_level,
+                            at_copy->color_layer, at.width, at.height))
+            at_pass = &*at_copy;
+    }
     BufferRef mesh_args{};
     uint32_t mesh_args_at = 0;
     // (RX_VK_MESH_ARGS=1: rewritten {count, 1, 1, first}. Off: it did not bring the canopies back, and it ends the pass at each draw)
@@ -8347,7 +8364,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     if (fallback_role == FallbackRole::Colour) fallback_list_hold(d.indirect, false);
     {
         FINE_SCOPE(FT_HAZARD);
-        begin_pass(cmd, at);
+        begin_pass(cmd, *at_pass);   // (inhale: at, or with the copies' views in it, above)
     }
     probe_draw(s, p, ps.draws);   // (longshot: RX_VK_PROBE)
     gprof_run(cmd, p.key);   // (RX_VK_PASS_TIMING=2)

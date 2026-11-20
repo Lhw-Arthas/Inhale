@@ -30,6 +30,7 @@ Early. One player has played it by hand on Linux; the Windows installer has been
 | Frame generation | ⚠️ **Auto** works. A fixed **2x** and up can freeze the game for a few seconds now and then (seen on Linux with an AMD card) |
 | Linux | ✅ The AppImage, tested on CachyOS with an AMD Radeon RX 7900 XTX (Mesa). It also starts in clean Ubuntu 22.04 and Fedora |
 | Windows | ✅ The installer, tested on Windows 11 with an NVIDIA RTX 2080 SUPER, built from the extracted folders. The `.nup` route there is still to be tried |
+| AMD cards on Windows | ⚠️ One tried, a Radeon 780M (integrated): v0.2.0 draws coloured discs over the picture there. Fixed in the next build, checked on that card in the first stage only |
 | Intel cards | ❓ Not tried |
 | Cards without mesh shaders (such as NVIDIA GTX 10 and AMD RX 5000) | ⚠️ Should run through a slower compute path (upstream's). Not tried with this game |
 

@@ -85,7 +85,9 @@ pointing here.
    scaled so the controller settles where the PC is, not at its floor. *Check:* the render size it picks over time.
 5. **Clears after draws, and draws that sample a target their pass already wrote (or write one an earlier draw of the
    pass sampled), get passes of their own** (`gpu/vk/vk_draw.cpp` `clear_after_draws`, `draw_hazards`). A draw that
-   samples a target it writes itself stays in the pass.
+   samples a target it writes itself stays in the pass; where a driver answers that read wrongly (AMD's Windows
+   driver), the draw is drawn into a copy of the colour target (`gpu/vk/vk_feedback.h`, section 9, "coloured discs on
+   a Radeon 780M").
 6. **2D views of 3D textures need `VK_EXT_image_2d_view_of_3d`.**
 7. **The CPU saturates first.** The game's threads, the replay, captures and pipeline compiles share the cores, and
    extra helper threads have lowered the frame rate before. Thread counts are measured, never raised by default
@@ -223,6 +225,11 @@ also name its method for rule 1 (its measure skill), which is not carried here.
   covered by tests with made-up files only. The package path and `--update` were run for real (section 9, S6).
 - Whether the profiles add anything to the hot list: the three measured runs differ more among themselves than from
   the hot list's (section 9, S6).
+- AMD's Windows driver and an integrated GPU (section 9, "coloured discs on a Radeon 780M"): checked on a Radeon 780M
+  for the title screen and the first stage's walk from the beach into the jungle, headless over ssh, and no further.
+  Not checked: the fix in a window in the player's hands, other stages, AMD's older Windows driver branch (RX 5000
+  and RX 6000) and AMDVLK, what the two copies cost at other scene sizes, and the two programs that sample the depth
+  target they write (`cb8d129794535ac7`, `e169c16f0c368e7b`), which stay as they are.
 - The menu rows kept for this game that were not tried in play: Mouse camera, Button prompts, Walk mode, and Output
   resolution on a screen that is not 16:9. The microphone rows are hidden for this game instead: it imports the SDK's
   input-stream API but no game code calls it (section 9, "the microphone rows").
@@ -1396,3 +1403,68 @@ The kind is one of `trap`, `branch to a non-function`, `indirect call`, `indirec
 runtime's text (an svc's has a number formatted into it, and a text this does not know becomes `other`). A fatal that
 is no trap has no such line. `tests/test_crash_record.py` holds it with three trapping children. Not checked: the
 Windows build's record (the test and the game ran on Linux).
+
+### 2026-11-20: coloured discs on a Radeon 780M (AMD's Windows driver)
+
+The report: v0.2.0 on Windows 11, an AMD Radeon 780M (integrated, driver 26.11.2, `0x8001a0`), the first run on AMD's
+Windows driver and on an integrated GPU. The first stage's beach is drawn right, with solid red, orange, yellow, green
+and white discs over it and a dotted line, all on one straight line through the middle of the picture. The same PC's
+RTX 2080 SUPER draws it right, and so do RADV on an RX 7900 XTX and on a Ryzen 9 7900X's integrated graphics.
+
+What it was not, each ruled out by a run:
+
+- The occlusion counts. The game makes no samples-passed report in that frame: its two counter reports are timestamps
+  (`nvn: the game reports counter type 0`). `RX_VK_OCC_QUERIES=0` changes nothing.
+- The ASTC textures kept as BC3 on an integrated GPU. No draw of the frame samples an ASTC texture; `RX_VK_ASTC_BC_ALL=1`
+  on the RX 7900 XTX, the whole integrated policy on RADV (`RX_VK_DEVICE=0`) and "ASTC as RGBA8" on the 780M change
+  nothing.
+- The player's settings (the 780M's options file on the RX 7900 XTX), NaN tests on bits (`RX_VK_NAN_BITS=1`), native
+  fragment shuffles (`RX_VK_FRAG_SHUFFLE_FALLBACK=0`), the driver's optimizer (`RX_VK_NOOPT=1`), every fragment sample
+  at level 0 and BC views cut at their 4 x 4 level (two test builds): the discs stay.
+
+What it is. A frame dumped pass by pass on both PCs (`RX_VK_DUMP=1500`) differs first in the scene's target after the
+lighting pass: its largest value is 3.4 on Linux and 35,330 on the 780M. At full size the wrong texels are in 8 x 8
+blocks every 16 pixels along the picture's diagonal, on one side of it or on both: the blocks that the two triangles
+of the pass's full-screen draw share. The lens flare is not at fault: the game's bloom and its flare, made from the
+scene, turn each such texel into a disc and a row of ghosts on the line through the centre.
+
+The lighting pass (program `62830cf22f14b2ae`) draws into the scene's target and samples it in the same draw
+(`c0:#364`, `t15:#364` in the dump): the G-buffer pass left the light each surface gives off there, and the lit colour
+is written over it. The tone map (`5be22000a0782116`) reads and writes the scene the same way. The log had said so on
+every PC: `vk: a draw (program 62830cf22f14b2ae) samples targets it writes (mask 0x1, 2560x1440)`. The console's GPU
+gives each pixel what was there before the draw; Vulkan leaves such a read undefined, rule 5 of section 4 left the draw
+as it was, and AMD's Windows driver is the first seen to answer it wrongly. The 8 x 8 blocks fit a colour target kept
+compressed by the GPU, read while one of its blocks is half written; that part is a reading of the picture, not
+something measured.
+
+The fix (`gpu/vk/vk_feedback.h`, `gpu/vk/feedback_copy.h`): a draw that samples a colour target it writes is drawn into
+a copy of that target. The target is copied into the copy, the draw's pass is begun with the copy's view while the draw
+samples the target, which nothing writes then, and the copy is copied back when the draw ends (`feedback::Draw` in
+`draw`, on every way out of it). On by default on AMD's Windows driver only; `RX_VK_FEEDBACK_COPY=1` or `0` on any
+driver. Upstream has the same undefined read and no fix for it (looked at `08994a9`, 2026-11-20): the rule is in files
+of this fork, and `gpu/vk/vk_draw.cpp` has the lines that call it.
+
+Checked, on the 780M, headless over ssh with a test `inhale_vk.dll` built there from the release's sources and this
+change (`work/runs/lf/aubox/`):
+
+- before, `base/vk_001500.jpg`: the discs. After, `fix/last.jpg`: none, at present 12,600. The same DLL with
+  `RX_VK_FEEDBACK_COPY=0`: the discs again (`fixoff/vk_003000.jpg`).
+- the walk from the beach into the jungle (`final/sheet.jpg`, the code as committed): as on Linux, and the log's
+  `vk: 2.0 colour targets a frame drawn into a copy` for all of it: the two draws named above and no other.
+- the cost, the same view and DLL: GPU time 16.7 ms a frame without the copies, 18.4 with them; 53.7 presents a second
+  against 49.6. Four copies of a 2560 x 1440 target a frame. A draw that sampled a copy and wrote the target would need
+  two; it needs the sampled view made again on the copy, with its format and swizzle, and the draw's descriptors kept
+  from reuse. Not done.
+
+On Linux with `RX_VK_FEEDBACK_COPY=1` (RX 7900 XTX): the same picture, 60 presents a second, 1.9 targets a frame.
+
+`tests/test_feedback_copy.py` runs the rule and the copies' own code against stand-ins for the Vulkan calls (the copy
+in, the pass's view, the copy back to the target's level and layer, a copy each for two targets of one draw, what
+cannot be copied left alone), and reads the draw for its order. A second reader went through the change cold: two
+targets of one draw shared a copy as first written (not this game's case; fixed, and in the test), and a frame dump
+reads such a pass's target before the copy back (`gpu/vk/vk_feedback.h` says so). Not modelled by the test: the GPU,
+the driver, the parallel replay's threads.
+
+Found on the way: a row added to `gpu/vk/switches.def` does not compile `vk_main.cpp` again here (`nx2/build.py`
+`HEADER_EXTS` has no `.def`; upstream's has, a sync brings it), so a build that kept its objects says
+`RX_VK_FEEDBACK_COPY is set, and is not a switch of this build` and then obeys it.
