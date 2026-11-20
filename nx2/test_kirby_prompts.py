@@ -60,6 +60,17 @@ def sarc(name, payload):
     return bytes(b) + payload
 
 
+def labeled_sarc(names):
+    """a SARC whose BNTX holds these textures, each a ring in G (the label's ink) on R 255"""
+    b = bntx(names)
+    tex = kp.pa.bntx_textures(b)
+    green = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(green).ellipse((36, 36, 92, 92), outline=255, width=4)
+    for name in names:
+        kp.encode(b, tex[name], Image.new("L", (W, H), 255), green)
+    return sarc(kp.BNTX, bytes(b))
+
+
 @unittest.skipUnless(HAVE, "needs the build's Python packages")
 class LabelTests(unittest.TestCase):
     def test_cmp_round_trip_and_size(self):
@@ -127,6 +138,40 @@ class LabelTests(unittest.TestCase):
         self.assertEqual(r.getpixel((0, 0)), 255)   # (R is 255 outside the label)
 
         self.check_variants(out, var, s)
+
+    def test_redraw_an_archive_holding_one_label(self):
+        """issue #14: the DLC marker's archive (and three others) holds its own BtnIconA^t and no other label: A's blocks are
+        redrawn, the other texture stays, and the variants name that one label"""
+        arc = labeled_sarc(["BtnIconA^t", "BtnIconBase^t"])
+        out, var = kp.redraw(arc, "xbox")
+        self.assertEqual(len(out), len(arc))
+        s, _ = kp.sarc_file(arc, kp.BNTX)
+        changed = [i for i in range(len(arc)) if arc[i] != out[i]]
+        self.assertTrue(changed)
+        self.assertTrue(all(s + 0x10000 <= i < s + 0x30000 for i in changed))   # (A's blocks only, not BtnIconBase's)
+        self.assertEqual(struct.unpack_from("<II", var, 4), (1, len(kp.pa.PADS)))
+        self.assertEqual(struct.unpack_from("<I", var, 12)[0], kp.pa.SW["a"])
+
+    def test_main_writes_every_archive_with_a_label(self):
+        """issue #14: each archive of ARCHIVES the romfs holds is written with its variants beside it (.var for .cmp); one the
+        romfs lacks is not"""
+        import tempfile
+        marker = "lyt/Wmap/MarkerDlcStage/Body.arc.cmp"
+        with tempfile.TemporaryDirectory() as tmp:
+            romfs, out = os.path.join(tmp, "romfs"), os.path.join(tmp, "out")
+            for path, names in ((kp.PARTS, list(kp.LABELS)), (marker, ["BtnIconA^t", "BtnIconBase^t"])):
+                os.makedirs(os.path.dirname(os.path.join(romfs, path)), exist_ok=True)
+                with open(os.path.join(romfs, path), "wb") as f:
+                    f.write(kp.wrap(labeled_sarc(names)))
+            kp.main([romfs, "xbox", out])
+            for path in (kp.PARTS, marker):
+                for name in (path, path[:-len(".cmp")] + ".var"):
+                    self.assertTrue(os.path.isfile(os.path.join(out, name)), name)
+            with open(os.path.join(romfs, marker), "rb") as f:
+                before = kp.unwrap(f.read())
+            with open(os.path.join(out, marker), "rb") as f:
+                self.assertNotEqual(kp.unwrap(f.read()), before)   # (its A redrawn)
+            self.assertFalse(os.path.exists(os.path.join(out, "lyt/Arena")))   # (not in this romfs: nothing written)
 
     def check_variants(self, out, var, s):
         """the variants file: a table per label, the default selector's texture bytes the ones in the SARC, one place per blob"""

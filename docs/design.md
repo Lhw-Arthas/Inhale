@@ -243,6 +243,9 @@ also name its method for rule 1 (its measure skill), which is not carried here.
   walk on an RX 7900 XTX, docked, and handheld for the size only. Not checked: NVIDIA, Windows, later worlds and
   their stages (whether one sets a size of its own), shimmer as the camera moves, the menu row in a player's hands,
   and its restart in play: the "After restart" tag and the question on closing the menu (game-free test only).
+- Issue #14's fix on screen (section 9, "issue #14"): the Star-Crossed World stage bubble with the face's icon, and the
+  arena entry, the hero panel and the ball minigame. Checked only that the game reads the four archives other than the
+  DLC marker's from the faces' files.
 - The menu rows kept for this game that were not tried in play: Mouse camera, Button prompts, Walk mode, and Output
   resolution on a screen that is not 16:9. The microphone rows are hidden for this game instead: it imports the SDK's
   input-stream API but no game code calls it (section 9, "the microphone rows").
@@ -1734,3 +1737,49 @@ The open point. The test build also kept the virtual core during a hand-over (`h
 camera turns (`i6-hold.txt`). So the order is proven together with the kept core, not alone. The fix gives the core
 up for a hand-over as the imported code does, since keeping it costs frame time where the replay runs on the
 submitting thread. Until the code as committed has been played at both places, this is in section 7.
+
+### 2026-11-20: issue #14, the DLC stage bubble shows the Switch's A
+
+The report: "Some controller icons aren't replaced", on the Xbox face. The base game's stage bubble on the world map
+(`lyt/Wmap/GateInfo`) shows the face's icon (B, the Xbox button at the Switch A's place; the keyboard face: Space); the
+Star-Crossed World stage bubble (`lyt/Wmap/GateInfoDlcStage`) shows the Switch's "A". Both layouts use the
+`CmnBtnIcon` part.
+
+The cause, found in the data. `nx2/kirby_prompts.py` redrew the labels only in `lyt/Cmn/BtnIcon/Parts.arc.cmp`, and
+`host/prompts.c` served only that path. Four other archives carry a `BtnIconA^t` of their own, 128 x 128 BC5 and
+byte-identical to the common one's, and no other label:
+
+- `lyt/Wmap/MarkerDlcStage/Body.arc.cmp`, the DLC stage marker: its copy is the one the DLC bubble draws;
+- `lyt/Arena/Entry/Parts.arc.cmp`, `lyt/Cmn/HeroPanel/Parts.arc.cmp`, `lyt/MgameBall/Game/Parts.arc.cmp`.
+
+A layout looks a texture up by name and finds the copy in its own archive first, so those copies were never redrawn.
+Found by a scan of every archive of the data romfs (the add-on title's: `lyt`, `font`, `msg`, `ubin` and the rest,
+without `gfx`, `snd`, `mov` and `shader`) for a texture named like a label: no other archive holds one. The arena entry,
+the hero panel and the ball minigame show the same fault, not seen on screen.
+
+The fix. `kirby_prompts.py` `ARCHIVES` lists the five archives, the common one first; each is written to
+`prompts/<face>/<its path>` with its variants beside it (`.var` for `.cmp`), and `redraw` skips a label an archive does
+not hold. One the romfs lacks is not written (the common one must be there, as before). `host/prompts.c`
+`icon_archives` serves the same five (the key is in lower case: matched without case), and `icons_file` takes the
+file's path. The cache file of a set of controls (`cache/prompts/btnicon-<face>-<hash>.cmp`) has the path in its hash,
+so two archives on the same controls do not share one; the common archive's cache files of a build before this one
+are no longer used.
+
+Checked:
+
+- `nx2/test_kirby_prompts.py`: an archive holding `BtnIconA^t` and a texture that is no label has A's blocks redrawn
+  and nothing else (before the fix: `KeyError: 'BtnIconB^t'`); `main` on a romfs of two of the archives writes both
+  and their variants (before: `lyt/Wmap/MarkerDlcStage/Body.arc.cmp` not written). It needs the prompts' packages
+  (`nx2/prompt_requirements.txt`); without them its cases skip.
+- `tests/test_prompt_icon_archives.py` cuts `hos_prompts_romfs` and `icons_file` out of `host/prompts.c`, serves each
+  key from a made-up game folder, and checks the face's file at its own path, a cache file for each of two archives
+  with variants, and the text font, a mod's own file and another path as before (before the fix:
+  `lyt/wmap/markerdlcstage/body.arc.cmp: not served`). With the path left out of the hash it fails on the shared cache
+  file.
+- The tool on the game's data: each face's five archives written in 16 s; the common archive's files byte-identical to
+  the build before the fix; in each of the four others, A's label decodes to the common archive's redrawn one.
+- The game, headless, 60 s from the start on the keyboard face with this PC's controls, which are not the defaults
+  (`work/runs/i14/boot.txt`, its file opens in `strace.txt`): four of the five archives are read at the start (the
+  arena entry, the common one, the hero panel, the ball minigame), each from `prompts/keyboard/<its path>` with its
+  variants, and each written to a cache file of its own (four hashes). The DLC marker is read on the world map, which
+  the run does not reach. Not seen on screen: the DLC bubble with the face's icon (section 7).

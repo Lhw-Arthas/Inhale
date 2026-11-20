@@ -45,10 +45,12 @@ int rx_option(int id, int otherwise);   /* rx_backend.c: the Insert menu's rows 
 #define TEXTURES_PATH "ui/layout2archive/common.product.100.nin_ounce_nvn2.bntx.zs"
 #define LAYOUTS_PATH "ui/layout2archive/common.product.100.nin_ounce_nvn2.blarc.zs"
 #define SIZES_PATH "system/resource/resourcesizetable."   /* (then the version, ".rsizetable.zs") */
-/* Kirby's button-icon layout (nx2/kirby_prompts.py): its labels redrawn for each face, in prompts/<face>/ under the path below */
-#define ICONS_PATH "lyt/cmn/btnicon/parts.arc.cmp"
-#define ICONS_FILE "lyt/Cmn/BtnIcon/Parts.arc.cmp"
-#define ICONS_VAR "lyt/Cmn/BtnIcon/Parts.arc.var"   /* (each label's texture with the icon of every pad input: kirby_prompts.redraw) */
+/* Kirby's button-icon labels (nx2/kirby_prompts.py ARCHIVES): redrawn for each face, in prompts/<face>/ under these paths, each
+   with its variants beside it (.var for .cmp: each label's texture with the icon of every pad input, kirby_prompts.redraw).
+   (inhale) The common layout's and four more: each of those holds a BtnIconA^t of its own, which its layout draws (issue #14) */
+static const char *const icon_archives[] = {"lyt/Cmn/BtnIcon/Parts.arc.cmp", "lyt/Wmap/MarkerDlcStage/Body.arc.cmp",
+                                            "lyt/Arena/Entry/Parts.arc.cmp", "lyt/Cmn/HeroPanel/Parts.arc.cmp",
+                                            "lyt/MgameBall/Game/Parts.arc.cmp"};
 /* the text font holding the inline button icons (nx2/kirby_prompts.py FONT), likewise in prompts/<face>/ */
 #define TEXT_FONT_PATH "font/region/std/ext-operation.bffnt.cmp"
 #define TEXT_FONT_FILE "font/Region/STD/Ext-Operation.bffnt.cmp"   /* (its variants beside it, .bffnt.var) */
@@ -1449,7 +1451,7 @@ static int build(char *out, size_t cap) {
 
 /* the face's button-icon layout for the controls now: the file the build made (the icons of the default controls), with the
    texture of each label whose Switch button the player bound to another pad input (the keyboard face: another key) written over
-   by that one's icon (ICONS_VAR: nx2/kirby_prompts.py redraw). A file for each set of controls is kept in cache/prompts/.
+   by that one's icon (the variants: nx2/kirby_prompts.py redraw). A file for each set of controls is kept in cache/prompts/.
    out: the file to serve; 0: the game's own */
 /* a block (8 bytes) of the font's sheet, at column x and row y of blocks (nx2/prompt_assets.py gob_offset: 1024x1024 BC4, 16 GOBs
    high blocks): its place in the sheet's bytes */
@@ -1459,16 +1461,13 @@ static uint32_t sheet_block(uint32_t x, uint32_t y) {
 }
 
 /* font: the text font's file and variants (nx2/kirby_prompts.py redraw_font: a cell of blocks for each of the buttons' icons) in
-   place of the button-icon layout's */
-static int icons_file(const char *dir, int face, int font, char *out, size_t cap) {
+   place of the button-icon layout's. rel: the file's path in prompts/<face>/, its variants beside it (.var for .cmp) */
+static int icons_file(const char *dir, int face, const char *rel, int font, char *out, size_t cap) {   /* (inhale) rel: issue #14 */
     char var[MAX_PATH];
-    snprintf(out, cap, "%sprompts/%s/%s", dir, faces[face], font ? TEXT_FONT_FILE : ICONS_FILE);
+    snprintf(out, cap, "%sprompts/%s/%s", dir, faces[face], rel);
     if (GetFileAttributesA(out) == INVALID_FILE_ATTRIBUTES) return 0;
-    if (font) {
-        snprintf(var, sizeof var, "%s", out);
-        memcpy(var + strlen(var) - 3, "var", 3);
-    } else
-        snprintf(var, sizeof var, "%sprompts/%s/%s", dir, faces[face], ICONS_VAR);
+    snprintf(var, sizeof var, "%s", out);
+    memcpy(var + strlen(var) - 3, "var", 3);
     FILE *vf = fopen(var, "rb");
     uint8_t head[12], *ent = NULL;
     if (!vf) return 1;   /* (no variants: the default controls' file) */
@@ -1477,7 +1476,7 @@ static int icons_file(const char *dir, int face, int font, char *out, size_t cap
     int ok = n && n <= (font ? FONT_ENTRIES : HOS_SW_N) && nsel && nsel <= 256 && (ent = (uint8_t *)malloc(20 * (size_t)n)) &&
              fread(ent, 1, 20 * (size_t)n, vf) == 20 * (size_t)n;
     int sel[FONT_ENTRIES + 1] = {0}, changed = 0;   /* (each label's selector now, -1 its default's) */
-    uint64_t h = 0xcbf29ce484222325ull;
+    uint64_t h = fnv(0xcbf29ce484222325ull, rel, strlen(rel));   /* (inhale) an archive's own cache file, on the same controls */
     for (uint32_t i = 0; ok && i < n; i++) {
         const uint32_t sw = rd32le(ent + 20 * i);
         ok = sw < HOS_SW_N;
@@ -1560,17 +1559,18 @@ int hos_prompts_romfs(const char *key, const char *mod, char *out, size_t cap) {
         snprintf(out, cap, "%sprompts/rsizetable.zs", dir);
         return GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES;
     }
-    if (!strcmp(key, ICONS_PATH)) {   /* (the face's file where the build made one: the Switch's, a mod's own and a face with none: the game's) */
-        char dir[MAX_PATH];
-        int face;
-        if (mod || !setup(dir, sizeof dir, &face) || face == HOS_PROMPT_SWITCH) return 0;
-        return icons_file(dir, face, 0, out, cap);
-    }
+    for (size_t i = 0; i < sizeof icon_archives / sizeof *icon_archives; i++)   /* (inhale) each archive with a label: issue #14 */
+        if (!_stricmp(key, icon_archives[i])) {   /* (the face's file where the build made one: the Switch's, a mod's own and a face with none: the game's) */
+            char dir[MAX_PATH];
+            int face;
+            if (mod || !setup(dir, sizeof dir, &face) || face == HOS_PROMPT_SWITCH) return 0;
+            return icons_file(dir, face, icon_archives[i], 0, out, cap);
+        }
     if (!strcmp(key, TEXT_FONT_PATH)) {   /* (the face's text font with its icons in, where the build made one) */
         char dir[MAX_PATH];
         int face;
         if (mod || !setup(dir, sizeof dir, &face) || face == HOS_PROMPT_SWITCH) return 0;
-        return icons_file(dir, face, 1, out, cap);
+        return icons_file(dir, face, TEXT_FONT_FILE, 1, out, cap);
     }
     const int which = !strcmp(key, FONT_PATH) ? 0 : !strcmp(key, TEXTURES_PATH) ? 1 : !strcmp(key, LAYOUTS_PATH) ? 2 : -1;
     if (which < 0) return 0;

@@ -8,9 +8,12 @@ prompt_assets.py DEFAULT) over each of those, in the same place and size, so the
 
     python -I nx2/kirby_prompts.py <romfs> <face> <out folder> [--dump <folder>]
 
-writes <out>/lyt/Cmn/BtnIcon/Parts.arc.cmp (--dump: the labels, before and after, as PNG; in a folder per face for "all"). The face "all" writes each one's
-into <out>/<face>/, as the game reads them (host/prompts.c: <game folder>/prompts/<face>/). It needs nx2/prompt_requirements.txt's
-packages.
+writes <out>/<archive> for each of ARCHIVES the romfs holds, its variants beside it (.var for .cmp), and the text font's (--dump:
+the labels, before and after, as PNG; in a folder per face for "all"). The face "all" writes each one's into <out>/<face>/, as
+the game reads them (host/prompts.c: <game folder>/prompts/<face>/). It needs nx2/prompt_requirements.txt's packages.
+
+Not lyt/Cmn/BtnIcon alone: four more archives hold a copy of BtnIconA^t of their own (the same bytes), which their layouts find
+before the common one's, so each is redrawn too (issue #14: the world map's DLC stage bubble showed the Switch's A).
 """
 import os
 import struct
@@ -20,6 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # (python -I le
 import prompt_assets as pa
 
 PARTS = "lyt/Cmn/BtnIcon/Parts.arc.cmp"
+# every archive holding a label (the others: BtnIconA^t only), the common one first; host/prompts.c icon_archives serves them
+ARCHIVES = [PARTS, "lyt/Wmap/MarkerDlcStage/Body.arc.cmp", "lyt/Arena/Entry/Parts.arc.cmp", "lyt/Cmn/HeroPanel/Parts.arc.cmp",
+            "lyt/MgameBall/Game/Parts.arc.cmp"]
 BNTX = "timg/__Combined.bntx"
 # the label textures this redraws and the Switch button (prompt_assets.SW) each shows. Not here: the Joy-Con's SL and SR, the
 # sticks and the plus-shaped d-pad: no pad input has an icon for them
@@ -29,7 +35,6 @@ LABELS = {"BtnIconA^t": "a", "BtnIconB^t": "b", "BtnIconX^t": "x", "BtnIconY^t":
 BC5 = 0x1E   # (a texture's format, from its high byte)
 BLOCK = 65536
 STORED_HEAD = 4 + 7   # (a stored .cmp: its size, then the frame's 7 header bytes; each block then has 4 more before its data)
-VAR = "lyt/Cmn/BtnIcon/Parts.arc.var"
 VAR_MAGIC = b"KBIV"
 # the inline text icons: the font the messages draw them from (an MSBT tag's U+F0xx), a BFFNT whose sheets are a BNTX at FONT_BNTX
 # (1024x1024 BC4, upside down, cells FONT_PITCH (x, y) apart, 8 to a row), and the code points of the Switch buttons' icons in them
@@ -183,7 +188,7 @@ def redraw(parts, face, dump=None):
     entries = []
     for name, sw in LABELS.items():
         default = defaults[sw]
-        if default not in sels:
+        if default not in sels or name not in tex:   # (an archive other than the common one holds only some labels)
             continue
         t = tex[name]
         red, green = decode(b, t)
@@ -289,11 +294,12 @@ def main(argv):
     if len(args) != 3 or args[1] not in FACES + ["all"]:
         raise SystemExit(__doc__)
     romfs, face, out = args
-    with open(os.path.join(romfs, PARTS), "rb") as f:
-        parts = unwrap(f.read())
+    archives = {}
+    for rel in ARCHIVES:
+        if rel == PARTS or os.path.exists(os.path.join(romfs, rel)):   # (another one the romfs lacks: not written)
+            with open(os.path.join(romfs, rel), "rb") as f:
+                archives[rel] = unwrap(f.read())
     for one in FACES if face == "all" else [face]:
-        path = os.path.join(out, one, PARTS) if face == "all" else os.path.join(out, PARTS)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
         shown = os.path.join(dump, one) if dump and face == "all" else dump
         if shown:
             os.makedirs(shown, exist_ok=True)
@@ -307,11 +313,17 @@ def main(argv):
                 with open(name + ".part", "wb") as f:
                     f.write(data)
                 os.replace(name + ".part", name)
-        parts_one, var = redraw(parts, one, shown)
-        for name, data in ((path, wrap(parts_one, True)), (path[:-len(PARTS)] + VAR, var)):
-            with open(name + ".part", "wb") as f:   # (a stopped build leaves no half file for the game to read)
-                f.write(data)
-            os.replace(name + ".part", name)
+        for rel, parts in archives.items():
+            path = os.path.join(out, one, rel) if face == "all" else os.path.join(out, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            seen = os.path.join(shown, os.path.dirname(rel)) if shown and rel != PARTS else shown
+            if seen:
+                os.makedirs(seen, exist_ok=True)
+            parts_one, var = redraw(parts, one, seen)
+            for name, data in ((path, wrap(parts_one, True)), (path[:-len(".cmp")] + ".var", var)):
+                with open(name + ".part", "wb") as f:   # (a stopped build leaves no half file for the game to read)
+                    f.write(data)
+                os.replace(name + ".part", name)
 
 
 if __name__ == "__main__":
