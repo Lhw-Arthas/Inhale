@@ -14,7 +14,8 @@ by the test, so that it does not depend on how fast it runs or the file system's
 RX_VK_WARP64) makes the cache again under its own, and closed before its prepare ended, the next usual start found an empty
 cache under a record that said prepared, and translated in play. The record holds the count of program keys the cache had
 when it was written (a seventh word); fewer than half of that now, or none under a record without the count, prepares
-again; no program cache never does, and a record of six words keeps its sixth (the driver's part).
+again; no program cache never does, and a record of six words keeps its sixth (the driver's part). And prepare_run
+removes the record before it translates (HeyListen 8a629e6c): a prepare closed part way left the old one standing.
 python -I -B tests/test_prepare_seed_stamp.py [--cxx g++]
 """
 import argparse
@@ -281,6 +282,14 @@ int main(int argc, char** argv) {
             raise SystemExit("prepare_run no longer " + why)
     if "fwrite(&stamp, 8, 1" in run:
         raise SystemExit("prepare_run writes the translator's stamp alone")
+    # (inhale, HeyListen 8a629e6c) a prepare closed part way leaves no record: with the old one standing, a cache filled past
+    # half by the cut prepare passed for prepared (prepare_check's Cache), and the rest was translated in play
+    opened = run.index("const size_t programs = seed_open();")
+    gone = run.find("if (!background) remove(path.c_str());", opened)
+    written = run.find("prepared_write(path, prepared_for)", opened)
+    if gone < 0 or written < 0 or gone > written or gone > run.find("pcache_init();", opened):
+        raise SystemExit("prepare_run keeps the old record while it prepares (or removes it in play, where prepare_is_update "
+                         "needs it): a prepare closed part way passes for done")
     print("PASS: the shaders are prepared again for a new seed or translator, and not for the same ones")
 
 

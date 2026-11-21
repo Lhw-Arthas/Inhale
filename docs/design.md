@@ -1873,3 +1873,18 @@ the cache held when it was written (`prepared_write`), and `prepare_check` prepa
 program cache holds N program keys of the M the last preparation left") when the cache holds fewer than half of that,
 or none under a record of six words; no program cache is never a reason. A six-word record (every folder before this)
 and a cache partly refilled in play under it is not caught: the count starts with the next preparation.
+
+The count opened a second hole, which upstream closed in 8a629e6c: the record was only written again at the end, so a
+preparation closed part way left the old one standing, and a cache it had filled past half passed for prepared; the
+rest was translated in play. `prepare_run` now removes the record once the seed is open, before it translates; the
+next start prepares again, only what the cache does not hold. Not in play (an update with `RX_VK_PREPARE_BACKGROUND=1`):
+there the old record's other stamp already prepares again, and `prepare_is_update` needs it to stay an update. Same folder, wiped again with a `RX_VK_WARP64=1` start,
+then a usual start killed at 22 s into its preparation, then the walk:
+
+| run | cache at the walk's start | prepared at the start | translation in play | waited for |
+|---|---|---|---|---|
+| before (`B_before2`) | 70777 keys, the old record (82880) | no | 165 ms | 5 |
+| after (`B_after3`) | 66429 keys, no record | yes, 18404 new programs | 15 ms | 0 |
+
+The frames hardly differ here (1 over 20.8 ms before, 14 after, all under 23 ms and given to `game`): the cut cache
+still had most of what the walk meets.

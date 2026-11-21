@@ -9793,6 +9793,13 @@ bool prepare_run(void (*progress)(size_t done, size_t total), bool background, b
     }
     const size_t programs = seed_open();
     if (!programs) return false;
+    // (inhale, from HeyListen 8a629e6c, GPL-3.0) the record goes while the shaders are prepared and is written again when they
+    // are: a preparation closed or killed part way left the old record standing, and the next start trusted it whenever the cache
+    // held half of what it had counted (prepare_check's Cache): the rest was then translated in play. With no record the next
+    // start prepares again, and only what the cache does not hold yet. Not in play (an update, RX_VK_PREPARE_BACKGROUND=1): the
+    // old record's other stamp already prepares again, and without it the next start would no longer be an update
+    // (prepare_is_update) and would prepare everything before the game
+    if (!background) remove(path.c_str());
     const size_t total = programs * 3;   // (each program for float, one and two integer bone inputs)
     // The driver's part: each program's stage libraries, built once and let go, for the driver's own disk cache. What stays with us is
     // nothing: a kept library costs memory, and our pipeline cache would be read in whole at every start. A driver whose compiler

@@ -88,7 +88,8 @@ In Inhale Builder:
 
 **The first start takes longer.** Before the title screen it prepares the game's shaders and pipelines (about half a
 minute on a 12-core PC), so play does not stutter while they compile. Later starts reuse them. A new version of Inhale
-can prepare them again once, and so can a start after the shaders kept were lost (a laptop's other GPU).
+can prepare them again once, and so can a start after the shaders kept were lost (a laptop's other GPU, a start closed
+while it prepared).
 
 The **Insert** key opens Inhale's own menu in the game (graphics, frame generation, controls). **Graphics, Detail,
 Depth of field** turns the game's depth of field off or on at once. **Graphics, Detail, Shadow resolution** sets the
