@@ -122,6 +122,7 @@ bool jobs_wait_for(const std::atomic<bool>& ready, double) {
 }
 uint64_t texture_frame_no() { return 1; }
 bool targets_persistent(const Targets& at) { return at.persistent; }
+bool targets_redrawn(const Targets& at, const NvnState&) { return at.persistent; }   // (inhale: the next frame redraws them; tests/test_targets_redrawn.py)
 bool exposure_log_on() { return false; }
 void exposure_note(NvnState&, const Program&) {}
 void ensure_layout(Program&) {}

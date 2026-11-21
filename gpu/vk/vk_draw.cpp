@@ -45,6 +45,7 @@
 #include "../../host/hos_tracy.h"   // (INHALE_TRACY: the profiler's zones; nothing in any other build)
 #endif
 #include "draw_key.h"     // (the draw path's questions answered from their arguments alone: pipe_same, dyn_same, ...)
+#include "redrawn_inhale.h"   // (inhale) targets_redrawn_by
 #include "flat_map.h"
 #include "vk_menu.h"          // (opts.anisotropy: the Anisotropic filtering row; resolution_scale)
 #include "upscaler_rows.h"    // (upscale_lod_bias: which upscalers draw the 3D smaller)
@@ -5183,6 +5184,17 @@ bool targets_persistent(const Targets& at) {
     return at.depth && at.depth->first_render_frame && at.depth->first_render_frame < now;
 }
 
+/// (inhale) whether a draw left out of these targets is drawn again in the next frames (redrawn_inhale.h): each target's last
+/// frame rendered into is its owned_frame (texture_rendered)
+bool targets_redrawn(const Targets& at, const NvnState& s) {
+    uint64_t rendered[9];
+    int n = 0;
+    for (int i = 0; i < at.n; i++)
+        if (at.color[i]) rendered[n++] = at.color[i]->owned_frame;
+    if (at.depth) rendered[n++] = at.depth->owned_frame;
+    return targets_redrawn_by(texture_frame_no(), rendered, n, at.width, at.height, s.viewport[0], s.scissor);
+}
+
 void begin_pass(VkCommandBuffer cmd, const Targets& at) {
     Pass& ps = pass();   // (once: the accessor is a call and a thread-local read at each use. The same object for the thread's life: draw_begin_recording resets it in place)
     bool same = ps.open && ps.depth == at.depth_view && ps.n == at.n && ps.width == at.width &&
@@ -8134,7 +8146,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         if (use.on) use.pipeline(pe->ready.load(std::memory_order_acquire), use_counters.pipes_new != pipes_new);
     }
     if (!pe->ready.load(std::memory_order_acquire)) {
-        const bool may_skip = !always_wait && targets_persistent(at) && !writes_memory(p);
+        const bool may_skip = !always_wait && targets_persistent(at) && targets_redrawn(at, s) && !writes_memory(p);   // (inhale: redrawn)
         // (longshot, from Mako) one to draw with until the full build is done: from the caches, or quick (quick_pipeline). Else a
         // draw that may be left out first waits briefly for its build, moved to the queue's front (RX_VK_PIPE_WAIT_MS, off unless
         // set), and one that may not waits for it, running it here if no worker has (jobs_wait). RX_VK_PIPE_SKIP=0 waits for
