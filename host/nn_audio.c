@@ -16,7 +16,7 @@
    HOS_AUDIO_DUMP=<file.wav>: also write what is played (checking without speakers); HOS_AUDIO=0: silence;
    HOS_AUDIO_DEVICE=<n>: that waveOut device first; HOS_AUDIO_MUTE=1: the device fed at volume 0 (test runs);
    HOS_AUDIO_CHANNELS=2 or 6: stereo or 5.1 whatever the default output has and the Insert menu's Audio output say
-   (see au_speakers). */
+   (see au_speakers); HOS_AUDIO_CENTRE=0: no centre spread into the front pair in a 5.1 mix (au_spread_centre, inhale). */
 #include "hos.h"
 #include "../gpu/vk/vk_api.h"   /* (the Audio tab's options: HOS_OPT_VOLUME, HOS_OPT_MUTE_BACKGROUND) */
 #include <math.h>
@@ -587,6 +587,14 @@ static void render_voice(Voice *v) {
     memcpy(v->ramp_vol, v->vol, sizeof v->ramp_vol);   /* (splitters catch up in render_frame) */
 }
 
+/* (inhale) a 5.1 device or its driver can leave the centre channel out (a headset's virtual surround, a soundbar in a
+   stereo mode), and what the game puts there went silent while the front pair played. The output section's
+   au_spread_centre puts the centre into the front pair as well, at the 0.7071 the stereo down-mix gives it: a device that
+   drops the centre still plays it, and a real 5.1 system keeps its centre. HOS_AUDIO_CENTRE=0 turns the spread off.
+   HeyListen c782188b (GPL-3.0) */
+static int au_centre_spread_on(void);
+static inline void au_spread_centre(float out[6][FRAME], int six, int on);
+
 static int mix_depth(int i, int guard) {   /* how many sub mixes lie between this one and the final mix */
     if (guard > MAX_MIXES || mixes[i].final_mix || mixes[i].dest_kind != DEST_MIX) return 0;
     return 1 + mix_depth(mixes[i].dest, guard + 1);
@@ -648,6 +656,10 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
         }
     }
     const int nch = six ? 6 : 2;
+    static int centre_spread = -1;   /* (inhale) HOS_AUDIO_CENTRE, read once; before the limiter, so the added centre is
+                                        limited with the rest */
+    if (centre_spread < 0) centre_spread = au_centre_spread_on();
+    au_spread_centre(out, six, centre_spread);
     {   /* HOS_AUDIO_STATS=1: once a second, what plays and where the signal is */
         static int stats = -1, frames;
         if (stats < 0) stats = env_on("HOS_AUDIO_STATS");
@@ -914,6 +926,20 @@ static void output_error(const char *operation, MMRESULT result) {
         hos_log("audio: %s failed (MMRESULT %u)", operation, (unsigned)result);
     }
 }
+/* (inhale) the centre also to the front pair at -3 dB in a 5.1 mix (see au_centre_spread_on's declaration). Here, in
+   the output section, so tests/test_audio_output_errors.py compiles the log that names it with the rest */
+static int au_centre_spread_on(void) {
+    const char *v = getenv("HOS_AUDIO_CENTRE");
+    return !v || !env_value_off(v);   /* (on unless set off: env_on's rule, the other way round) */
+}
+static inline void au_spread_centre(float out[6][FRAME], int six, int on) {
+    if (!six || !on) return;
+    for (int i = 0; i < FRAME; i++) {
+        const float c = out[2][i] * 0.7071f;
+        out[0][i] += c;
+        out[1][i] += c;
+    }
+}
 /* The device: HOS_AUDIO_DEVICE=<n> (a waveOut device number) first, then the Windows default (WAVE_MAPPER), then each
    device in turn. Players had no sound at all while every other program played ("no sound in 2.0.5"): the log now
    names the device; one that takes no block for 1.5 s (an unplugged headset, a default bound to a dead output) is
@@ -959,7 +985,8 @@ static void output_use_device(HWAVEOUT opened, unsigned device, const WAVEFORMAT
     char name[64];
     if (device == WAVE_MAPPER) snprintf(name, sizeof name, "the default device");
     else au_device_name(device, name, sizeof name);
-    hos_log("audio: output on %s (%u devices), %s", name, au_device_count(), f->nChannels == 6 ? "5.1" : "stereo");
+    hos_log("audio: output on %s (%u devices), %s%s", name, au_device_count(), f->nChannels == 6 ? "5.1" : "stereo",
+            f->nChannels == 6 && au_centre_spread_on() ? " (the centre also to the front pair)" : "");   /* (inhale) */
 }
 static int output_try_device(unsigned device, const WAVEFORMATEX *f) {
     HWAVEOUT opened = output_probe_device(device, f);

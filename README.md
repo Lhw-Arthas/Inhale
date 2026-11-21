@@ -107,6 +107,10 @@ Inhale Builder, choose **Update an existing game folder** to build your folder a
 `HOS_KIRBY_QUEUE_ORDER=0` and report what you see. It hands the game's graphics work to your PC in the order of v0.2.0
 and before, in which the crystal covering of the Star-Crossed World stages vanishes for single frames.
 
+**Sound on 5.1.** When the game mixes for 5.1, the centre channel also goes to the front pair at -3 dB, so a headset's
+virtual surround or a driver that drops the centre still plays what is on it. Set the environment variable
+`HOS_AUDIO_CENTRE=0` to keep the centre on its own channel only.
+
 ## What you need
 
 **Your copy of the game:** *Kirby and the Forgotten Land, Nintendo Switch 2 Edition + Star-Crossed World*, as one
