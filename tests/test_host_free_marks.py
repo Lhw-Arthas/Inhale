@@ -70,6 +70,8 @@ int hos_commit(uint64_t addr, uint64_t size);
 void hos_log(const char *fmt, ...);
 void hos_fatal(Ctx *c, const char *fmt, ...);
 int64_t hos_now_ns(void);
+int hos_vcore_away(void);
+void hos_vcore_back(void);
 #define HOS_TRACE_CALL(name) ((void)0)
 '''
 
@@ -143,6 +145,8 @@ void hos_fatal(Ctx *c, const char *fmt, ...) {
     exit(1);
 }
 int64_t hos_now_ns(void) { return 0; }
+int hos_vcore_away(void) { return 0; }
+void hos_vcore_back(void) {}
 #include "hos_mem.c"
 int main(void) {
     Ctx c = {{0}};

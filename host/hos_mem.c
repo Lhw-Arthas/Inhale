@@ -215,7 +215,14 @@ void hos_region_free(uint64_t addr) {
         }
     }
     UNLOCK();
-    if (freed_size) discard_pages(freed, freed_size);
+    if (freed_size) {
+        /* (inhale) the discard is a kernel call that touches no guest state, and for the regions a change of area frees
+           it runs for milliseconds at a time: the thread's virtual core is given up for it, as for a file read (nn_fs.c
+           read_at), so the workers that run on that core only do not wait it out. HeyListen dc25c9c6 (GPL-3.0) */
+        const int away = hos_vcore_away();
+        discard_pages(freed, freed_size);
+        if (away) hos_vcore_back();
+    }
 }
 
 /* ---- nn::os memory -------------------------------------------------------------------------------------- */
