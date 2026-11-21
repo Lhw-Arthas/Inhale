@@ -1783,3 +1783,35 @@ Checked:
   arena entry, the common one, the hero panel, the ball minigame), each from `prompts/keyboard/<its path>` with its
   variants, and each written to a cache file of its own (four hashes). The DLC marker is read on the world map, which
   the run does not reach. Not seen on screen: the DLC bubble with the face's icon (section 7).
+
+### 2026-11-21: issue #5, microstutter: telling its kinds apart
+
+The reporter of issue #5 says v0.3.0 plays the first level well "aside from some micro stutters". `scripts/frame_hitches.py`
+reads a frame trace (`RX_VK_FRAME_TRACE=1`, `logs/inhale_frames.csv`). A frame is slow at 1.25 medians or more. The script
+takes each column less its median and gives the frame the cause whose columns grew the most. The causes are pipeline,
+translate, upload, memsync and gpu, then the Breakdown's broad parts (game, render, pace, wait_main, wait_render). A frame
+is "unexplained" when no cause grew by half its excess. The script also counts a slow frame followed by a short one (the
+pacing catching up): the eye sees that as a judder even at a steady 60 fps.
+
+Two warm runs of S5's walk, headless, at 3840x2160 (RX 7900 XTX, RADV), presents 900 to 4860:
+
+| run | p50 / p95 / p99 / max (ms) | slow frames | causes |
+|---|---|---|---|
+| `work/runs/ms1/warm` | 16.67 / 17.00 / 17.65 / 30.3 | 4 | 4 unexplained, all caught up |
+| `work/runs/ms1/warm2` (with `HOS_PRESENT_TRACE`) | 16.67 / 16.90 / 17.26 / 81.1 | 1 | render |
+
+- `warm`: in all four the game's thread kept its time. Its Breakdown sums to about 16 ms and `pace_ms` stays at 12.3. Only
+  the render thread's present-to-present time grew (30.3 ms, then 5.2 ms). The render thread's present came late and the
+  next one caught up: this is render-thread or present scheduling, not the game's pacer.
+- `warm2`: the game's own present 1821 took 80.8 ms (`presents.csv`), 64 ms of it in the renderer's part. The replay's
+  buckets were all small (draw 1.2 ms). The log's 600-frame window gave back 48 mirrors (270 MB), which may be the cause,
+  but the log has no times to place it. Not explained.
+- Neither run repeats the 21 frames of 20-26 ms in issue #1's `after_both`. That run was a cold one with a shot every
+  frame (`work/cold.sh`), so its pacing differs.
+- `main_cpu_ms`, `main_blocked_ms` and `main_vcore_ms` are 0 throughout this game. The host reads them from the thread
+  named `sead::MainThread` (`host/rx_backend.c`), and that name may not be this game's main thread's. Not checked.
+- A headless run shows nothing of the display: MAILBOX or IMMEDIATE composition, or a 60 fps game on a display of another
+  rate without VRR. PresentMon's `DisplayedTime` (section 13, rule 1) or `shown_ms` (FIFO and `RX_VK_PRESENT_THREAD=1`)
+  is needed for that.
+- `tests/test_frame_hitches.py` puts a slow frame of each cause into a made-up trace and checks that each is found. It
+  fails when the medians are not taken off.
