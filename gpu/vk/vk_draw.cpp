@@ -1151,6 +1151,7 @@ std::unordered_map<uint64_t, std::unique_ptr<PipeEntry>> pipelines;   // (the re
 std::mutex kept_ready_mu;
 std::unordered_map<uint64_t, VkPipeline> kept_ready;
 std::atomic<size_t> kept_ready_n{0};
+std::unordered_map<uint64_t, const Program*> kept_for;   // (inhale, kept_ready_mu) the program object each was built for
 int64_t st_draws, st_skipped, st_dispatches, st_passes, st_mesh, st_pending_skips, st_waits;
 // (longshot) skips by the line that made them, reported with the frame statistics (draw_skip_report)
 namespace {
@@ -2669,6 +2670,10 @@ PipeEntry* graphics_pipeline(const Program& p, const NvnState& s, const Targets&
             key = own, own_key = true;
             it = pipelines.find(key);
         }
+    } else if (kept_ready_n.load(std::memory_order_acquire)) {   // (inhale) one made ahead for another object: this one's own
+        std::lock_guard kl(kept_ready_mu);
+        if (const auto f = kept_for.find(key); f != kept_for.end() && f->second != &p) key = own, own_key = true;
+        if (own_key) it = pipelines.find(key);
     }
     if (it != pipelines.end()) return remember(mine[own] = it->second.get());
     pcache_init();
@@ -2683,6 +2688,7 @@ PipeEntry* graphics_pipeline(const Program& p, const NvnState& s, const Targets&
                 kept = k->second;
                 deferred = !kept;
                 kept_ready.erase(k);
+                kept_for.erase(key);   // (inhale)
                 kept_ready_n.store(kept_ready.size(), std::memory_order_release);
             }
         }
@@ -10185,7 +10191,7 @@ void precompile_at_create(void (*progress)(size_t done, size_t total)) {
                     if (r.variant != p.variant || !pipe_note_at(in, r.at, note.get())) continue;
                     bool cold = false;
                     // (from the caches alone, as a load at a create call: what none has is made when it is first drawn)
-                    if (const VkPipeline pl = pipeline_from_caches(p, *note, &cold)) pass->kept_pipes += pipeline_keep_ready(r.key, pl);
+                    if (const VkPipeline pl = pipeline_from_caches(p, *note, &cold)) pass->kept_pipes += pipeline_keep_ready(r.key, pl, &p);   // (inhale: for p)
                     else pass->kept_cold++;
                 }
             }
@@ -11700,13 +11706,14 @@ void pipeline_defer(uint64_t key) {
     kept_ready.try_emplace(key, VK_NULL_HANDLE);
     kept_ready_n.store(kept_ready.size(), std::memory_order_release);
 }
-bool pipeline_keep_ready(uint64_t key, VkPipeline pl) {
+bool pipeline_keep_ready(uint64_t key, VkPipeline pl, const Program* built_for) {
     if (!pl) return false;
     {
         std::lock_guard lk(kept_ready_mu);
         auto [it, inserted] = kept_ready.try_emplace(key, pl);
         if (inserted || !it->second) {
             it->second = pl;
+            if (built_for) kept_for[key] = built_for;   // (inhale: graphics_pipeline gives it to that object only)
             kept_ready_n.store(kept_ready.size(), std::memory_order_release);
             return true;
         }

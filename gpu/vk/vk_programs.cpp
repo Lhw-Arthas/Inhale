@@ -251,7 +251,7 @@ void load_work(LoadJob& job) {
                         bytes += (int64_t)sizeof(PipeNote);
                         // The draw may have arrived during the disk read.
                         if (!job.draw_waiting.load(std::memory_order_relaxed)) {
-                            if (const VkPipeline pl = source.graphics(*p, *note)) census.load_pipes += pipeline_keep_ready(n.key, pl);
+                            if (const VkPipeline pl = source.graphics(*p, *note)) census.load_pipes += pipeline_keep_ready(n.key, pl, &*p);   // (inhale: for p)
                             else census.load_pipes_cold++;
                             continue;
                         }

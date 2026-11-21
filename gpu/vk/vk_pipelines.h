@@ -39,7 +39,7 @@ VkPipeline compute_pipeline_from_caches(const Program& p);
 VkPipeline compute_pipeline_by_module_id(const Program& p, const uint8_t* id, uint32_t size);
 /// A pipeline made ahead of its first draw: the draw's lookup takes it (graphics_pipeline). False: that key has one already,
 /// and pl is destroyed
-bool pipeline_keep_ready(uint64_t key, VkPipeline pl);
+bool pipeline_keep_ready(uint64_t key, VkPipeline pl, const Program* built_for = nullptr);   // (inhale) built_for: graphics_pipeline
 /// Remember a noted state whose cache probe the waiting draw can take on first use.
 void pipeline_defer(uint64_t key);
 void program_layout(Program& p);   // (ensure_layout)

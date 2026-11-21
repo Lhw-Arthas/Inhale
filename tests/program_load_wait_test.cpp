@@ -47,7 +47,7 @@ bool pipe_note_at(FILE*, unsigned, PipeNote*) {
 }
 std::vector<uint64_t> deferred_keys;
 void pipeline_defer(unsigned key) { deferred_keys.push_back(key); }
-bool pipeline_keep_ready(unsigned, VkPipeline) { return true; }
+bool pipeline_keep_ready(unsigned, VkPipeline, const Program* = nullptr) { return true; }   // (inhale: built_for)
 std::atomic<int> probes{0};
 struct {
     VkPipeline graphics(const Program&, const PipeNote&) {

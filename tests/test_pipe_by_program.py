@@ -66,6 +66,7 @@ std::unordered_map<uint64_t, std::unique_ptr<PipeEntry>> pipelines;
 std::mutex kept_ready_mu;
 std::unordered_map<uint64_t, VkPipeline> kept_ready;
 std::atomic<size_t> kept_ready_n{0};
+std::unordered_map<uint64_t, const Program*> kept_for;
 struct { std::atomic<int> pipes_taken{0}, load_pipes_cold{0}, play_pipes_new{0}; } census;
 struct { std::atomic<int> pipes_new{0}; int made_how = 0; } use_counters;
 static struct { struct { bool pipelineCreationCacheControl = false; } vk13; } dev;
@@ -73,7 +74,7 @@ static bool ask_start_first;
 namespace quick_pipe { struct Raise { explicit Raise(bool&) {} }; }
 static bool slow_full_build;
 static int builds;
-static const Program* built_for[16];
+static const Program* built_for[64];
 static VkPipeline build_graphics(const Program& p, const NvnState&, const Targets&, VkPrimitiveTopology, int = -1, bool* = nullptr) {
     built_for[builds] = &p;
     return (VkPipeline)(uintptr_t)(0x1000 + ++builds);
@@ -103,18 +104,41 @@ int main() {
     Targets at;
     const uint8_t ct[8]{};
     const VkPrimitiveTopology tri = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    Program a, b, c, d;
+    Program a, b, c, d, x, y, k1, k2;
     a.key = b.key = 0xA, a.variant = b.variant = 1;
     c.key = d.key = 0xC, c.variant = d.variant = 2;
+    x.key = 0x10, y.key = 0x11, k1.key = k2.key = 0x20;
+    // (each thread's two-slot fast path, by object, is filled with other draws before an object is asked again: the
+    // lookups below reach the thread's map and the shared one)
+    const auto evict = [&] { graphics_pipeline(x, s, at, tri, ct), graphics_pipeline(y, s, at, tri, ct); };
     PipeEntry* ea = graphics_pipeline(a, s, at, tri, ct);
     check(ea && builds == 1 && built_for[0] == &a, "the first object: an entry built for it");
     check(notes == 1 && noted_key == pipeline_key(a, s, at, tri), "the first object's pipeline noted under the key");
+    evict();
+    check(graphics_pipeline(a, s, at, tri, ct) == ea, "the first object asked again through the thread's map: its entry");
+    evict();
+    const int builds_a = builds;
     PipeEntry* eb = graphics_pipeline(b, s, at, tri, ct);
     check(eb && eb != ea, "a second object of the same key: an entry of its own");
-    check(builds == 2 && built_for[1] == &b, "the second object's pipeline built for it");
-    check(notes == 1, "the second object's own key is not noted (it holds an address)");
-    check(graphics_pipeline(a, s, at, tri, ct) == ea && graphics_pipeline(b, s, at, tri, ct) == eb && builds == 2,
-          "each object asked again: its own entry, no more builds");
+    check(builds == builds_a + 1 && built_for[builds_a] == &b, "the second object's pipeline built for it");
+    check(notes == 3, "the second object's own key is not noted (it holds an address)");
+    evict();
+    const int builds_ab = builds;
+    PipeEntry* ea2 = graphics_pipeline(a, s, at, tri, ct);
+    evict();
+    PipeEntry* eb2 = graphics_pipeline(b, s, at, tri, ct);
+    check(ea2 == ea && eb2 == eb && builds == builds_ab, "each object asked again: its own entry, no more builds");
+
+    // (a pipeline made ahead at its program's create call, for k1: the first draw of k2, the same key, does not take it)
+    const VkPipeline made_ahead = (VkPipeline)(uintptr_t)0x7000;
+    kept_ready[pipeline_key(k1, s, at, tri)] = made_ahead, kept_for[pipeline_key(k1, s, at, tri)] = &k1;
+    kept_ready_n = kept_ready.size();
+    PipeEntry* ek2 = graphics_pipeline(k2, s, at, tri, ct);
+    check(ek2 && ek2->pipeline.load() != made_ahead && built_for[builds - 1] == &k2,
+          "a pipeline made ahead for another object: not given to this one, its own built");
+    PipeEntry* ek1 = graphics_pipeline(k1, s, at, tri, ct);
+    check(ek1 && ek1 != ek2 && ek1->pipeline.load() == made_ahead, "the pipeline made ahead given to its own object");
+    const int builds_k = builds;
 
 #ifdef ENTRY_HAS_PROG   // (an entry that keeps no object, the source before this fix: the part above shows it)
     auto pre = std::make_unique<PipeEntry>();   // (as precompile_run makes one for the object program_find gave it)
@@ -124,8 +148,8 @@ int main() {
     ec->ready.store(true);
     pipelines.emplace(pipeline_key(c, s, at, tri), std::move(pre));
     PipeEntry* ed = graphics_pipeline(d, s, at, tri, ct);
-    check(ed && ed != ec && builds == 3 && built_for[2] == &d, "a precompiled entry of another object: this one gets its own");
-    check(graphics_pipeline(c, s, at, tri, ct) == ec && builds == 3, "the precompiled entry given to its own object");
+    check(ed && ed != ec && builds == builds_k + 1 && built_for[builds_k] == &d, "a precompiled entry of another object: this one gets its own");
+    check(graphics_pipeline(c, s, at, tri, ct) == ec && builds == builds_k + 1, "the precompiled entry given to its own object");
 #endif
     if (!bad) std::puts("ok");
     return bad;
