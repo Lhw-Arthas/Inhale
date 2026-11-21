@@ -1849,3 +1849,27 @@ read-write one. `RX_VK_IMPORT_FENCE=0` turns it off. Runs of the build with it, 
 The 780M runs at about 45 fps here, so its count over 25 ms is the frame rate's, not hitches. The frames left on the 2080
 are the level's load (frames 690-733, 80-320 ms) and one 109 ms frame of GPU time in one run. Not measured: Intel on
 Windows, NVIDIA cards other than the 2080, a long session.
+
+### 2026-11-21: a shader preparation that the program cache lost (HeyListen c795788f, 8a629e6c)
+
+`inhale_prepared.bin` said what the shaders were prepared for (the translator, the seed, the driver's part), not
+whether the program cache still held them. The cache is one file per folder, made again whenever its stamp
+(`program_cache_stamp`: the translator and what it is told of the GPU, `RX_VK_WARP64`, a laptop's other GPU with
+`RX_VK_DEVICE`) is not the file's. A start under another stamp, closed before its preparation ended, left the usual
+start an empty cache under a record that said prepared: nothing was prepared and every program the walk met was
+translated in play. Reproduced on this PC (RX 7900 XTX, Linux) in `work/runs/pc1` (`run.sh`): a folder prepared, a start
+with `RX_VK_WARP64=1` killed after 12 s (the cache rewritten, 0 of the 86163 keys left), then the tier-2 walk, frames
+after 800:
+
+| run | prepared at the start | translation in play | translations waited for | frames > 20.8 ms | > 40 ms | max |
+|---|---|---|---|---|---|---|
+| prepared, no other start (`A_base`) | no (nothing to do) | 13 ms | 2 | 1 | 0 | 24.8 ms |
+| after the cut start, before the fix (`A_before`) | no | 255 ms | 5 | 7 | 4 | 60.0 ms |
+| after the cut start, with the fix (`B_after2`) | yes, 27.5 s | 12 ms | 0 | 0 | 0 | 18.5 ms |
+
+This game's programs translate in about 13 ms each, not the other game's 200-400 ms: `scripts/frame_hitches.py` gives
+`pipeline` for 6 of the 7 slow frames and `translate` for 1. The fix: the record has a seventh word, the program keys
+the cache held when it was written (`prepared_write`), and `prepare_check` prepares again (`PrepareWhy::Cache`, "the
+program cache holds N program keys of the M the last preparation left") when the cache holds fewer than half of that,
+or none under a record of six words; no program cache is never a reason. A six-word record (every folder before this)
+and a cache partly refilled in play under it is not caught: the count starts with the next preparation.

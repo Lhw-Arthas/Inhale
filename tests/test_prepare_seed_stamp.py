@@ -10,6 +10,11 @@ translator; a seed rewritten as it was (a new time) is hashed once and not prepa
 prepares once; a seed whose time is as new as the record's is hashed (its time cannot show a second write in the same tick:
 whole seconds from libstdc++'s std::filesystem on Windows); and that prepare_run uses all of this. Every write time is set
 by the test, so that it does not depend on how fast it runs or the file system's resolution.
+(inhale) And the program cache is asked (HeyListen c795788f, GPL-3.0): a start under another stamp (another GPU of a laptop,
+RX_VK_WARP64) makes the cache again under its own, and closed before its prepare ended, the next usual start found an empty
+cache under a record that said prepared, and translated in play. The record holds the count of program keys the cache had
+when it was written (a seventh word); fewer than half of that now, or none under a record without the count, prepares
+again; no program cache never does, and a record of six words keeps its sixth (the driver's part).
 python -I -B tests/test_prepare_seed_stamp.py [--cxx g++]
 """
 import argparse
@@ -47,7 +52,16 @@ def main():
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <unordered_set>
 #include <vector>
+// (stand-ins for the program cache, vk_progcache.cpp: kept program keys now; SIZE_MAX: no cache)
+size_t cache_keys = SIZE_MAX;
+std::string program_cache_path() { return cache_keys == SIZE_MAX ? std::string() : std::string("programs.bin"); }
+std::unordered_set<uint64_t> program_cache_kept_keys() {
+    std::unordered_set<uint64_t> keys;
+    for (size_t i = 0; cache_keys != SIZE_MAX && i < cache_keys; i++) keys.insert(i);
+    return keys;
+}
 """ + helpers + r"""
 int fails = 0;
 std::string dir, rec, seed;
@@ -202,6 +216,46 @@ int main(int argc, char** argv) {
     want("legacy Windows record, the next start", start(3, &ms), PrepareWhy::None);
     if (ms != 0) std::puts("legacy Windows record: hashed twice"), fails++;
 #endif
+    // (inhale) the program cache that lost what the record says was prepared
+    cache_keys = 100;
+    want("a cache: prepared once", start(4), PrepareWhy::Translator);
+    want("the cache as it was", start(4), PrepareWhy::None);
+    cache_keys = 50;
+    want("half the cache", start(4), PrepareWhy::None);
+    cache_keys = 100;
+    want("refilled", start(4), PrepareWhy::None);
+    cache_keys = 49;
+    if (start(4) == PrepareWhy::None) std::puts("less than half the cache left: not prepared again"), fails++;
+    cache_keys = 100;
+    start(4);
+    cache_keys = 0;
+    if (start(4) == PrepareWhy::None) std::puts("the cache made again under another stamp: not prepared again"), fails++;
+    cache_keys = 100;
+    want("after the prepare, the next start", start(4), PrepareWhy::None);
+    cache_keys = SIZE_MAX;
+    want("no program cache", start(4), PrepareWhy::None);
+    // a record of six words (no count): an empty cache prepares again, any other does not, and the sixth word stays
+    {
+        PreparedFor six;
+        double unused;
+        cache_keys = 100;
+        prepare_check(rec, seed, 4, &six, &unused);
+        const uint64_t r[6] = {six.stamp, six.seed_hash, six.seed_size, (uint64_t)six.seed_time, (uint64_t)file_clock_now(), 77};
+        FILE* f = fopen(rec.c_str(), "wb");
+        fwrite(r, 8, 6, f);
+        fclose(f);
+        PreparedFor got;
+        if (prepared_read(rec, &got) != 2 || got.warmed != 77) std::puts("six-word record: its sixth word lost"), fails++;
+        cache_keys = 5;
+        PreparedFor now;
+        if (prepare_check(rec, seed, 4, &now, &unused) != PrepareWhy::None) std::puts("six-word record: prepared again"), fails++;
+        cache_keys = 0;
+        if (prepare_check(rec, seed, 4, &now, &unused) == PrepareWhy::None)
+            std::puts("six-word record, empty cache: not prepared again"), fails++;
+        if (prepared_read(rec, &got) != 2 || got.warmed != 77) std::puts("six-word record: rewritten without its sixth"), fails++;
+    }
+    cache_keys = SIZE_MAX;
+    want("back to the earlier translator", start(3), PrepareWhy::Translator);
     // no seed: the translator alone, as before
     std::filesystem::remove(seed);
     want("no seed, same translator", start(3), PrepareWhy::None);

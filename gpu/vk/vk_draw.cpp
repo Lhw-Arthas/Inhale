@@ -71,6 +71,7 @@
 #include "vk_gprof.h"
 #include "vk_jobs.h"
 #include "vk_shader.h"
+#include "vk_progcache.h"   // (inhale: the prepare record counts the kept programs)
 #include "vk_texture.h"
 #include "movie_upscale_policy.h"
 #include "skip_code.h"
@@ -9406,13 +9407,14 @@ struct PreparedFor {
     int64_t seed_time = 0, recorded_at = 0;   // (Windows: 100 ns FILETIME ticks; elsewhere: filesystem-clock nanoseconds)
     bool timed = false;   // (recorded_at read: records of four words had none)
     uint64_t warmed = 0;   // (what the driver's part was made for: warmed_stamp. 0: not made, or a record of five words)
+    uint64_t kept = 0;   // (inhale) the program keys the cache held when it was written (0: none, or a record of six words)
 };
 #ifdef _WIN32
 constexpr int64_t kSeedTimeSlack = 20'000'000;   // (two seconds in FILETIME ticks)
 #else
 constexpr int64_t kSeedTimeSlack = 2'000'000'000;
 #endif
-enum class PrepareWhy { None, First, Translator, Seed };
+enum class PrepareWhy { None, First, Translator, Seed, Cache };   // (inhale: Cache)
 /// The seed's size and write time (false: there is none). Windows keeps native 100 ns FILETIME ticks: converting that
 /// epoch to nanoseconds overflows int64_t. Other platforms keep filesystem-clock nanoseconds
 bool seed_file_id(const std::string& path, uint64_t* size, int64_t* time) {
@@ -9477,17 +9479,23 @@ bool seed_file_hash(const std::string& path, uint64_t* out) {
 int prepared_read(const std::string& path, PreparedFor* had) {
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return 0;
-    uint64_t r[6]{};
-    const size_t n = fread(r, 8, 6, f);
+    uint64_t r[7]{};   // (inhale: a seventh word, the kept count)
+    const size_t n = fread(r, 8, 7, f);
     fclose(f);
     had->stamp = r[0], had->seed_hash = r[1], had->seed_size = r[2], had->seed_time = (int64_t)r[3];
     had->recorded_at = (int64_t)r[4], had->timed = n >= 5;
     had->warmed = n >= 6 ? r[5] : 0;
+    had->kept = n >= 7 ? r[6] : 0;
     return n >= 4 ? 2 : n >= 1 ? 1 : 0;
 }
+/// (inhale) The program keys the cache holds now (SIZE_MAX: no program cache)
+size_t cache_kept_now() { return program_cache_path().empty() ? SIZE_MAX : program_cache_kept_keys().size(); }
 void prepared_write(const std::string& path, const PreparedFor& now) {
-    const uint64_t r[6] = {now.stamp, now.seed_hash, now.seed_size, (uint64_t)now.seed_time, (uint64_t)file_clock_now(), now.warmed};
-    if (FILE* f = fopen(path.c_str(), "wb")) fwrite(r, 8, 6, f), fclose(f);
+    // (inhale) with the count of program keys the cache holds as it is written, as the time: prepare_check's Cache
+    const size_t kept = cache_kept_now();
+    const uint64_t r[7] = {now.stamp, now.seed_hash, now.seed_size, (uint64_t)now.seed_time, (uint64_t)file_clock_now(), now.warmed,
+                           kept == SIZE_MAX ? 0 : (uint64_t)kept};
+    if (FILE* f = fopen(path.c_str(), "wb")) fwrite(r, 8, 7, f), fclose(f);
 }
 /// Whether to prepare (and why), and what for: *now, written once the prepare is done. No seed: the translator alone, as before.
 /// *hash_ms: how long the seed's hash took (0: not taken). now->warmed is the record's, for this translator: the caller's to renew
@@ -9495,6 +9503,12 @@ PrepareWhy prepare_check(const std::string& path, const std::string& seed, uint6
     *hash_ms = 0;
     PreparedFor had;
     const int read = prepared_read(path, &had);
+    // (inhale, from HeyListen c795788f, GPL-3.0) the record says prepared, but the program cache may not hold it: a start under
+    // another stamp (a laptop's other GPU, RX_VK_WARP64: translator_stamp) makes the cache again under its own, and closed before
+    // its prepare ended, the next usual start found an empty cache under a record that said prepared, and translated in play.
+    // Fewer than half of what the record counted, or none under a record without the count: prepared again. No cache: never
+    const size_t kept = cache_kept_now();
+    const bool lost = kept != SIZE_MAX && (had.kept ? kept < had.kept / 2 : kept == 0);
     now->stamp = stamp;
     now->warmed = had.stamp == stamp ? had.warmed : 0;   // (kept where the record is only written again for the seed's new time)
     const bool have_seed = seed_file_id(seed, &now->seed_size, &now->seed_time);
@@ -9510,11 +9524,12 @@ PrepareWhy prepare_check(const std::string& path, const std::string& seed, uint6
                     had.seed_size == now->seed_size;
         // (rewritten as it was, by a build: the new time kept, so the next start does not hash it again; a seed written just
         // before the record is hashed again until a record is written 2 s after it)
-        if (same_seed && had.stamp == stamp) prepared_write(path, *now);
+        if (same_seed && had.stamp == stamp && !lost) prepared_write(path, *now);   // (inhale: !lost, kept for the prepare)
     }
     if (!read) return PrepareWhy::First;
     if (had.stamp != stamp) return PrepareWhy::Translator;
-    return same_seed ? PrepareWhy::None : PrepareWhy::Seed;
+    if (!same_seed) return PrepareWhy::Seed;
+    return lost ? PrepareWhy::Cache : PrepareWhy::None;   // (inhale)
 }
 } // namespace
 /// What the driver's part is good for: these programs, this driver on this GPU (its version too: the cache's UUID is the driver's
@@ -9770,6 +9785,12 @@ bool prepare_run(void (*progress)(size_t done, size_t total), bool background, b
     if (why == PrepareWhy::Seed)
         logf("vk: the game's shader list (inhale_shaders.bin) is not the one the shaders were prepared from: preparing again "
              "(only the programs not kept yet)");
+    if (why == PrepareWhy::Cache) {   // (inhale)
+        PreparedFor had;
+        prepared_read(path, &had);
+        logf("vk: the program cache holds %zu program keys of the %llu the last preparation left: preparing again",
+             program_cache_kept_keys().size(), (unsigned long long)had.kept);
+    }
     const size_t programs = seed_open();
     if (!programs) return false;
     const size_t total = programs * 3;   // (each program for float, one and two integer bone inputs)
