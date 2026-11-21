@@ -384,10 +384,18 @@ NV(nvnMemoryPoolFinalize) {
         }
         InterlockedIncrement(&vmap_gen);
         ReleaseSRWLockExclusive(&vmap_lock);
-    } else if (o->mem) {
+    } else if (o->mem && o->magic == NVN_MAGIC('P', 'O', 'O', 'L')) {   /* (inhale) a live pool only: see below */
         hos_gpu_track(o->gpu, o->size, 0);
         void hos_prompts_pool_gone(uint64_t mem);   /* (longshot, prompts.c: the prompts' textures no longer written there) */
         hos_prompts_pool_gone(o->mem);
+    } else if (o->mem) {
+        /* (inhale) a pool object finalized again (its magic gone with the first Finalize): its range was untracked then,
+           and untracking it again took the counted entry of a newer live pool made over the same memory since, whose CPU
+           writes then reached the renderer no more. Left alone, and said. HeyListen bbc95f03 (GPL-3.0) */
+        static volatile LONG told;
+        if (InterlockedIncrement(&told) <= 8)
+            hos_log("nvn: memory pool %#llx+%#llx finalized again (lr %#llx): left alone", (unsigned long long)o->gpu,
+                    (unsigned long long)o->size, (unsigned long long)c->x[30]);
     }
     o->magic = 0;
 }
