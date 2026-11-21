@@ -67,6 +67,8 @@ static Aux auxes[MAX_EFFECTS];
 static uint64_t effect_order;
 static char calls[16];
 @DELAY@
+static int frees;   /* (the line's free at RemoveDelay, counted: the API below is compiled with this) */
+#define free(p) (frees++, free(p))
 static int pos_at_reverb = -1;   /* (where the delay's line stood when the reverb ran: moved on, the delay ran first) */
 static void reverb_frame(Reverb *rv, Mix *m) { (void)rv, (void)m; strcat(calls, "R"); pos_at_reverb = delays[0].pos; }
 static void aux_frame(Aux *a, Mix *m) { (void)a, (void)m; strcat(calls, "A"); }
@@ -89,6 +91,10 @@ static uint64_t add(int64_t max_ns, int channels) {
     return c.x[0];
 }
 static const uint64_t D = (uint64_t)(uintptr_t)&delay_obj;
+static void fresh(void) {   /* (the delay removed and added again: a silent line) */
+    call0(); c.x[1] = D; imp__ZN2nn5audio11RemoveDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeEPNS0_10SubMixTypeE(&c);
+    add(100000000, 2);
+}
 static void setup(float spread, int enabled) {
     setf(imp__ZN2nn5audio14SetDelayInGainEPNS0_9DelayTypeEf, D, 1.0f);
     setf(imp__ZN2nn5audio20SetDelayFeedbackGainEPNS0_9DelayTypeEf, D, 0.5f);
@@ -127,6 +133,7 @@ int main(void) {
 
     call0(); c.x[1] = D; imp__ZN2nn5audio11RemoveDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeEPNS0_10SubMixTypeE(&c);
     check(c.x[0] == (uint64_t)(uintptr_t)work, "RemoveDelay gives the work buffer back");
+    check(frees == 1, "RemoveDelay frees the delay's line");
     run();
     check(energy(0, 1) < 1e-6f && near(out[0][0], 1.0f), "a removed delay leaves the mix untouched");
 
@@ -139,6 +146,24 @@ int main(void) {
     setup(0.0f, 0);
     run();
     check(energy(0, 1) < 1e-6f && energy(1, 0) < 1e-6f, "a delay not enabled leaves the mix untouched");
+
+    fresh();   /* (a new line: no tail of the runs above in it) */
+    setup(0.0f, 1);
+    setf(imp__ZN2nn5audio15SetDelayDryGainEPNS0_9DelayTypeEf, D, 0.5f);
+    run();
+    check(near(out[0][0], 0.5f) && near(out[0][480], 1.0f), "the dry gain on the input, not on the echo");
+
+    fresh();
+    {   /* (one channel, read from buffer 1 (silent) and written to buffer 0) */
+        static int8_t in1[1] = {1}, out1[1] = {0};
+        call0();
+        c.x[0] = D, c.x[1] = (uint64_t)(uintptr_t)in1, c.x[2] = (uint64_t)(uintptr_t)out1, c.x[3] = 1;
+        imp__ZN2nn5audio19SetDelayInputOutputEPNS0_9DelayTypeEPKaS4_i(&c);
+    }
+    setup(0.0f, 1);
+    run();
+    check(energy(0, 0) < 1e-6f, "SetDelayInputOutput: buffer 0 written from buffer 1 (silent), its impulse gone");
+    check(energy(1, 0) < 1e-6f, "SetDelayInputOutput: buffer 1, only read, left as it was");
 
     reverbs[0].used = 1, reverbs[0].mix = 0, reverbs[0].order = ++effect_order;
     call0(); c.x[1] = D; imp__ZN2nn5audio11RemoveDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeEPNS0_10SubMixTypeE(&c);
