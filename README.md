@@ -30,7 +30,7 @@ Early. One player has played it by hand on Linux; the Windows installer has been
 | Controllers | ❓ Few reports yet. Rumble is played since v0.2.0, not yet felt on a pad in play |
 | Frame generation | ⚠️ **Auto** works. A fixed **2x** and up can freeze the game for a few seconds now and then (seen on Linux with an AMD card) |
 | Linux | ✅ The AppImage, tested on CachyOS with an AMD Radeon RX 7900 XTX (Mesa). It also starts in clean Ubuntu 22.04 and Fedora |
-| Windows | ✅ The installer, tested on Windows 11 with an NVIDIA RTX 2080 SUPER, built from the extracted folders. The `.nup` route there is still to be tried |
+| Windows | ✅ The installer, tested on Windows 11 with an NVIDIA RTX 2080 SUPER, built from the extracted folders. The `.nup` route there is still to be tried. Up to v0.3.0 play hitched now and then there (frames of 40 ms and more, on that card and the 780M); fixed in v0.3.1 |
 | AMD cards on Windows | ⚠️ One tried, a Radeon 780M (integrated): v0.2.0 draws coloured discs over the picture there. Fixed in v0.3.0, checked on that card in the first stage only |
 | Intel cards | ❓ Not tried |
 | Cards without mesh shaders (such as NVIDIA GTX 10 and AMD RX 5000) | ⚠️ Should run through a slower compute path (upstream's). Not tried with this game |
@@ -50,7 +50,7 @@ installer: unzip it anywhere and start `Inhale.exe`.
 
 Both packages carry a `recomplauncher.json`, so [RecompLauncher](https://recomplauncher.com) can ask for your `.nup`
 or folder, build the game into its own install folder and start it, with a few of the menu's settings on its page.
-Each update builds the game again from your copy (from the release after v0.3.0: the update to v0.3.0 kept the v0.2.0
+Each update builds the game again from your copy (from v0.3.1: the update to v0.3.0 kept the v0.2.0
 game; run the launcher's setup again to rebuild it). Inhale is not in RecompLauncher's catalog yet.
 
 ### On Windows
