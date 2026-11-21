@@ -78,7 +78,7 @@ rm -rf "$C"
 # ---- Python, and the AppDir's own files ----
 cp -a "$DEPS/python" "$APPDIR/usr/python"
 cp packaging/linux/AppRun "$APPDIR/AppRun"
-cp packaging/recomplauncher.json "$APPDIR/recomplauncher.json"   # (RecompLauncher reads it at the image's top)
+python3 -I packaging/stamp_manifest.py "$APPDIR/recomplauncher.json" "$VERSION"   # (RecompLauncher reads it at the image's top)
 cp packaging/linux/inhale-builder.desktop "$APPDIR/"
 cp packaging/icons/inhale.png "$APPDIR/inhale-builder.png"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"

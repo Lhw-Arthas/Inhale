@@ -92,12 +92,12 @@ class RecompLauncherInhaleTests(unittest.TestCase):
         self.assertIn("dist/Inhale-x86_64.AppImage", files)
         self.assertIn("dist/Inhale-Windows-x64.zip", files)
         self.assertEqual(m["start"]["program"], ["Inhale-x86_64.AppImage", "Inhale.exe"])
-        self.assertIn('cp packaging/recomplauncher.json "$APPDIR/recomplauncher.json"', read("packaging", "linux", "appimage.sh"))
+        self.assertIn('packaging/stamp_manifest.py "$APPDIR/recomplauncher.json" "$VERSION"', read("packaging", "linux", "appimage.sh"))
 
     def test_windows_zip_has_both_at_its_top(self):
         build = read("packaging", "windows", "build.sh")
         self.assertIn('-o "$S/Inhale.exe" packaging/windows/inhale_launch.c', build)
-        self.assertIn('cp packaging/recomplauncher.json "$S/recomplauncher.json"', build)
+        self.assertIn('packaging/stamp_manifest.py "$S/recomplauncher.json" "$VERSION"', build)
         self.assertIn('python3 -I - "$S" "$B/Inhale-Windows-x64.zip" <<\'PY\'', build)
         script = between(build, "<<'PY'\n", "\nPY\n")[len("<<'PY'\n"):]
         with tempfile.TemporaryDirectory() as tmp:
@@ -117,6 +117,20 @@ class RecompLauncherInhaleTests(unittest.TestCase):
             os.utime(stage / "Inhale.exe", (0, 0))
             subprocess.run([sys.executable, "-I", "-c", script, str(stage), str(out)], check=True)
             self.assertEqual(out.read_bytes(), first)
+
+    def test_packages_stamp_the_release_into_prepare_version(self):
+        # (RecompLauncher runs prepare again only when prepare.version changes, "not even a new release" otherwise: with
+        # "1" in every package, v0.3.0's update kept playing the v0.2.0 build. Each package's manifest line, run with a
+        # release name, must leave that name in prepare.version)
+        for script, var in ((("packaging", "linux", "appimage.sh"), "APPDIR"), (("packaging", "windows", "build.sh"), "S")):
+            (line,) = [l for l in read(*script).splitlines() if f'"${var}/recomplauncher.json"' in l]
+            with tempfile.TemporaryDirectory() as tmp:
+                env = dict(os.environ, VERSION="v9.8.7-0-gabcdef0", **{var: tmp})
+                subprocess.run(["bash", "-euc", line], cwd=ROOT, env=env, check=True)
+                out = json.loads((Path(tmp) / "recomplauncher.json").read_text(encoding="utf-8"))
+            self.assertEqual(out["prepare"]["version"], "v9.8.7-0-gabcdef0", script)
+            out["prepare"]["version"] = manifest()["prepare"]["version"]
+            self.assertEqual(out, manifest(), script)
 
     def test_launcher_runs_make_game_as_apprun_does(self):
         c = read("packaging", "windows", "inhale_launch.c")

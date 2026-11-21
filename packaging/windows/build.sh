@@ -64,7 +64,7 @@ rm -f "$S"/third_party/a64-kit/tools/lld-link*.exe
 # ---- Inhale.exe, the Windows AppRun (--cli, --play), and RecompLauncher's manifest beside it ----
 "$MINGW/bin/x86_64-w64-mingw32-clang" -O2 -mwindows -municode -static -o "$S/Inhale.exe" packaging/windows/inhale_launch.c \
     -lshell32
-cp packaging/recomplauncher.json "$S/recomplauncher.json"
+python3 -I packaging/stamp_manifest.py "$S/recomplauncher.json" "$VERSION"
 
 # ---- the installer ----
 NUM=0.0.0

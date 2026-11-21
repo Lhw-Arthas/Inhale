@@ -50,7 +50,8 @@ installer: unzip it anywhere and start `Inhale.exe`.
 
 Both packages carry a `recomplauncher.json`, so [RecompLauncher](https://recomplauncher.com) can ask for your `.nup`
 or folder, build the game into its own install folder and start it, with a few of the menu's settings on its page.
-Inhale is not in RecompLauncher's catalog yet, and this route has not been tried in the launcher itself.
+Each update builds the game again from your copy (from the release after v0.3.0: the update to v0.3.0 kept the v0.2.0
+game; run the launcher's setup again to rebuild it). Inhale is not in RecompLauncher's catalog yet.
 
 ### On Windows
 

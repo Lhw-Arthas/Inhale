@@ -301,7 +301,9 @@ Run workflow: the rolling `nightly` prerelease, with `SHA256SUMS`, unsigned):
 `start` runs `--play {install}/Inhale`, so the game, its `inhale_options.ini` (the `config`) and Windows' `user/` saves
 are in the launcher's install folder (upstream's RecompLauncher issue 215: a build into `~/Games` missed the drive the
 player chose); Linux's saves are `{local}/inhale`. The check is `nup_build_id` 395fc326, `make_game.py`'s `BUILD_ID`.
-Its ten settings are rows this game's menu shows (none of `is_oot_row`'s); Frame generation offers Off and Auto only
+The packages write it with `packaging/stamp_manifest.py`, which sets `prepare.version` to the release (`$VERSION`):
+the launcher runs `prepare` again for a player already set up only when that field changes, not for a new release, so
+with a fixed `"1"` the v0.3.0 update kept playing the v0.2.0 build. Its ten settings are rows this game's menu shows (none of `is_oot_row`'s); Frame generation offers Off and Auto only
 (the fixed multipliers' freezes, section 9, "played by hand past the first boss"). No `prepare.options`: DLSS, FSR 4
 and XeSS reach this game only through the Upscaler row and Frame generation by, both hidden for it. No `dumps`: Redump
 and No-Intro list no `.nup`. `tests/test_recomplauncher_inhale.py` checks all of this against the sources.
