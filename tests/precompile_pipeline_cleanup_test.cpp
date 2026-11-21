@@ -15,6 +15,7 @@
 using VkPipeline = uint64_t;
 constexpr VkPipeline VK_NULL_HANDLE = 0;
 using VkPrimitiveTopology = unsigned;
+struct Program;   // (inhale: PipeEntry keeps the program object it was built for)
 #include "pipe_entry.inc"
 static thread_local bool note_locked = false;
 struct CacheMutex {
