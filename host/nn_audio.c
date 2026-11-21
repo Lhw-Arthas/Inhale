@@ -475,6 +475,50 @@ static void aux_frame(Aux *a, Mix *m) {
             for (int i = 0; i < FRAME; i++) m->buf[b][i] = pcm[ch * FRAME + i] * (1.0f / 32768.0f);
     }
 }
+/* ---- (inhale) delay (AddDelay: an echo on a mix, its input buffers in place to its output buffers) -------------
+   Kirby adds one on a sub mix and sets each of its parameters; before this they were unimplemented imports and the mix
+   dry. Per channel: a line of the time the game sets (at most the maximum it added the effect with), out = dry gain x in
+   + the delayed signal; into the line goes in gain x in + feedback gain x the delayed signal, that signal mixed with its
+   pair channel's by the channel spread, the sum low passed by the low-pass amount. The line is ours (the work buffer the
+   game gives is left alone). HeyListen 924e08a9 (GPL-3.0), the delay part; tests/test_audio_delay.py */
+#define DELAY_MAX (RATE * 2)        /* at most 2 s */
+#define K_DELAY 0x49                /* (a handle kind of this fork's, out of the way of upstream's enum above) */
+typedef struct {
+    int used, mix, enabled, n, max, pos;
+    uint64_t order, buffer;
+    int8_t in[MAX_CH], out[MAX_CH];
+    int64_t time_ns;
+    float in_gain, feedback, dry, spread, lowpass;
+    float *line;                    /* [MAX_CH][max] */
+    float lp[MAX_CH];
+} Delay;
+static Delay delays[MAX_EFFECTS];
+static void delay_frame(Delay *dl, Mix *m) {
+    if (!dl->enabled || dl->n <= 0 || !dl->line) return;
+    const double t = (double)dl->time_ns * RATE / 1e9;
+    const int d = t < 1 ? 1 : t > dl->max - 1 ? dl->max - 1 : (int)t;
+    const float spread = fminf(fmaxf(dl->spread, 0.0f), 1.0f), lp = fminf(fmaxf(dl->lowpass, 0.0f), 0.99f);
+    for (int i = 0; i < FRAME; i++) {
+        float x[MAX_CH], y[MAX_CH];
+        for (int c = 0; c < dl->n; c++) {
+            const int b = dl->in[c];
+            x[c] = b >= 0 && b < m->buffers ? m->buf[b][i] : 0.0f;
+            if (!isfinite(x[c])) x[c] = 0;
+            y[c] = dl->line[c * dl->max + (dl->pos - d + dl->max) % dl->max];
+        }
+        for (int c = 0; c < dl->n; c++) {
+            const int pair = (c ^ 1) < dl->n ? c ^ 1 : c;
+            const float fb = (1.0f - spread) * y[c] + spread * y[pair];
+            dl->lp[c] = (1.0f - lp) * (dl->in_gain * x[c] + dl->feedback * fb) + lp * dl->lp[c];
+            if (!isfinite(dl->lp[c])) dl->lp[c] = 0;   /* (a NaN would stay in the line for good) */
+            dl->line[c * dl->max + dl->pos] = dl->lp[c];
+            const int bo = dl->out[c];
+            if (bo >= 0 && bo < m->buffers) m->buf[bo][i] = dl->dry * x[c] + y[c];
+        }
+        dl->pos = (dl->pos + 1) % dl->max;
+    }
+}
+
 static void effects_frame(int mix) {
     /* Preserve insertion order across effect types, e.g. reverb followed by a CPU delay. */
     uint64_t previous = 0;
@@ -486,6 +530,15 @@ static void effects_frame(int mix) {
                 next = reverbs[e].order, reverb = e, aux = -1;
             if (auxes[e].used && auxes[e].mix == mix && auxes[e].order > previous && auxes[e].order < next)
                 next = auxes[e].order, aux = e, reverb = -1;
+        }
+        int delay = -1;   /* (inhale) and the delays, in the same order */
+        for (int e = 0; e < MAX_EFFECTS; e++)
+            if (delays[e].used && delays[e].mix == mix && delays[e].order > previous && delays[e].order < next)
+                next = delays[e].order, delay = e;
+        if (delay >= 0) {
+            delay_frame(&delays[delay], &mixes[mix]);
+            previous = next;
+            continue;
         }
         if (reverb < 0 && aux < 0) break;
         if (reverb >= 0) reverb_frame(&reverbs[reverb], &mixes[mix]);
@@ -2394,3 +2447,95 @@ HLE(_ZN2nn5audio25GetI3dl2ReverbInputOutputEPKNS0_15I3dl2ReverbTypeEPaS4_Pii) {
     }
     if (ARG(3)) G32(ARG(3)) = (uint32_t)n;
 }
+
+/* ---- (inhale) delay: AddDelay(config, DelayType*, buffer, size, SubMixType* / FinalMixType*, TimeSpan maximum delay,
+   channels), off until enabled, on the mix's first channels until SetDelayInputOutput says. Its settings take effect at
+   once, as the I3DL2 reverb's. Only the calls Kirby imports (no getters) */
+static Delay *delay_of(uint64_t obj) {
+    const int i = get_handle(obj, K_DELAY);
+    return i >= 0 && i < MAX_EFFECTS && delays[i].used ? &delays[i] : NULL;
+}
+static void add_delay(Ctx *c) {
+    au_lock();
+    int e = 0;
+    while (e < MAX_EFFECTS && delays[e].used) e++;
+    const int m = mix_index(ARG(4));
+    const double want = (double)(int64_t)ARG(5) * RATE / 1e9 + 1;
+    const int max = want < 2 ? 2 : want > DELAY_MAX ? DELAY_MAX : (int)want;
+    float *line = e < MAX_EFFECTS && m >= 0 ? (float *)calloc((size_t)MAX_CH * (size_t)max, sizeof *line) : NULL;
+    if (!line) {
+        au_unlock();
+        AUT("audio: delay refused (mix %d)", m);
+        RET(0x1A9 << 9 | 153);   /* (out of effects: an audio result) */
+        return;
+    }
+    Delay *dl = &delays[e];
+    memset(dl, 0, sizeof *dl);
+    dl->used = 1;
+    dl->mix = m;
+    dl->order = ++effect_order;
+    dl->buffer = ARG(2);
+    dl->line = line;
+    dl->max = max;
+    dl->n = (int)ARG(6) < 0 ? 0 : (int)ARG(6) > MAX_CH ? MAX_CH : (int)ARG(6);
+    for (int k = 0; k < MAX_CH; k++) dl->in[k] = dl->out[k] = (int8_t)k;
+    dl->time_ns = (int64_t)ARG(5);
+    dl->in_gain = 0.5f, dl->feedback = 0.4f, dl->dry = 1.0f, dl->lowpass = 0.3f;   /* (until the game's settings come) */
+    put_handle(ARG(1), K_DELAY, e);
+    au_unlock();
+    AUT("audio: delay %d on mix %d, %d channels, at most %d samples", e, m, dl->n, max);
+    RET(0);
+}
+static void remove_delay(Ctx *c) {   /* (the work buffer back, as the SDK's Remove* give it) */
+    au_lock();
+    Delay *dl = delay_of(ARG(1));
+    uint64_t buffer = 0;
+    if (dl) {
+        buffer = dl->buffer;
+        free(dl->line);
+        memset(dl, 0, sizeof *dl);
+    }
+    au_unlock();
+    RET(buffer);
+}
+HLE(_ZN2nn5audio8AddDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeEPvmPNS0_10SubMixTypeENS_8TimeSpanEi) { add_delay(c); }
+HLE(_ZN2nn5audio8AddDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeEPvmPNS0_12FinalMixTypeENS_8TimeSpanEi) { add_delay(c); }
+HLE(_ZN2nn5audio11RemoveDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeEPNS0_10SubMixTypeE) { remove_delay(c); }
+HLE(_ZN2nn5audio11RemoveDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeEPNS0_12FinalMixTypeE) { remove_delay(c); }
+/* (each written out: nx2/standalone.py finds the HLE functions by their HLE( line) */
+HLE(_ZN2nn5audio14SetDelayInGainEPNS0_9DelayTypeEf) { au_lock(); Delay *x = delay_of(ARG(0)); if (x) x->in_gain = farg(c, 0); au_unlock(); }
+HLE(_ZN2nn5audio20SetDelayFeedbackGainEPNS0_9DelayTypeEf) { au_lock(); Delay *x = delay_of(ARG(0)); if (x) x->feedback = farg(c, 0); au_unlock(); }
+HLE(_ZN2nn5audio15SetDelayDryGainEPNS0_9DelayTypeEf) { au_lock(); Delay *x = delay_of(ARG(0)); if (x) x->dry = farg(c, 0); au_unlock(); }
+HLE(_ZN2nn5audio21SetDelayChannelSpreadEPNS0_9DelayTypeEf) { au_lock(); Delay *x = delay_of(ARG(0)); if (x) x->spread = farg(c, 0); au_unlock(); }
+HLE(_ZN2nn5audio21SetDelayLowPassAmountEPNS0_9DelayTypeEf) { au_lock(); Delay *x = delay_of(ARG(0)); if (x) x->lowpass = farg(c, 0); au_unlock(); }
+HLE(_ZN2nn5audio12SetDelayTimeEPNS0_9DelayTypeENS_8TimeSpanE) {
+    au_lock();
+    Delay *x = delay_of(ARG(0));
+    if (x) x->time_ns = (int64_t)ARG(1);
+    au_unlock();
+}
+HLE(_ZN2nn5audio15SetDelayEnabledEPNS0_9DelayTypeEb) {
+    au_lock();
+    Delay *x = delay_of(ARG(0));
+    if (x) x->enabled = (int)(ARG(1) & 1);
+    if (x)
+        AUT("audio: delay %d %s: %.1f ms, in %.3f, feedback %.3f, dry %.3f, spread %.3f, low pass %.3f, %d channels",
+            (int)(x - delays), x->enabled ? "on" : "off", (double)x->time_ns / 1e6, x->in_gain, x->feedback, x->dry,
+            x->spread, x->lowpass, x->n);
+    au_unlock();
+}
+HLE(_ZN2nn5audio19SetDelayInputOutputEPNS0_9DelayTypeEPKaS4_i) {
+    au_lock();
+    Delay *x = delay_of(ARG(0));
+    const int n = (int)ARG(3) < 0 ? 0 : (int)ARG(3) > MAX_CH ? MAX_CH : (int)ARG(3);
+    if (x && (n == 0 || (ARG(1) && ARG(2)))) {
+        for (int k = 0; k < n; k++) {
+            x->in[k] = *(int8_t *)GP(ARG(1) + k);
+            x->out[k] = *(int8_t *)GP(ARG(2) + k);
+        }
+        x->n = n;
+        AUT("audio: delay %d channels: %d, in %d %d out %d %d", (int)(x - delays), n, x->in[0], x->in[1], x->out[0], x->out[1]);
+    }
+    au_unlock();
+}
+HLE(_ZN2nn5audio16IsDelayRemovableEPKNS0_9DelayTypeE) { RET(1); }
