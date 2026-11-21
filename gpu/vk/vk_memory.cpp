@@ -39,6 +39,7 @@
 #include "import_hold.h"
 #include "import_reach.h"
 #include "mirror_budget.h"   // (mirror_budget's rule, by the card)
+#include "import_fence_inhale.h"   // (inhale: an import does not walk the game's memory, upstream's #334)
 #include "mirror_trim.h"
 #include "wb_learn.h"
 #include "mem_check.h"   // (RX_VK_MEM_CHECK: the memory sync's rules, counted)
@@ -523,7 +524,18 @@ bool import_pool(uint64_t lo, uint64_t hi, Pool& p) {
     ai.pNext = &im;
     ai.allocationSize = bytes;
     ai.memoryTypeIndex = type;
-    const VkResult allocated = vkAllocateMemory(dev.device, &ai, nullptr, &p.memory);
+    // (inhale, import_fence_inhale.h) the driver's question about the pointer walks the game's memory from here to the end of its
+    // run of read-write pages: the page after the range ends the run while it is asked. Not with the CPU write watches, which
+    // change protections themselves. RX_VK_IMPORT_FENCE=0: off
+    static const bool fence_on = [] {
+        const char* v = getenv("RX_VK_IMPORT_FENCE");
+        return !v || !env_value_off(v);
+    }();
+    VkResult allocated;
+    {
+        const InhaleImportFence fence(ptr, bytes, fence_on && !page_watches);
+        allocated = vkAllocateMemory(dev.device, &ai, nullptr, &p.memory);
+    }
     t3 = clk::now();
     const VkResult bound = allocated == VK_SUCCESS ? vkBindBufferMemory(dev.device, p.buffer, p.memory, 0) : allocated;
     if (bound != VK_SUCCESS) {

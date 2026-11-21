@@ -412,6 +412,7 @@ SW(RX_VK_IMAGE_PREALLOC, hw, int, "15% of VRAM in blocks (2-24), 8% (2-12) under
 SW(RX_VK_IMMEDIATE, player, bool, "the menu's V-Sync row", "V-Sync Off (immediate) for one run, over the menu's V-Sync row.")
 SW(RX_VK_IMPORT_CAP_MB, tune, int, "unset (-1): 4500 MB cap when the heap budget is 12 GB or more, the heap's own budget below", "Caps the budget the idle-import valve measures against, in MB; 0 turns the cap off at 12 GB and above.")
 SW(RX_VK_IMPORT_CHUNK_MB, hw, int, "4 MB where pools have VRAM mirrors (discrete cards), 16 MB without", "The chunk size game memory is imported by, and so a pool mirror's least size; 0 imports by pool.")
+SW(RX_VK_IMPORT_FENCE, kill, bool, "on (Windows): the page after an import's range ends its region while the driver is asked", "=0 imports as before: the driver's call walks the game's memory past the range.")
 SW(RX_VK_IMPORT_HIGH, hw, int, "85% on Linux and Windows NVIDIA; 0 (idle-import valve off) on Windows AMD/Intel; the retired valve always 85", "Percent of the system heap budget past which idle (and retired) imports of game memory are given back; 0 turns it off.")
 SW(RX_VK_IMPORT_LOW, tune, int, "70% for the idle-import valve, 75% for the retired valve", "Percent of the system heap budget the import give-back valves bring usage down to.")
 SW(RX_VK_IMPORT_SPAN_MB, tune, int, "64 MB", "Up to this size an import also takes the chunks of game pools that run across its ends; 0 does not.")

@@ -1817,3 +1817,35 @@ Two warm runs of S5's walk, headless, at 3840x2160 (RX 7900 XTX, RADV), presents
   is needed for that.
 - `tests/test_frame_hitches.py` puts a slow frame of each cause into a made-up trace and checks that each is found. It
   fails when the medians are not taken off.
+
+### 2026-11-21: the hitches in play on Windows are pool imports; upstream's import fence
+
+On aubox (Windows 11, RTX 2080 SUPER, driver 621.24), every frame over 40 ms of a 100 s walk after the first level's load
+was one or two imports of game memory, on the thread that replays the frame (`vk: pool ... imported in N ms`, then a
+`slow submit` of the same time). The log's `vk: import N ms: ... allocate N` lines put all of an import's time in
+`vkAllocateMemory`. Each took 20-36 ms whatever its size: 4 MB chunks averaged 28.6 ms, 16 MB 28.7, 64 MB 33.7. The
+Radeon 780M on the same PC took 27-36 ms; the RX 7900 XTX on Linux takes under 2 ms. Upstream's #330 explains it: the
+driver asks Windows about the pointer, and Windows walks page by page to the end of the run of pages with the same state
+and protection, and this game's pools lie in long runs of committed read-write pages. The lazy commit of the game's
+regions (`AllocateAddressRegion`, v0.3.0) did not shorten the walk.
+
+Tried and left: `RX_VK_ASYNC_IMPORT=1` moves the import to a thread of its own, but `vkQueueSubmit` then took 22-55 ms
+(the driver serialises the two), and frame 2405 stayed at 109 ms. `RX_VK_IMPORT_CHUNK_MB=16` halves the imports and the
+hitches but costs about 260 MB of VRAM for the larger mirrors (64 MB: 650 MB).
+
+The fix is upstream's PR #334, which upstream closed unmerged because its own game measured no gain after its lazy heap:
+`gpu/vk/import_fence_inhale.h` gives the page after the import's range `PAGE_EXECUTE_READWRITE` for the length of the
+call, so the run, and the walk, end with the range; `commit_on_touch` retries a data fault on such a page as on a
+read-write one. `RX_VK_IMPORT_FENCE=0` turns it off. Runs of the build with it, the same walk, 1920x1080, frames after 300
+(after frame 800 is play, before it the load):
+
+| run | imports of 2 ms or more | their mean | frames > 25 ms | frames > 40 ms | > 40 ms after frame 800 |
+|---|---|---|---|---|---|
+| 2080, fence off (2 runs) | 112, 114 | 22.0, 23.7 ms | 17, 23 | 14, 16 | 10, 12 |
+| 2080, fence on (2 runs) | 4, 2 | 3.4, 4.0 ms | 9, 8 | 6, 6 | 1, 0 |
+| 780M, fence off | 62 | 27.5 ms | 541 | 37 | 33 |
+| 780M, fence on | 21 | 3.6 ms | 614 | 24 | 19 |
+
+The 780M runs at about 45 fps here, so its count over 25 ms is the frame rate's, not hitches. The frames left on the 2080
+are the level's load (frames 690-733, 80-320 ms) and one 109 ms frame of GPU time in one run. Not measured: Intel on
+Windows, NVIDIA cards other than the 2080, a long session.
