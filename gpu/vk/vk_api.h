@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 35
+#define MKWVK_API_VERSION 36   /* (inhale: 36, nvn_release_may_wait) */
 enum { HOS_MONITOR_CURRENT = 1, HOS_MONITOR_PRIMARY = 2 };
 typedef struct MkwVkMonitor {
     char id[512];             /* opaque persistent preference; never a runtime handle or list index */
@@ -400,6 +400,10 @@ typedef struct MkwVkRenderer {
        game thread's virtual core for it); 0, call nvn_invalidate (with the core given up, as before). Never waits: no lock
        but a short one of its own (RX_VK_WB_MAX_KB's table), any thread */
     int (*nvn_invalidate_quick)(uint64_t gpu, uint64_t size);
+    /* (version 36, inhale) whether a texture's or a program's release would wait now, behind the replay's lock or the
+       order lock held by a replay in progress (never when the replay is asynchronous): the host gives its thread's virtual
+       core up around the call only then (host/rx_backend.c release_gives_core). NULL: given up for each release */
+    int (*nvn_release_may_wait)(void);
 } MkwVkRenderer;
 
 /* the DLL's one export: null when Vulkan is not usable (the executable then draws nothing) */

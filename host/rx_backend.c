@@ -543,13 +543,21 @@ void rx_nvn_set_texture_pool_size(int n) {
     }
     vk ? vk->nvn_set_texture_pool_size(n) : wgr_nvn_set_texture_pool_size(n);
 }
+/* (inhale) A texture's or a program's release, with the replay not asynchronous, takes the replay's lock, held through a
+   whole submission being replayed: seconds behind slow pipeline compiles (HeyListen's issue 67, a zone load's thread held a
+   virtual core 2-2.5 s inside the renderer), and every game thread allowed on that core waited for it. The thread gives
+   its core up for the call when the back end says it would wait (nvn_release_may_wait); releases are thousands a load,
+   so one with the locks free keeps the core. HeyListen 3cefe030 (GPL-3.0); tests/test_vcore_release.py */
+static int release_gives_core(void) { return vk && (!vk->nvn_release_may_wait || vk->nvn_release_may_wait()); }
 void rx_nvn_texture_released(const nvn_tex *t) {
     if (!started && t) {
         early_call c = {3, 0};
         c.t = *t;
         if (keep_early(&c)) return;
     }
+    const int away = release_gives_core() ? hos_vcore_away() : 0;   /* (inhale) */
     vk ? vk->nvn_texture_released(t) : wgr_nvn_texture_released(t);
+    if (away) hos_vcore_back();
 }
 void rx_nvn_texture_created(const nvn_tex *t) {
     if (!started && t) {
@@ -559,7 +567,11 @@ void rx_nvn_texture_created(const nvn_tex *t) {
     }
     if (vk && vk->nvn_texture_created) vk->nvn_texture_created(t);
 }
-void rx_nvn_program_released(const nvn_prog *p) { vk ? vk->nvn_program_released(p) : wgr_nvn_program_released(p); }
+void rx_nvn_program_released(const nvn_prog *p) {
+    const int away = release_gives_core() ? hos_vcore_away() : 0;   /* (inhale) the replay may be translating it: as above */
+    vk ? vk->nvn_program_released(p) : wgr_nvn_program_released(p);
+    if (away) hos_vcore_back();
+}
 void rx_nvn_program_created(const nvn_prog *p) {
     if (vk && vk->nvn_program_created) vk->nvn_program_created(p);
 }
@@ -652,5 +664,11 @@ void rx_nvn_vmap_changing(uint64_t gpu, uint64_t size) {
     if (away) hos_vcore_back();
 }
 void rx_nvn_pool_created(uint64_t gpu, uint64_t size) {
-    if (vk && vk->nvn_pool_created) vk->nvn_pool_created(gpu, size);
+    /* (inhale) it takes the back end's pool locks, which an import or a replay in progress holds: HeyListen's boot thread
+       sat 165 s in a futex inside the renderer holding a virtual core (its issue 88). A few hundred calls a boot, none in
+       the frames: the core is given up for each. HeyListen 7534b45c (GPL-3.0) */
+    if (!vk || !vk->nvn_pool_created) return;
+    const int away = hos_vcore_away();
+    vk->nvn_pool_created(gpu, size);
+    if (away) hos_vcore_back();
 }

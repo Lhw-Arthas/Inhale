@@ -7304,6 +7304,21 @@ void present(const nvn_tex* t, const int crop[4]) {
     if (crop) std::memcpy(j.crop, crop, sizeof j.crop), j.has_crop = true;
     enqueue(std::move(j));
 }
+/// (inhale) Whether a texture's or a program's release called now would wait: the replay not asynchronous (the release
+/// takes replay_mu, held through a whole submission being replayed, and at times sync_order_mu) and one of the two held at
+/// this moment. The host gives its thread's virtual core up around the call only then (host/rx_backend.c
+/// release_gives_core): HeyListen's OptimizeChangeBanc held a core for 2-2.5 s inside these behind slow pipeline compiles,
+/// and releases are thousands a load, so one with the locks free must not pay a give-up. A best-effort look: a lock taken
+/// just after it is waited for with the core held. replay_mu's own mutex, not its try_lock: that marks a replay boundary.
+/// HeyListen 3cefe030 (GPL-3.0); tests/test_vcore_release.py
+static int release_may_wait() {
+    if (async_on()) return 0;   // (a job queued: nothing waited for here)
+    if (!sync_order_mu.try_lock()) return 1;
+    sync_order_mu.unlock();
+    if (!replay_mu.m.try_lock()) return 1;
+    replay_mu.m.unlock();
+    return 0;
+}
 void texture_released_of(const nvn_tex* t) {
     if (!t) return;
     tex_pages_add(t, -1);
@@ -7598,6 +7613,7 @@ void fill_replay_table(MkwVkRenderer& t) {
     t.guest_imported = memory_guest_imported;
     t.nvn_vmap_changing = vmap_changing;
     t.nvn_texture_created = texture_created_of;
+    t.nvn_release_may_wait = release_may_wait;   // (inhale)
 }
 
 std::atomic<bool> par_active{false};
