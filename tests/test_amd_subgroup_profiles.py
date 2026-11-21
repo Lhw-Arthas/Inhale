@@ -44,7 +44,14 @@ struct {
     // fragment shuffles' fallback on AMD's Windows driver, the gather offset. main() fills the first two by those rules,
     // which tests/test_device_policy.py holds device_policy() to)
     struct { bool warp64 = false, frag_shuffle_fallback = false, gather_offset = false; } policy;
+    int features = 0, float_controls = 0;   // (inhale: what shader_caps_inhale.h reads, below)
 } dev;
+// (inhale) shader_caps_inhale.h as a device with 8- and 16-bit integers and both denorm modes gives it: tests/test_shader_caps_inhale.py
+struct InhaleShaderCaps {
+    bool int8 = true, int16 = true, fp32_denorm_preserve = true, fp32_denorm_flush = true;
+    uint32_t missing() const { return 0; }
+};
+template <class F, class F12, class FC> InhaleShaderCaps inhale_shader_caps(const F&, const F12&, const FC&) { return {}; }
 
 using Shader::Stage;
 using Id = uint32_t;

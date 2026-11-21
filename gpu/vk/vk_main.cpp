@@ -688,6 +688,13 @@ bool create_device() {
     dev.eds3_a2c = dev.dynamic_state3 && eds3.extendedDynamicState3AlphaToCoverageEnable;
     dev.vk12 = f12;
     dev.vk13 = f13;
+    {   // (inhale) the denorm modes a program may declare (shader_caps_inhale.h)
+        dev.float_controls = VkPhysicalDeviceFloatControlsProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        p2.pNext = &dev.float_controls;
+        vkGetPhysicalDeviceProperties2(dev.physical, &p2);
+        dev.float_controls.pNext = nullptr;
+    }
     {   // (longshot, after TotK Recomp's vk_caps.c) NVN's programs are written for 32 lanes: the translator is told 32, and the lane
         // shuffles of OoT's networks and the lane masks of its mesh programs depend on it. NVIDIA's GPUs have no other size; AMD's
         // default to 64 where they like, and the networks' output came out as coloured noise (Inhale issues 10 and 14)

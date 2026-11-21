@@ -54,6 +54,8 @@
 
 #include "vk_paths.h"
 #include "vk_internal.h"
+#include "shader_caps_inhale.h"   // (inhale) 8- and 16-bit integers and denorm modes by the device; after
+                                  // vk_internal.h: its vulkan.h must come after vk_loader.h's Win32 define
 #include "flat_map.h"
 #include "vk_jobs.h"
 #include "vk_draw.h"
@@ -653,12 +655,15 @@ Shader::Profile make_profile() {
     p.unified_descriptor_binding = true;
     p.support_descriptor_aliasing = true;
     p.support_int8 = p.support_int16 = p.support_int64 = true;
+    const InhaleShaderCaps caps = inhale_shader_caps(dev.features, dev.vk12, dev.float_controls);   // (inhale) by the device
+    p.support_int8 = caps.int8, p.support_int16 = caps.int16;
     p.support_uniform_and_storage_buffer_8bit = p.support_storage_buffer_8bit = true;
     p.support_uniform_and_storage_buffer_16bit = p.support_storage_buffer_16bit = true;
     p.support_vertex_instance_id = false;
     p.support_float_controls = true;
     p.support_separate_denorm_behavior = p.support_separate_rounding_mode = true;
     p.support_fp32_denorm_preserve = p.support_fp32_denorm_flush = true;
+    p.support_fp32_denorm_preserve = caps.fp32_denorm_preserve, p.support_fp32_denorm_flush = caps.fp32_denorm_flush;   // (inhale)
     p.support_fp16_signed_zero_nan_preserve = p.support_fp32_signed_zero_nan_preserve = true;
     p.support_vote = true;
     p.supported_subgroup_stages = VK_SHADER_STAGE_ALL;
@@ -1384,6 +1389,11 @@ uint64_t translator_stamp() {
                                  (profile().support_storage_texel_buffer_array_nonuniform_indexing ? 0u : 4u)) {
         const uint32_t no_nonuniform[] = {0x6e6e7561u, missing};   // ("nnua", and which)
         add(no_nonuniform, sizeof no_nonuniform);
+    }
+    // (inhale) and what the device lacks of shader_caps_inhale.h: only then, so the GPUs that have it all keep one cache
+    if (const uint32_t missing = inhale_shader_caps(dev.features, dev.vk12, dev.float_controls).missing()) {
+        const uint32_t narrow[] = {0x6e617263u, missing};   // ("narc", and which)
+        add(narrow, sizeof narrow);
     }
     // (RX_VK_GP_, not RX_VK_GP: that took RX_VK_GPL with it, which changes no translation, and switching the stage libraries on
     // threw the whole program cache away. What the libraries are good for is the prepare's second stamp, vk_draw.cpp warmed_stamp)
