@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
@@ -93,10 +93,6 @@ constexpr std::underlying_type_t<T> to_underlying(T e) noexcept {
 #define YUZU_NON_MOVEABLE(cls)                                                                     \
     cls(cls&&) = delete;                                                                           \
     cls& operator=(cls&&) = delete
-
-// suyu-branded aliases
-#define SUYU_NON_COPYABLE(cls) YUZU_NON_COPYABLE(cls)
-#define SUYU_NON_MOVEABLE(cls) YUZU_NON_MOVEABLE(cls)
 
 namespace Common {
 

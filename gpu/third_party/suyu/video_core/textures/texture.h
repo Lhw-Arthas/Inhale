@@ -1,10 +1,12 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
 #include <array>
-#include <functional>
 #include "common/assert.h"
 #include "common/bit_field.h"
 #include "common/common_types.h"
@@ -163,6 +165,17 @@ static_assert(sizeof(TextureHandle) == 4, "TextureHandle has wrong size");
     }
 }
 
+/// Some Switch 2 bindless handles (Switch Sports' scenery, read from a uniform register) hold
+/// the texture header's byte offset in the pool, index * 32, where the handle normally has the
+/// index. Read it as an offset only on Switch 2 (native tiling), when the plain index falls past
+/// the pool and the offset lands inside it, so handles that already resolve are left alone.
+[[nodiscard]] constexpr u32 TextureHeaderIndex(u32 index, u32 limit, bool switch2) {
+    if (switch2 && index > limit && index % 32 == 0 && index / 32 <= limit) {
+        return index / 32;
+    }
+    return index;
+}
+
 struct TICEntry {
     union {
         struct {
@@ -282,8 +295,30 @@ struct TICEntry {
     constexpr bool IsBuffer() const {
         return header_version == TICHeaderVersion::OneDBuffer;
     }
+
+    /// Format 0 describes no texture: NVIDIA's texture header classes define no
+    /// COMPONENTS_SIZES value 0 (R32_G32_B32_A32 is 1).
+    constexpr bool HasNoFormat() const {
+        return format.Value() == TextureFormat{};
+    }
 };
 static_assert(sizeof(TICEntry) == 0x20, "TICEntry has wrong size");
+
+/// Resolve and read a texture header, returning the same empty descriptor as a snapshot miss.
+template <typename Memory>
+[[nodiscard]] TICEntry ReadTextureDescriptor(Memory& memory, GPUVAddr pool_address, u32 limit,
+                                             bool via_header_index, u32 raw_handle) {
+    const auto [texture_index, sampler_index] = TexturePair(raw_handle, via_header_index);
+    (void)sampler_index;
+    const u32 index = TextureHeaderIndex(texture_index, limit, memory.UsesNativeTiling());
+    if (index > limit) {
+        return {};
+    }
+    TICEntry entry{};
+    memory.ReadBlock(pool_address + static_cast<GPUVAddr>(index) * sizeof(TICEntry), &entry,
+                     sizeof(entry));
+    return entry;
+}
 
 enum class WrapMode : u32 {
     Wrap = 0,
@@ -378,6 +413,8 @@ struct TSCEntry {
     }
 
     std::array<float, 4> BorderColor() const noexcept;
+
+    std::array<float, 4> SrgbBorderColor() const noexcept;
 
     float MaxAnisotropy() const noexcept;
 

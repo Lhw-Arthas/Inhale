@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -317,6 +317,9 @@ EmitContext::EmitContext(IR::Program& program, Bindings& bindings, const Profile
             header += "layout(early_fragment_tests)in;";
         }
         break;
+    case Stage::Task:
+    case Stage::Mesh:
+        throw NotImplementedException("GLSL task and mesh programs");
     case Stage::Compute:
         stage_name = "cs";
         const u32 local_x{(std::max)(program.workgroup_size[0], 1u)};

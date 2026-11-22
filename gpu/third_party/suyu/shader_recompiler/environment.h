@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -7,7 +7,7 @@
 #pragma once
 
 #include <array>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 
 #include "common/common_types.h"
 #include "shader_recompiler/program_header.h"
@@ -66,6 +66,7 @@ struct ConstBufferAddr {
     IR::U32 dynamic_offset;
     u32 count;
     bool has_secondary;
+    u32 handle_program{~0U}; ///< index in Info::handle_programs for a handle computed per draw
 };
 
 class Environment {
@@ -74,9 +75,18 @@ public:
 
     [[nodiscard]] virtual u64 ReadInstruction(u32 address) = 0;
 
-    /// (mkw-recomp, from Eglantine) an indirect branch's target, from the native program's address to the
-    /// translated one's: Ampere programs are lowered to Maxwell (frontend/ampere) before the Maxwell frontend
     [[nodiscard]] virtual u32 TranslateProgramAddress(u32 address) const { return address; }
+
+    /// True for programs lowered from native (Switch 2) code.
+    [[nodiscard]] virtual bool HasNativeInstructions() const { return false; }
+
+    /// A Switch 2 native program lowered to Maxwell instructions. Its storage buffer pointers are
+    /// raw 8-byte arguments in constant buffers, without the NVN descriptor layout.
+    [[nodiscard]] virtual bool IsNativeProgram() const { return false; }
+
+    /// Native programs: whether the 8-byte constant at (index, offset) is a mapped GPU address.
+    /// Native argument tables mix pointers with scalars (sizes, strides).
+    [[nodiscard]] virtual bool IsCbufStorageBufferPointer(u32, u32) { return true; }
 
     [[nodiscard]] virtual u32 ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) = 0;
 
@@ -89,6 +99,10 @@ public:
     [[nodiscard]] virtual u32 ReadViewportTransformState() = 0;
 
     [[nodiscard]] virtual u32 TextureBoundBuffer() const = 0;
+
+    /// Constant buffer holding the surface (image write) descriptors; the texture one unless the
+    /// program needs both from different buffers.
+    [[nodiscard]] virtual u32 SurfaceBoundBuffer() const { return TextureBoundBuffer(); }
 
     [[nodiscard]] virtual u32 LocalMemorySize() const = 0;
 
@@ -123,16 +137,29 @@ public:
         return is_proprietary_driver;
     }
 
+    /// Task and mesh programs: SET_MESH_SHADER_A, SET_MESH_SHADER_B and SET_MESH_INIT_SHADER.
+    [[nodiscard]] const std::array<u32, 3>& MeshRegisters() const noexcept {
+        return mesh_registers;
+    }
+
+    /// Mesh programs: the header of the pass-through geometry program bound with them, whose
+    /// output map lists the per-primitive outputs.
+    [[nodiscard]] const ProgramHeader& MeshPrimitiveHeader() const noexcept {
+        return mesh_primitive_header;
+    }
+
 protected:
     ProgramHeader sph{};
     std::array<u32, 8> gp_passthrough_mask{};
+    std::array<u32, 3> mesh_registers{};
+    ProgramHeader mesh_primitive_header{};
     Stage stage{};
     u32 start_address{};
     bool is_proprietary_driver{};
 public:
-    ankerl::unordered_dense::map<CbufWordKey, u32, CbufWordKeyHash> cbuf_word_cache;
-    ankerl::unordered_dense::map<HandleKey,  u32, HandleKeyHash> handle_cache;
-    ankerl::unordered_dense::map<const IR::Inst*, ConstBufferAddr> track_cache;
+    ::Common::unordered_map<CbufWordKey, u32, CbufWordKeyHash> cbuf_word_cache;
+    ::Common::unordered_map<HandleKey,  u32, HandleKeyHash> handle_cache;
+    ::Common::unordered_map<const IR::Inst*, ConstBufferAddr> track_cache;
 };
 
 } // namespace Shader

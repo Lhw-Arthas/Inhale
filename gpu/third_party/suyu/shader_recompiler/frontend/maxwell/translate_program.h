@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include <string>
-
 #include "shader_recompiler/environment.h"
 #include "shader_recompiler/frontend/ir/basic_block.h"
 #include "shader_recompiler/frontend/ir/program.h"
@@ -18,10 +16,7 @@ struct HostTranslateInfo;
 
 namespace Shader::Maxwell {
 
-[[nodiscard]] /// rx debugging: when not empty, TranslateProgram writes the IR before constant folding to <path>.pre.txt
-extern thread_local std::string ir_dump_path;
-
-IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool,
+[[nodiscard]] IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool,
                                            ObjectPool<IR::Block>& block_pool, Environment& env,
                                            Flow::CFG& cfg, const HostTranslateInfo& host_info);
 

@@ -1,8 +1,11 @@
-// SPDX-FileCopyrightText: Copyright 2026 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: 2014 Citra Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
+
+#include <mutex>
+#include <set>
 
 #include "common/common_types.h"
 #include "common/math_util.h"
@@ -97,7 +100,7 @@ PixelFormat PixelFormatFromDepthFormat(Tegra::DepthFormat format) {
     }
 }
 
-PixelFormat PixelFormatFromRenderTargetFormat(Tegra::RenderTargetFormat format) {
+std::optional<PixelFormat> TryPixelFormatFromRenderTargetFormat(Tegra::RenderTargetFormat format) {
     switch (format) {
     case Tegra::RenderTargetFormat::R32G32B32A32_FLOAT:
     case Tegra::RenderTargetFormat::R32G32B32X32_FLOAT:
@@ -200,11 +203,49 @@ PixelFormat PixelFormatFromRenderTargetFormat(Tegra::RenderTargetFormat format) 
     case Tegra::RenderTargetFormat::R8_UINT:
         return PixelFormat::R8_UINT;
     default:
+        // The caller decides what to do with a format we cannot decode. Fermi2D has to skip
+        // the copy, see SurfaceFormatIsDecodable users.
+        return std::nullopt;
+    }
+}
+
+PixelFormat PixelFormatFromRenderTargetFormat(Tegra::RenderTargetFormat format) {
+    if (const auto decoded = TryPixelFormatFromRenderTargetFormat(format)) {
+        return *decoded;
+    }
+    // An unrecognised format here usually means a caller passed a surface descriptor whose
+    // format field was not decoded, not that the format itself is impossible. Log a bounded
+    // number of distinct values and fall back, exactly as the decoded cases do.
+    static std::mutex mutex;
+    static std::set<u32> logged;
+    {
+        const std::scoped_lock lock{mutex};
+        if (logged.size() < 8 && logged.emplace(static_cast<u32>(format)).second) {
+            LOG_CRITICAL(HW_GPU, "Unimplemented format={} ({:#x}), using A8B8G8R8_UNORM",
+                         static_cast<u32>(format), static_cast<u32>(format));
+        }
+    }
+    return PixelFormat::A8B8G8R8_UNORM;
+}
+
+PixelFormat PixelFormatFromGPUPixelFormat(Service::android::PixelFormat format) {
+    switch (format) {
+    case Service::android::PixelFormat::Rgba8888:
+    case Service::android::PixelFormat::Rgbx8888:
+        return PixelFormat::A8B8G8R8_UNORM;
+    case Service::android::PixelFormat::Rgb565:
+        return PixelFormat::R5G6B5_UNORM;
+    case Service::android::PixelFormat::Bgra8888:
+        return PixelFormat::B8G8R8A8_UNORM;
+    case Service::android::PixelFormat::Rgba1010102:
+        return PixelFormat::A2B10G10R10_UNORM;
+    case Service::android::PixelFormat::RgbaFp16:
+        return PixelFormat::R16G16B16A16_FLOAT;
+    default:
         UNIMPLEMENTED_MSG("Unimplemented format={}", format);
         return PixelFormat::A8B8G8R8_UNORM;
     }
 }
-
 
 SurfaceType GetFormatType(PixelFormat pixel_format) {
     if (pixel_format < PixelFormat::MaxColorFormat) {
@@ -455,7 +496,7 @@ u64 TranscodedAstcSize(u64 base_size, PixelFormat format) {
                                 static_cast<u64>(DefaultBlockHeight(format)) * RGBA8_PIXEL_SIZE;
     const u64 uncompressed_size = (base_size * base_block_size) / BytesPerBlock(format);
 
-    switch (Settings::values.astc_recompression.GetValue()) {
+    switch (Settings::GetAstcRecompression()) {
     case Settings::AstcRecompression::Bc1:
         return uncompressed_size / 8;
     case Settings::AstcRecompression::Bc3:

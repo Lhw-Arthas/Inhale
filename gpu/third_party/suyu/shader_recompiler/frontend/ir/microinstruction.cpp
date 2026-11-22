@@ -82,6 +82,9 @@ bool Inst::MayHaveSideEffects() const noexcept {
     case Opcode::SetAttribute:
     case Opcode::SetAttributeIndexed:
     case Opcode::SetPatch:
+    case Opcode::IsbeWriteAttribute:
+    case Opcode::IsbeWriteMapU8:
+    case Opcode::IsbeWriteMapU32:
     case Opcode::SetFragColor:
     case Opcode::SetSampleMask:
     case Opcode::SetFragDepth:
@@ -129,6 +132,7 @@ bool Inst::MayHaveSideEffects() const noexcept {
     case Opcode::GlobalAtomicOr32:
     case Opcode::GlobalAtomicXor32:
     case Opcode::GlobalAtomicExchange32:
+    case Opcode::GlobalAtomicCompareExchange32:
     case Opcode::GlobalAtomicIAdd64:
     case Opcode::GlobalAtomicSMin64:
     case Opcode::GlobalAtomicUMin64:
@@ -165,6 +169,7 @@ bool Inst::MayHaveSideEffects() const noexcept {
     case Opcode::StorageAtomicOr32:
     case Opcode::StorageAtomicXor32:
     case Opcode::StorageAtomicExchange32:
+    case Opcode::StorageAtomicCompareExchange32:
     case Opcode::StorageAtomicIAdd64:
     case Opcode::StorageAtomicSMin64:
     case Opcode::StorageAtomicUMin64:
@@ -302,7 +307,7 @@ void Inst::SetArg(size_t index, Value value) {
         Use(value);
     }
     if (op == Opcode::Phi) {
-        phi_args[index].second = value;
+        phi_args[index].second = value.IsImmediate() ? value.Resolve() : value;
     } else {
         args[index] = value;
     }
@@ -322,7 +327,7 @@ void Inst::AddPhiOperand(Block* predecessor, const Value& value) {
     if (!value.IsImmediate()) {
         Use(value);
     }
-    phi_args.emplace_back(predecessor, value);
+    phi_args.emplace_back(predecessor, value.IsImmediate() ? value.Resolve() : value);
 }
 
 void Inst::OrderPhiArgs() {

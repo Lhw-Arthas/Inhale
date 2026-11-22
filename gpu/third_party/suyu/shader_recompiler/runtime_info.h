@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <bitset>
 #include <map>
 #include <optional>
 #include <vector>
@@ -85,13 +86,16 @@ struct TransformFeedbackVarying {
 struct RuntimeInfo {
     std::array<AttributeType, 32> generic_input_types{};
     VaryingState previous_stage_stores;
+    /// Fragment stage after a mesh program: generic inputs it writes per primitive.
+    std::bitset<32> per_primitive_generics{};
+    /// Screen-linear generics the fragment stage reads: the last vertex stage writes them times
+    /// w, the fragment stage reads them perspective-correct times FragCoord.w (see
+    /// ScreenLinearGenerics in vk_pipeline_cache.cpp).
+    std::bitset<32> screen_linear_generics{};
     std::map<IR::Attribute, IR::Attribute> previous_stage_legacy_stores_mapping;
 
     bool convert_depth_mode{};
     bool force_early_z{};
-    // (WGSL backend) constant buffers from index 3 on that the program reads past this many bytes stay out of the
-    // uniform block: read-only storage the renderer binds where they are in memory (0: every one that fits goes in)
-    u32 cbuf_ub_limit{};
 
     TessPrimitive tess_primitive{};
     TessSpacing tess_spacing{};

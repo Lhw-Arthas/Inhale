@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: 2016 The University of North Carolina at Chapel Hill
@@ -1769,6 +1769,12 @@ static void DecompressBlock(std::span<const u8, 16> inBuf, const u32 blockWidth,
         return;
     }
 
+    if (weightParams.GetNumWeightValues() > 64) {
+        assert(false && "Too many weights in the weight grid");
+        FillError(outBuf, blockWidth, blockHeight);
+        return;
+    }
+
     // Read num partitions
     u32 nPartitions = strm.ReadBits<2>() + 1;
     assert(nPartitions <= 4);
@@ -1805,6 +1811,11 @@ static void DecompressBlock(std::span<const u8, 16> inBuf, const u32 blockWidth,
 
     // Remaining bits are color endpoint data...
     u32 nWeightBits = weightParams.GetPackedBitSize();
+    if (nWeightBits < 24 || nWeightBits > 96) {
+        assert(false && "Invalid weight bit count");
+        FillError(outBuf, blockWidth, blockHeight);
+        return;
+    }
     s32 remainingBits = 128 - nWeightBits - static_cast<int>(strm.GetBitsRead());
 
     // Consider extra bits prior to texel data...
@@ -2027,28 +2038,105 @@ void Decompress(std::span<const uint8_t> data, uint32_t width, uint32_t height, 
     }
 }
 
-void DecompressSerial(std::span<const uint8_t> data, uint32_t width, uint32_t height, uint32_t depth,
-                      uint32_t block_width, uint32_t block_height, std::span<uint8_t> output) {
-    const u32 rows = Common::DivideUp(height, block_height);
-    const u32 cols = Common::DivideUp(width, block_width);
-    std::array<u32, 12 * 12> uncompData;
-    for (u32 z = 0; z < depth; ++z) {
-        const u32 depth_offset = z * height * width * 4;
-        for (u32 y_index = 0; y_index < rows; ++y_index) {
-            const u32 y = y_index * block_height;
-            for (u32 x_index = 0; x_index < cols; ++x_index) {
-                const u32 block_index = (z * rows * cols) + (y_index * cols) + x_index;
-                const u32 x = x_index * block_width;
-                const std::span<const u8, 16> blockPtr{data.subspan(block_index * 16, 16)};
-                DecompressBlock(blockPtr, block_width, block_height, uncompData);
-                const u32 decompWidth = (std::min)(block_width, width - x);
-                const u32 decompHeight = (std::min)(block_height, height - y);
-                const std::span<u8> outRow = output.subspan(depth_offset + (y * width + x) * 4);
-                for (u32 h = 0; h < decompHeight; ++h)
-                    std::memcpy(outRow.data() + h * width * 4, uncompData.data() + h * block_width, decompWidth * 4);
+// What IsOpaque needs from a block's 11 mode bits, which are all DecodeBlockInfo reads (a void
+// extent block also needs bits 10 and 11 set, checked per block).
+struct BlockModeInfo {
+    bool error;
+    bool void_extent;
+    bool void_extent_hdr;
+    bool dual_plane;
+    u16 weight_bits;
+};
+
+static std::array<BlockModeInfo, 2048> MakeBlockModeInfos() {
+    std::array<BlockModeInfo, 2048> infos{};
+    for (u32 mode = 0; mode < infos.size(); ++mode) {
+        // Bit 11 set, so a void extent mode decodes without its reserved-bit error.
+        const std::array<u8, 16> block{static_cast<u8>(mode), static_cast<u8>((mode >> 8) | 0x8)};
+        InputBitStream strm(block);
+        const TexelWeightParams params = DecodeBlockInfo(strm);
+        BlockModeInfo& info = infos[mode];
+        info.void_extent = params.m_bVoidExtentLDR || params.m_bVoidExtentHDR;
+        info.void_extent_hdr = params.m_bVoidExtentHDR;
+        info.error = params.m_bError && !info.void_extent;
+        info.dual_plane = params.m_bDualPlane;
+        info.weight_bits = info.error || info.void_extent
+                               ? u16{0}
+                               : static_cast<u16>(params.GetPackedBitSize());
+    }
+    return infos;
+}
+
+bool IsOpaque(std::span<const uint8_t> data) {
+    // Endpoint modes with an alpha channel: LDR luminance+alpha (4, 5), RGB scale + two alpha
+    // (10), LDR RGBA (12, 13) and HDR RGBA (14, 15).
+    constexpr u32 AlphaModes = (1U << 4) | (1U << 5) | (1U << 10) | (1U << 12) | (1U << 13) |
+                               (1U << 14) | (1U << 15);
+    // Decoding each block's mode bit by bit took ~12% of title 1's long frames, where every
+    // new ASTC texture is scanned (its title screen streams them in by the thousand).
+    static const std::array<BlockModeInfo, 2048> mode_infos = MakeBlockModeInfos();
+    for (size_t offset = 0; offset + 16 <= data.size(); offset += 16) {
+        const std::span<const u8> block = data.subspan(offset, 16);
+        u32 low;
+        std::memcpy(&low, block.data(), sizeof(low));
+        const BlockModeInfo& info = mode_infos[low & 0x7FF];
+        if (info.error) {
+            continue; // decodes to the opaque error colour
+        }
+        if (info.void_extent) {
+            if ((low & 0xC00) != 0xC00) {
+                continue; // reserved bits clear: the error colour too
+            }
+            // One RGBA16 colour in bits 64-127: UNORM16, or FP16 for HDR.
+            const u32 alpha = block[14] | (u32{block[15]} << 8);
+            if (alpha != (info.void_extent_hdr ? 0x3C00U : 0xFFFFU)) {
+                return false;
+            }
+            continue;
+        }
+        const u32 partitions = ((low >> 11) & 3) + 1;
+        if (partitions == 4 && info.dual_plane) {
+            continue;
+        }
+        if (partitions == 1) {
+            if ((AlphaModes >> ((low >> 13) & 0xF)) & 1) {
+                return false;
+            }
+            continue;
+        }
+        // Bits 13-22 are the partition index.
+        const u32 base_cem = (low >> 23) & 0x3F;
+        const u32 base_mode = base_cem & 3;
+        if (base_mode == 0) {
+            if ((AlphaModes >> (base_cem >> 2)) & 1) {
+                return false;
+            }
+            continue;
+        }
+        // The rest of the per-partition modes sit just below the weights (DecompressBlock).
+        const u32 weight_bits = info.weight_bits;
+        if (weight_bits < 24 || weight_bits > 96) {
+            continue;
+        }
+        const u32 extra_bits = partitions == 2 ? 2 : partitions == 3 ? 5 : 8;
+        const u32 extra_offset = 128 - weight_bits - extra_bits;
+        u32 extra = 0;
+        for (u32 bit = 0; bit < extra_bits; ++bit) {
+            const u32 position = extra_offset + bit;
+            extra |= ((block[position / 8] >> (position % 8)) & 1U) << bit;
+        }
+        u32 cem = ((extra << 6) | base_cem) >> 2;
+        const u32 classes = cem;
+        cem >>= partitions;
+        for (u32 i = 0; i < partitions; ++i) {
+            const u32 mode = ((base_mode - (((classes >> i) & 1) != 0 ? 0 : 1)) << 2) |
+                             ((cem >> (2 * i)) & 3);
+            if ((AlphaModes >> mode) & 1) {
+                return false;
             }
         }
     }
+    return true;
 }
 
 } // namespace Tegra::Texture::ASTC

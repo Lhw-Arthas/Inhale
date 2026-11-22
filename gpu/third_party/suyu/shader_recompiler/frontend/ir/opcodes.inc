@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -45,6 +48,10 @@ OPCODE(GetAttributeIndexed,                                 F32,            U32,
 OPCODE(SetAttributeIndexed,                                 Void,           U32,            F32,            U32,                                            )
 OPCODE(GetPatch,                                            F32,            Patch,                                                                          )
 OPCODE(SetPatch,                                            Void,           Patch,          F32,                                                            )
+OPCODE(IsbeRead,                                            U32,            U32,                                                                            )
+OPCODE(IsbeWriteAttribute,                                  Void,           U32,            U32,                                                            )
+OPCODE(IsbeWriteMapU8,                                      Void,           U32,            U32,                                                            )
+OPCODE(IsbeWriteMapU32,                                     Void,           U32,            U32,                                                            )
 OPCODE(SetFragColor,                                        Void,           U32,            U32,            F32,                                            )
 OPCODE(SetSampleMask,                                       Void,           U32,                                                                            )
 OPCODE(SetFragDepth,                                        Void,           F32,                                                                            )
@@ -358,6 +365,7 @@ OPCODE(GlobalAtomicAnd32,                                   U32,            U64,
 OPCODE(GlobalAtomicOr32,                                    U32,            U64,            U32,                                                            )
 OPCODE(GlobalAtomicXor32,                                   U32,            U64,            U32,                                                            )
 OPCODE(GlobalAtomicExchange32,                              U32,            U64,            U32,                                                            )
+OPCODE(GlobalAtomicCompareExchange32,                       U32,            U64,            U32,            U32,                                            )
 OPCODE(GlobalAtomicIAdd64,                                  U64,            U64,            U64,                                                            )
 OPCODE(GlobalAtomicSMin64,                                  U64,            U64,            U64,                                                            )
 OPCODE(GlobalAtomicUMin64,                                  U64,            U64,            U64,                                                            )
@@ -395,6 +403,7 @@ OPCODE(StorageAtomicAnd32,                                  U32,            U32,
 OPCODE(StorageAtomicOr32,                                   U32,            U32,            U32,            U32,                                            )
 OPCODE(StorageAtomicXor32,                                  U32,            U32,            U32,            U32,                                            )
 OPCODE(StorageAtomicExchange32,                             U32,            U32,            U32,            U32,                                            )
+OPCODE(StorageAtomicCompareExchange32,                      U32,            U32,            U32,            U32,            U32,                            )
 OPCODE(StorageAtomicIAdd64,                                 U64,            U32,            U32,            U64,                                            )
 OPCODE(StorageAtomicSMin64,                                 U64,            U32,            U32,            U64,                                            )
 OPCODE(StorageAtomicUMin64,                                 U64,            U32,            U32,            U64,                                            )
@@ -564,6 +573,9 @@ OPCODE(ImageAtomicOr32,                                     U32,            Opaq
 OPCODE(ImageAtomicXor32,                                    U32,            Opaque,            Opaque,            U32,                                      )
 OPCODE(ImageAtomicExchange32,                               U32,            Opaque,            Opaque,            U32,                                      )
 
+// Cooperative matrix (tensor core) operations
+OPCODE(TensorMulAdd,                                        U32x2,          U32,            U32,            U32,            U32,            U32,            U32,            U32,            U32,            )
+
 // Warp operations
 OPCODE(LaneId,                                              U32,                                                                                            )
 OPCODE(VoteAll,                                             U1,             U1,                                                                             )
@@ -579,6 +591,8 @@ OPCODE(ShuffleIndex,                                        U32,            U32,
 OPCODE(ShuffleUp,                                           U32,            U32,            U32,            U32,            U32,                            )
 OPCODE(ShuffleDown,                                         U32,            U32,            U32,            U32,            U32,                            )
 OPCODE(ShuffleButterfly,                                    U32,            U32,            U32,            U32,            U32,                            )
+OPCODE(QuadBroadcast,                                       U32,            U32,            U32,                                                                    )
+OPCODE(QuadSwap,                                            U32,            U32,            U32,                                                                    )
 OPCODE(FSwizzleAdd,                                         F32,            F32,            F32,            U32,                                            )
 OPCODE(DPdxFine,                                            F32,            F32,                                                                            )
 OPCODE(DPdyFine,                                            F32,            F32,                                                                            )

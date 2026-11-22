@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -87,6 +87,11 @@ public:
 
     [[nodiscard]] F32 GetPatch(Patch patch);
     void SetPatch(Patch patch, const F32& value);
+
+    [[nodiscard]] U32 IsbeRead(const U32& address);
+    void IsbeWriteAttribute(const U32& address, const U32& value);
+    void IsbeWriteMapU8(const U32& address, const U32& value);
+    void IsbeWriteMapU32(const U32& address, const U32& value);
 
     void SetFragColor(u32 index, u32 component, const F32& value);
     void SetSampleMask(const U32& value);
@@ -283,6 +288,8 @@ public:
     [[nodiscard]] U32U64 GlobalAtomicOr(const U64& pointer_offset, const U32U64& value);
     [[nodiscard]] U32U64 GlobalAtomicXor(const U64& pointer_offset, const U32U64& value);
     [[nodiscard]] U32U64 GlobalAtomicExchange(const U64& pointer_offset, const U32U64& value);
+    [[nodiscard]] U32 GlobalAtomicCompareExchange(const U64& pointer_offset, const U32& comparator,
+                                                const U32& value);
 
     [[nodiscard]] F32 GlobalAtomicF32Add(const U64& pointer_offset, const Value& value,
                                          const FpControl control = {});
@@ -394,6 +401,8 @@ public:
                                   const IR::U32& seg_mask);
     [[nodiscard]] U32 ShuffleButterfly(const IR::U32& value, const IR::U32& index,
                                        const IR::U32& clamp, const IR::U32& seg_mask);
+    [[nodiscard]] U32 QuadBroadcast(const IR::U32& value, const IR::U32& lane);
+    [[nodiscard]] U32 QuadSwap(const IR::U32& value, const IR::U32& direction);
     [[nodiscard]] F32 FSwizzleAdd(const F32& a, const F32& b, const U32& swizzle,
                                   FpControl control = {});
 
@@ -404,9 +413,6 @@ public:
     [[nodiscard]] F32 DPdxCoarse(const F32& a);
 
     [[nodiscard]] F32 DPdyCoarse(const F32& a);
-
-private:
-    IR::Block::iterator insertion_point;
 
     template <typename T = Value, typename... Args>
     T Inst(Opcode op, Args... args) {
@@ -430,6 +436,9 @@ private:
         auto it{block->PrependNewInst(insertion_point, op, {Value{args}...}, raw_flags)};
         return T{Value{&*it}};
     }
+
+private:
+    IR::Block::iterator insertion_point;
 };
 
 } // namespace Shader::IR

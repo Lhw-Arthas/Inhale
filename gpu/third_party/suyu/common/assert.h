@@ -1,40 +1,69 @@
-// Rexcomp replacement for suyu's common/assert.h: same macros; a failed assertion prints and carries on, as suyu's
-// soft asserts do in release builds.
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: 2013 Dolphin Emulator Project
+// SPDX-FileCopyrightText: 2014 Citra Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 #pragma once
-#include <cstdio>
 
-namespace Common {
-inline void AssertFail(const char* file, int line, const char* what) {
-    std::fprintf(stderr, "[shader] assertion failed at %s:%d: %s\n", file, line, what);
-}
-} // namespace Common
+#include "common/logging.h"
 
-// each assertion reports its first 3 failures
+// Sometimes we want to try to continue even after hitting an assert.
+// However touching this file yields a global recompilation as this header is included almost
+// everywhere. So let's just move the handling of the failed assert to a single cpp file.
+
+void AssertFailSoftImpl();
+[[noreturn]] void AssertFatalImpl();
+
+// Prevents errors on old GCC... smh...
+#ifdef _MSC_VER
+#define YUZU_NO_INLINE __declspec(noinline)
+#else
+#define YUZU_NO_INLINE __attribute__((noinline))
+#endif
+
 #define ASSERT_MSG(_a_, ...)                                                                       \
-    do {                                                                                           \
-        if (!(_a_)) [[unlikely]] {                                                                 \
-            static int assert_reports_;                                                            \
-            if (assert_reports_++ < 3) ::Common::AssertFail(__FILE__, __LINE__, #_a_);             \
+    ([&]() YUZU_NO_INLINE {                                                                         \
+        auto&& assert_condition = (_a_);                                                           \
+        if (!(assert_condition)) [[unlikely]] {                                                   \
+            LOG_CRITICAL(Debug, __FILE__ ": assert " __VA_ARGS__);                                \
+            AssertFailSoftImpl();                                                                  \
         }                                                                                          \
-    } while (0)
-#define ASSERT(_a_) ASSERT_MSG(_a_, "")
+    }())
+#define ASSERT(_a_) ASSERT_MSG(_a_, "{}", #_a_)
+
 #define UNREACHABLE_MSG(...)                                                                       \
     do {                                                                                           \
-        ::Common::AssertFail(__FILE__, __LINE__, "unreachable");                                   \
-        __builtin_unreachable();                                                                   \
+        LOG_CRITICAL(Debug, __FILE__ ": unreachable " __VA_ARGS__);                               \
+        AssertFatalImpl();                                                                         \
     } while (0)
 #define UNREACHABLE() UNREACHABLE_MSG("")
-#define DEBUG_ASSERT(_a_) ((void)0)
-#define DEBUG_ASSERT_MSG(_a_, ...) ((void)0)
+
+#ifdef _DEBUG
+#define DEBUG_ASSERT(_a_) ASSERT(_a_)
+#define DEBUG_ASSERT_MSG(_a_, ...) ASSERT_MSG(_a_, __VA_ARGS__)
+#else // not debug
+#define DEBUG_ASSERT(_a_)                                                                          \
+    do {                                                                                           \
+    } while (0)
+#define DEBUG_ASSERT_MSG(_a_, _desc_, ...)                                                         \
+    do {                                                                                           \
+    } while (0)
+#endif
+
 #define UNIMPLEMENTED() ASSERT(false && "Unimplemented!")
 #define UNIMPLEMENTED_MSG(...) ASSERT_MSG(false, __VA_ARGS__)
+
 #define UNIMPLEMENTED_IF(cond) ASSERT((!(cond)) && "Unimplemented!")
 #define UNIMPLEMENTED_IF_MSG(cond, ...) ASSERT_MSG(!(cond), __VA_ARGS__)
-#define ASSERT_OR_EXECUTE(_a_, _b_)                                                                \
+
+// If the assert is ignored, execute _b_
+#define ASSERT_OR_EXECUTE_MSG(_a_, _b_, ...)                                                       \
     do {                                                                                           \
-        ASSERT(_a_);                                                                               \
-        if (!(_a_)) [[unlikely]] {                                                                 \
-            _b_                                                                                    \
-        }                                                                                          \
+        ASSERT_MSG(_a_, __VA_ARGS__);                                                              \
+        if (!(_a_)) { _b_ }                                                                        \
     } while (0)
-#define ASSERT_OR_EXECUTE_MSG(_a_, _b_, ...) ASSERT_OR_EXECUTE(_a_, _b_)
+
+// If the assert is ignored, execute _b_
+#define ASSERT_OR_EXECUTE(_a_, _b_) ASSERT_OR_EXECUTE_MSG(_a_, _b_, "{}", #_a_)

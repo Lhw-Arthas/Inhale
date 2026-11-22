@@ -1,0 +1,3187 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: Copyright 2022 yuzu Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include <algorithm>
+#include <memory>
+#include <numeric>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+#include <fmt/ranges.h>
+
+#include "common/hitch_diagnostic.h"
+#include "common/range_sets.inc"
+#include "common/unmapped_read_diagnostic.h"
+#include "video_core/buffer_cache/approximate_gpu_writes.h"
+#include "video_core/buffer_cache/buffer_cache_base.h"
+#include "video_core/buffer_cache/storage_buffer_descriptor.h"
+#include "video_core/buffer_cache/storage_buffer_size.h"
+#include "video_core/buffer_cache/uniform_stream_reuse.h"
+#include "video_core/cache_tracking_diagnostics.h"
+#include "video_core/compute_binding_diagnostic.h"
+#include "video_core/guest_memory.h"
+#include "video_core/host1x/gpu_device_memory_manager.h"
+#include "video_core/nx2.h"
+#include "video_core/nx2_profile.h"
+#include "video_core/texture_cache/util.h"
+
+namespace VideoCommon {
+
+using Core::DEVICE_PAGESIZE;
+
+template <class P>
+BufferCache<P>::BufferCache(Tegra::MaxwellDeviceMemoryManager& device_memory_, Runtime& runtime_)
+    : runtime{runtime_}, device_memory{device_memory_}, memory_tracker{device_memory} {
+    // A new runtime has a new scheduler (its ticks restart) and a new stream buffer: whatever the
+    // stream uniform reuse remembers refers to the old ones. Before the early return below.
+    VideoCommon::ResetUniformStreamReuse<Runtime>();
+    // Ensure the first slot is used for the null buffer
+    void(slot_buffers.insert(runtime, NullBufferParams{}));
+    gpu_modified_ranges.Clear();
+    approx_gpu_modified_ranges.Clear();
+    inline_buffer_id = NULL_BUFFER_ID;
+#ifdef YUZU_LEGACY
+    immediately_free = (Settings::values.vram_usage_mode.GetValue() == Settings::VramUsageMode::Aggressive);
+#endif
+    if (!runtime.CanReportMemoryUsage()) {
+        minimum_memory = DEFAULT_EXPECTED_MEMORY;
+        critical_memory = DEFAULT_CRITICAL_MEMORY;
+        return;
+    }
+
+    const s64 device_local_memory = static_cast<s64>(runtime.GetDeviceLocalMemory());
+    const s64 min_spacing_expected = device_local_memory - 1_GiB;
+    const s64 min_spacing_critical = device_local_memory - 512_MiB;
+    const s64 mem_threshold = (std::min)(device_local_memory, TARGET_THRESHOLD);
+    const s64 min_vacancy_expected = (6 * mem_threshold) / 10;
+    const s64 min_vacancy_critical = (2 * mem_threshold) / 10;
+    minimum_memory = static_cast<u64>(
+        (std::max)((std::min)(device_local_memory - min_vacancy_expected, min_spacing_expected),
+                 DEFAULT_EXPECTED_MEMORY));
+    critical_memory = static_cast<u64>(
+        (std::max)((std::min)(device_local_memory - min_vacancy_critical, min_spacing_critical),
+                 DEFAULT_CRITICAL_MEMORY));
+}
+
+template <class P>
+BufferCache<P>::~BufferCache() = default;
+
+template <class P>
+void BufferCache<P>::RunGarbageCollector(bool aggressive_gc) {
+    const u64 ticks_to_destroy = aggressive_gc ? 60 : 120;
+    int num_iterations = aggressive_gc ? 64 : 32;
+    // Their GPU-written data is downloaded first, all with one wait for the GPU: one wait per
+    // buffer stalled the GPU thread every frame on title 1 (an 8 GB GPU near its budget, no
+    // per-fence downloads keeping the buffers clean), ~2.5% of its time.
+    boost::container::small_vector<BufferId, 64> evicted;
+    lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, [&](BufferId buffer_id) {
+        if (num_iterations == 0) {
+            return true;
+        }
+        --num_iterations;
+        // Below the critical threshold, buffers holding GPU-written data stay: evicting one
+        // means downloading it first. The thresholds compare the whole device's use (mostly
+        // textures) with fixed headroom, so on an 8 GB GPU the collector ran every frame once a
+        // title 1 course was loaded, and the downloads were ~2.7% of the GPU thread.
+        const Buffer& buffer = slot_buffers[buffer_id];
+        if (!aggressive_gc && gpu_modified_ranges.Intersects(buffer.CpuAddr(), buffer.SizeBytes())) {
+            return false;
+        }
+        evicted.push_back(buffer_id);
+        return false;
+    });
+    if constexpr (USE_MEMORY_MAPS) {
+        DownloadBuffersMemory(evicted);
+    } else {
+        for (const BufferId buffer_id : evicted) {
+            DownloadBufferMemory(slot_buffers[buffer_id]);
+        }
+    }
+    for (const BufferId buffer_id : evicted) {
+        DeleteBuffer(buffer_id);
+    }
+}
+
+template <class P>
+void BufferCache<P>::TickFrame() {
+    // Homebrew console apps don't create or bind any channels, so this will be nullptr.
+    if (!channel_state) {
+        return;
+    }
+    runtime.TickFrame(slot_buffers);
+    if (frame_tick % 600 == 0 && !uploaded_buffer_ranges.empty()) {
+        // As in TextureCache::TickFrame: a range uploaded more than once in the window is being
+        // rewritten, not cold.
+        auto& ranges = uploaded_buffer_ranges;
+        std::sort(ranges.begin(), ranges.end());
+        for (size_t i = 0; i < ranges.size();) {
+            size_t next = i + 1;
+            while (next < ranges.size() && ranges[next] == ranges[i]) {
+                ++next;
+            }
+            if (next - i == 1) {
+                device_memory.HintCold(ranges[i].first, ranges[i].second);
+            }
+            i = next;
+        }
+        ranges.clear();
+    }
+    if (static u64 frames{}; ++frames % 600 == 0) {
+        u64 total{};
+        size_t count{};
+        std::vector<std::pair<u64, VAddr>> largest;
+        for (const auto [buffer_id, buffer] : slot_buffers) {
+            total += buffer->SizeBytes();
+            ++count;
+            largest.emplace_back(buffer->SizeBytes(), buffer->CpuAddr());
+        }
+        std::partial_sort(largest.begin(), largest.begin() + std::min<size_t>(6, largest.size()),
+                          largest.end(), std::greater<>{});
+        LOG_INFO(HW_GPU, "Buffer cache: {} buffers {} MiB; largest {}", count, total >> 20,
+                 fmt::join(largest.begin(), largest.begin() + std::min<size_t>(6, largest.size()), ", "));
+    }
+
+    // Calculate hits and shots and move hit bits to the right
+    const u32 hits = std::reduce(channel_state->uniform_cache_hits.begin(),
+                                 channel_state->uniform_cache_hits.end());
+    const u32 shots = std::reduce(channel_state->uniform_cache_shots.begin(),
+                                  channel_state->uniform_cache_shots.end());
+    // The destination overlaps to the right: a forward copy would smear the newest entry.
+    std::copy_backward(channel_state->uniform_cache_hits.begin(),
+                       channel_state->uniform_cache_hits.end() - 1,
+                       channel_state->uniform_cache_hits.end());
+    std::copy_backward(channel_state->uniform_cache_shots.begin(),
+                       channel_state->uniform_cache_shots.end() - 1,
+                       channel_state->uniform_cache_shots.end());
+    channel_state->uniform_cache_hits[0] = 0;
+    channel_state->uniform_cache_shots[0] = 0;
+
+    const bool skip_preferred = hits * 256 < shots * 251;
+    channel_state->uniform_buffer_skip_cache_size = skip_preferred ? DEFAULT_SKIP_CACHE_SIZE : 0;
+
+    // If we can obtain the memory info, use it instead of the estimate.
+    if (runtime.CanReportMemoryUsage()) {
+        total_used_memory = runtime.GetDeviceMemoryUsage();
+    }
+    if (gpu_memory != nullptr && gpu_memory->UsesNativeTiling()) {
+        // Switch 2 titles fill the device with textures (their collector watches the budget);
+        // title 1's buffers were ~200 MiB of an 8 GB GPU's ~6.8 GB in use, yet this collector
+        // ran aggressively every frame on the device-wide figure, evicting up to 64 buffers (and
+        // downloading the GPU-written ones, ~5% of the GPU thread) that were recreated later.
+        // Collect when the buffers themselves are large. At 1 GiB it held geometry of scenes
+        // long gone: title 1's title screen grew to ~0.9 GB of buffers in ten minutes.
+        if (buffer_bytes >= 512_MiB) {
+            RunGarbageCollector(buffer_bytes >= 1_GiB);
+        }
+    } else if (total_used_memory >= minimum_memory) {
+        RunGarbageCollector(total_used_memory >= critical_memory);
+    }
+    ++frame_tick;
+    delayed_destruction_ring.Tick();
+
+    ReleaseCompletedAsyncBuffers();
+}
+
+template <class P>
+void BufferCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t size) {
+    if constexpr (requires { runtime.BindMultiRangeStorageBuffer(u64{}, bool{}); }) {
+        virtual_ranges.Unmap(as_id, gpu_addr, size);
+    }
+}
+
+template <class P>
+void BufferCache<P>::WriteMemory(DAddr device_addr, u64 size) {
+    CacheTrackingDiagnostics::Record(CacheTrackingDiagnostics::Event::BufferCpuMark,
+                                      device_addr, size);
+    Nx2NoteListHostWrite(device_addr, size);
+    if (IsRegionGpuModified(device_addr, size)) {
+        ClearDownload(device_addr, size);
+        gpu_modified_ranges.Subtract(device_addr, size);
+    }
+    memory_tracker.MarkRegionAsCpuModified(device_addr, size);
+    MarkVertexBuffersStale(device_addr, size);
+}
+
+template <class P>
+void BufferCache<P>::CachedWriteMemory(DAddr device_addr, u64 size) {
+    const bool is_dirty = IsRegionRegistered(device_addr, size);
+    if (!is_dirty) {
+        return;
+    }
+    DAddr aligned_start = Common::AlignDown(device_addr, DEVICE_PAGESIZE);
+    DAddr aligned_end = Common::AlignUp(device_addr + size, DEVICE_PAGESIZE);
+    if (!IsRegionGpuModified(aligned_start, aligned_end - aligned_start)) {
+        WriteMemory(device_addr, size);
+        return;
+    }
+
+    Nx2NoteListHostWrite(device_addr, size);
+    tmp_buffer.resize_destructive(size);
+    device_memory.ReadBlockUnsafe(device_addr, tmp_buffer.data(), size);
+
+    CacheTrackingDiagnostics::Record(CacheTrackingDiagnostics::Event::BufferInlineRetain,
+                                      device_addr, size, aligned_start, aligned_end - aligned_start);
+    InlineMemoryImplementation(device_addr, size, tmp_buffer);
+}
+
+template <class P>
+void BufferCache<P>::BeginCachedWrites() {
+    cpu_recent_held_ranges.Clear();
+}
+
+template <class P>
+void BufferCache<P>::EndCachedWrites() {
+    // Writes held back before the round were gathered by it and are applied now. The page of
+    // one gathered while a core collected the next write to it is held again, after the round
+    // began (Core::GPUDirtyMemoryManager::Generation), and stays held until the next one.
+    cpu_held_ranges = std::move(cpu_recent_held_ranges);
+}
+
+template <class P>
+bool BufferCache<P>::OnCPUWrite(DAddr device_addr, u64 size) {
+    const bool is_dirty = IsRegionRegistered(device_addr, size);
+    if (!is_dirty) {
+        return false;
+    }
+    if (memory_tracker.IsRegionGpuModified(device_addr, size)) {
+        // Held back until the GPU thread applies it (CachedWriteMemory). Downloads taken before
+        // hold older bytes; the core reports one write per page, so the whole page is held.
+        const DAddr page_start = Common::AlignDown(device_addr, DEVICE_PAGESIZE);
+        const u64 page_size = Common::AlignUp(device_addr + size, DEVICE_PAGESIZE) - page_start;
+        for (auto& ranges : pending_download_ranges) {
+            ranges.Subtract(page_start, page_size);
+        }
+        cpu_held_ranges.Add(page_start, page_size);
+        cpu_recent_held_ranges.Add(page_start, page_size);
+        return true;
+    }
+    WriteMemory(device_addr, size);
+    return false;
+}
+
+template <class P>
+std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DAddr device_addr,
+                                                                              u64 size) {
+    std::optional<VideoCore::RasterizerDownloadArea> area{};
+    area.emplace();
+    DAddr device_addr_start_aligned = Common::AlignDown(device_addr, Core::DEVICE_PAGESIZE);
+    DAddr device_addr_end_aligned = Common::AlignUp(device_addr + size, Core::DEVICE_PAGESIZE);
+    area->start_address = device_addr_start_aligned;
+    area->end_address = device_addr_end_aligned;
+    if (memory_tracker.IsRegionPreflushable(device_addr, size)) {
+        area->preemtive = true;
+        return area;
+    };
+    area->preemtive = !IsRegionGpuModified(device_addr_start_aligned,
+                                           device_addr_end_aligned - device_addr_start_aligned);
+    // Mark only data that the GPU wrote. A mark stays for the session and sends later GPU writes
+    // in the range to a download at each fence.
+    if (!area->preemtive) {
+        memory_tracker.MarkRegionAsPreflushable(device_addr_start_aligned,
+                                                device_addr_end_aligned - device_addr_start_aligned);
+    } else {
+        // The core keeps this area and has no mark. The next GPU write here must arm the range
+        // again, which ends the area and sets the trap.
+        read_trapped_ranges.Subtract(device_addr_start_aligned,
+                                     device_addr_end_aligned - device_addr_start_aligned);
+    }
+    return area;
+}
+
+template <class P>
+void BufferCache<P>::DownloadMemory(DAddr device_addr, u64 size) {
+    ForEachBufferInRange(device_addr, size, [&](BufferId, Buffer& buffer) {
+        const DAddr start = (std::max)(device_addr, buffer.CpuAddr());
+        const DAddr end = (std::min)(device_addr + size, buffer.CpuAddr() + buffer.SizeBytes());
+        if (start < end) {
+            DownloadBufferMemory(buffer, start, end - start);
+        }
+    });
+}
+
+template <class P>
+void BufferCache<P>::ClearDownload(DAddr device_addr, u64 size) {
+    for (auto& ranges : pending_download_ranges) {
+        ranges.Subtract(device_addr, size);
+    }
+    uncommitted_gpu_modified_ranges.Subtract(device_addr, size);
+    for (auto& interval_set : committed_gpu_modified_ranges) {
+        interval_set.Subtract(device_addr, size);
+    }
+}
+
+template <class P>
+bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 amount) {
+    const std::optional<DAddr> cpu_src_address = gpu_memory->GpuToCpuAddress(src_address);
+    const std::optional<DAddr> cpu_dest_address = gpu_memory->GpuToCpuAddress(dest_address);
+    if (!cpu_src_address || !cpu_dest_address) {
+        return false;
+    }
+    const bool source_dirty = IsRegionRegistered(*cpu_src_address, amount);
+    const bool dest_dirty = IsRegionRegistered(*cpu_dest_address, amount);
+    if (!source_dirty && !dest_dirty) {
+        return false;
+    }
+
+    ClearDownload(*cpu_dest_address, amount);
+    MarkVertexBuffersStale(*cpu_dest_address, amount);
+    // Guest memory gets the copy below (the scoped write at the end), which holds every byte the
+    // source has in guest memory: command list pages in the destination read those from it, and
+    // their copies are stale (zortos293/Lichii#805 34656e8225). The bytes copied from GPU-written
+    // source ranges are noted as GPU writes after this.
+    Nx2NoteListHostWrite(*cpu_dest_address, amount);
+
+    BufferId buffer_a;
+    BufferId buffer_b;
+    do {
+        channel_state->has_deleted_buffers = false;
+        buffer_a = FindBuffer(*cpu_src_address, static_cast<u32>(amount), false);
+        buffer_b = FindBuffer(*cpu_dest_address, static_cast<u32>(amount), false);
+    } while (channel_state->has_deleted_buffers);
+    auto& src_buffer = slot_buffers[buffer_a];
+    auto& dest_buffer = slot_buffers[buffer_b];
+    SynchronizeBuffer(src_buffer, *cpu_src_address, static_cast<u32>(amount));
+    SynchronizeBuffer(dest_buffer, *cpu_dest_address, static_cast<u32>(amount));
+    std::array copies{BufferCopy{
+        .src_offset = src_buffer.Offset(*cpu_src_address),
+        .dst_offset = dest_buffer.Offset(*cpu_dest_address),
+        .size = amount,
+    }};
+
+    boost::container::small_vector<std::pair<DAddr, size_t>, 4> tmp_intervals;
+    auto mirror = [&](DAddr base_address, DAddr base_address_end) {
+        const u64 size = base_address_end - base_address;
+        const DAddr diff = base_address - *cpu_src_address;
+        const DAddr new_base_address = *cpu_dest_address + diff;
+        tmp_intervals.push_back({new_base_address, size});
+        QueueDownload(new_base_address, size);
+    };
+    gpu_modified_ranges.ForEachInRange(*cpu_src_address, amount, mirror);
+    // This subtraction in this order is important for overlapping copies.
+    gpu_modified_ranges.Subtract(*cpu_dest_address, amount);
+    const bool has_new_downloads = tmp_intervals.size() != 0;
+    for (const auto& pair : tmp_intervals) {
+        gpu_modified_ranges.Add(pair.first, pair.second);
+        approx_gpu_modified_ranges.Subtract(pair.first, pair.second);
+        NoteExactGpuWrite(pair.first, pair.second);
+        if (Tegra::g_nx2_ampere.load(std::memory_order_relaxed)) {
+            Tegra::Nx2MarkGpuWritten(pair.first, pair.second);
+            Nx2NoteListWrite(buffer_b, pair.first, pair.second);
+        }
+    }
+    const auto& copy = copies[0];
+    src_buffer.MarkUsage(copy.src_offset, copy.size);
+    dest_buffer.MarkUsage(copy.dst_offset, copy.size);
+    runtime.CopyBuffer(dest_buffer, src_buffer, copies, true);
+    if (has_new_downloads) {
+        memory_tracker.MarkRegionAsGpuModified(*cpu_dest_address, amount);
+        // Balanced/Accurate fences wait for the copy here so the download queued for it is ready
+        // at the next fence. A full host GPU wait on the GPU thread: only where a download at
+        // fences follows. Switch 2 titles copy most GPU-written ranges without one (read traps
+        // flush them on demand), and Mario Tennis Fever runs with Balanced fences by default.
+        const bool should_sync =
+            Settings::IsGPUFenceBehaviorBalanced() || Settings::IsGPUFenceBehaviorAccurate();
+        if (should_sync && HasFenceDownload(*cpu_dest_address, amount)) {
+            runtime.Finish();
+        }
+    }
+
+    Tegra::Memory::DeviceGuestMemoryScoped<u8, Tegra::Memory::GuestMemoryFlags::UnsafeReadWrite>
+        tmp(device_memory, *cpu_src_address, amount, &tmp_buffer);
+    tmp.SetAddressAndSize(*cpu_dest_address, amount);
+    return true;
+}
+
+template <class P>
+bool BufferCache<P>::DMAClear(GPUVAddr dst_address, u64 amount, u32 value) {
+    const std::optional<DAddr> cpu_dst_address = gpu_memory->GpuToCpuAddress(dst_address);
+    if (!cpu_dst_address) {
+        return false;
+    }
+    // `amount` counts words: the check looked at a quarter of the range (zortos293/Lichii#805
+    // 34656e8225).
+    const size_t size = amount * sizeof(u32);
+    const bool dest_dirty = IsRegionRegistered(*cpu_dst_address, size);
+    if (!dest_dirty) {
+        return false;
+    }
+
+    ClearDownload(*cpu_dst_address, size);
+    gpu_modified_ranges.Subtract(*cpu_dst_address, size);
+    // The caller writes the cleared words to guest memory after this, as an inline write: command
+    // list pages read them from guest memory, and their copies are stale.
+    Nx2NoteListHostWrite(*cpu_dst_address, size);
+
+    const BufferId buffer = FindBuffer(*cpu_dst_address, static_cast<u32>(size), false);
+    Buffer& dest_buffer = slot_buffers[buffer];
+    const u32 offset = dest_buffer.Offset(*cpu_dst_address);
+    runtime.ClearBuffer(dest_buffer, offset, size, value);
+    dest_buffer.MarkUsage(offset, size);
+    return true;
+}
+
+template <class P>
+std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainBuffer(GPUVAddr gpu_addr, u32 size,
+                                                                 ObtainBufferSynchronize sync_info,
+                                                                 ObtainBufferOperation post_op) {
+    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
+    if (!device_addr) {
+        return {&slot_buffers[NULL_BUFFER_ID], 0};
+    }
+    return ObtainCPUBuffer(*device_addr, size, sync_info, post_op);
+}
+
+template <class P>
+std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainCPUBuffer(
+    DAddr device_addr, u32 size, ObtainBufferSynchronize sync_info, ObtainBufferOperation post_op) {
+    const BufferId buffer_id = FindBuffer(device_addr, size, false);
+    Buffer& buffer = slot_buffers[buffer_id];
+
+    // synchronize op
+    switch (sync_info) {
+    case ObtainBufferSynchronize::FullSynchronize:
+        SynchronizeBuffer(buffer, device_addr, size);
+        break;
+    default:
+        break;
+    }
+
+    switch (post_op) {
+    case ObtainBufferOperation::MarkAsWritten:
+        MarkWrittenBuffer(buffer_id, device_addr, size);
+        break;
+    case ObtainBufferOperation::DiscardWrite: {
+        ClearDownload(device_addr, size);
+        gpu_modified_ranges.Subtract(device_addr, size);
+        break;
+    }
+    default:
+        break;
+    }
+    // The caller's GPU work (DMA buffer/image copies, indirect dispatches, query writes) uses
+    // these bytes: without this a later upload to them in the same command buffer was reordered
+    // in front of that work, so it read the newer data (textures from a later DMA upload).
+    buffer.MarkUsage(buffer.Offset(device_addr), size);
+
+    return {&buffer, buffer.Offset(device_addr)};
+}
+
+template <class P>
+void BufferCache<P>::BindGraphicsUniformBuffer(size_t stage, u32 index, GPUVAddr gpu_addr,
+                                               u32 size) {
+    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
+    if (!device_addr) {
+        channel_state->uniform_buffers[stage][index] = NULL_BINDING;
+        return;
+    }
+    const Binding binding{
+        .device_addr = *device_addr,
+        .gpu_addr = gpu_addr,
+        .size = size,
+        .buffer_id = BufferId{},
+    };
+    channel_state->uniform_buffers[stage][index] = binding;
+}
+
+template <class P>
+void BufferCache<P>::DisableGraphicsUniformBuffer(size_t stage, u32 index) {
+    auto& current = channel_state->uniform_buffers[stage][index];
+    if (current.device_addr == 0 && current.size == 0 && current.buffer_id == NULL_BUFFER_ID)
+        [[likely]] {
+        return;
+    }
+    current = NULL_BINDING;
+}
+
+template <class P>
+void BufferCache<P>::UpdateGraphicsBuffers(bool is_indexed) {
+    do {
+        channel_state->has_deleted_buffers = false;
+        DoUpdateGraphicsBuffers(is_indexed);
+    } while (channel_state->has_deleted_buffers);
+    // Both graphics backends call this before geometry binding; Vulkan also acquires its
+    // descriptor payload afterwards. Complete any split-bank GPU readbacks before those steps.
+    PrepareGraphicsUniformDownloads();
+}
+
+template <class P>
+void BufferCache<P>::UpdateComputeBuffers() {
+    do {
+        channel_state->has_deleted_buffers = false;
+        DoUpdateComputeBuffers();
+    } while (channel_state->has_deleted_buffers);
+}
+
+template <class P>
+void BufferCache<P>::BindHostGeometryBuffers(bool is_indexed) {
+    if (is_indexed) {
+        BindHostIndexBuffer();
+    } else if constexpr (!HAS_FULL_INDEX_AND_PRIMITIVE_SUPPORT) {
+        const auto& draw_state = maxwell3d->draw_manager.draw_state;
+        if (IsQuadIndirectDraw()) {
+            // The vertex count is in GPU memory: converted below, once that is synchronized.
+            runtime.ReserveQuadIndirect();
+        } else if (draw_state.topology == Maxwell::PrimitiveTopology::Quads ||
+                   draw_state.topology == Maxwell::PrimitiveTopology::QuadStrip) {
+            runtime.BindQuadIndexBuffer(draw_state.topology, draw_state.vertex_buffer.first,
+                                        draw_state.vertex_buffer.count);
+        }
+    }
+    BindHostVertexBuffers();
+    BindHostTransformFeedbackBuffers();
+    if (current_draw_indirect) {
+        BindHostDrawIndirectBuffers();
+        if constexpr (!HAS_FULL_INDEX_AND_PRIMITIVE_SUPPORT) {
+            if (!is_indexed && IsArrayIndirectDraw()) {
+                const auto [buffer, offset] = GetDrawIndirectBuffer();
+                runtime.BindArrayIndirect(buffer->Handle(), offset, IsQuadIndirectDraw());
+            }
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::BindHostStageBuffers(size_t stage) {
+    BindHostGraphicsUniformBuffers(stage);
+    BindHostGraphicsStorageBuffers(stage);
+    BindHostGraphicsTextureBuffers(stage);
+}
+
+template <class P>
+void BufferCache<P>::BindHostComputeBuffers() {
+    BindHostComputeUniformBuffers();
+    BindHostComputeStorageBuffers();
+    BindHostComputeTextureBuffers();
+    if (any_buffer_uploaded) {
+        runtime.PostCopyBarrier();
+        any_buffer_uploaded = false;
+    }
+}
+
+template <class P>
+void BufferCache<P>::SetUniformBuffersState(const std::array<u32, NUM_STAGES>& mask,
+                                            const UniformBufferSizes* sizes) {
+    if (channel_state->enabled_uniform_buffer_masks != mask) {
+        channel_state->fast_bound_uniform_buffers.fill(0);
+        if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
+            channel_state->dirty_uniform_buffers.fill(~u32{0});
+            channel_state->uniform_buffer_binding_sizes.fill({});
+        }
+    }
+    channel_state->enabled_uniform_buffer_masks = mask;
+    channel_state->uniform_buffer_sizes = sizes;
+}
+
+template <class P>
+void BufferCache<P>::SetComputeUniformBufferState(u32 mask,
+                                                  const ComputeUniformBufferSizes* sizes) {
+    channel_state->enabled_compute_uniform_buffer_mask = mask;
+    channel_state->compute_uniform_buffer_sizes = sizes;
+}
+
+template <class P>
+void BufferCache<P>::UnbindGraphicsStorageBuffers(size_t stage) {
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers()) {
+            channel_state->total_graphics_storage_buffers -=
+                static_cast<u32>(std::popcount(channel_state->enabled_storage_buffers[stage]));
+        }
+    }
+    channel_state->enabled_storage_buffers[stage] = 0;
+    channel_state->written_storage_buffers[stage] = 0;
+}
+
+template <class P>
+bool BufferCache<P>::BindGraphicsStorageBuffer(size_t stage, size_t ssbo_index, u32 cbuf_index,
+                                               u32 cbuf_offset, bool is_written) {
+    const bool already_enabled =
+        ((channel_state->enabled_storage_buffers[stage] >> ssbo_index) & 1U) != 0;
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
+            const u32 max_bindings = runtime.GetMaxDynamicStorageBuffers();
+            if (channel_state->total_graphics_storage_buffers >= max_bindings) {
+                LOG_WARNING(HW_GPU,
+                            "Skipping graphics storage buffer {} due to driver limit {}",
+                            ssbo_index, max_bindings);
+                return false;
+            }
+        }
+    }
+    channel_state->enabled_storage_buffers[stage] |= 1U << ssbo_index;
+    channel_state->written_storage_buffers[stage] |= (is_written ? 1U : 0U) << ssbo_index;
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
+            ++channel_state->total_graphics_storage_buffers;
+        }
+    }
+
+    const auto& cbufs = maxwell3d->state.shader_stages[stage];
+    const GPUVAddr ssbo_addr = cbufs.const_buffers[cbuf_index].address + cbuf_offset;
+    channel_state->storage_buffers[stage][ssbo_index] =
+        StorageBufferBinding(ssbo_addr, cbuf_index, is_written);
+    return (channel_state->storage_buffers[stage][ssbo_index].buffer_id != NULL_BUFFER_ID);
+}
+
+template <class P>
+void BufferCache<P>::UnbindGraphicsTextureBuffers(size_t stage) {
+    channel_state->enabled_texture_buffers[stage] = 0;
+    channel_state->written_texture_buffers[stage] = 0;
+    channel_state->image_texture_buffers[stage] = 0;
+}
+
+template <class P>
+void BufferCache<P>::BindGraphicsTextureBuffer(size_t stage, size_t tbo_index, GPUVAddr gpu_addr,
+                                               u32 size, PixelFormat format, bool is_written,
+                                               bool is_image) {
+    channel_state->enabled_texture_buffers[stage] |= 1U << tbo_index;
+    channel_state->written_texture_buffers[stage] |= (is_written ? 1U : 0U) << tbo_index;
+    if constexpr (SEPARATE_IMAGE_BUFFERS_BINDINGS) {
+        channel_state->image_texture_buffers[stage] |= (is_image ? 1U : 0U) << tbo_index;
+    }
+    channel_state->texture_buffers[stage][tbo_index] =
+        GetTextureBufferBinding(gpu_addr, size, format);
+}
+
+template <class P>
+void BufferCache<P>::UnbindComputeStorageBuffers() {
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers()) {
+            channel_state->total_compute_storage_buffers -=
+                static_cast<u32>(std::popcount(channel_state->enabled_compute_storage_buffers));
+        }
+    }
+    channel_state->enabled_compute_storage_buffers = 0;
+    channel_state->written_compute_storage_buffers = 0;
+    channel_state->image_compute_texture_buffers = 0;
+}
+
+template <class P>
+void BufferCache<P>::BindComputeStorageBuffer(size_t ssbo_index, u32 cbuf_index, u32 cbuf_offset,
+                                              bool is_written) {
+    namespace diag = ComputeBindingDiagnostic;
+    auto* const trace = diag::current;
+    const bool matching =
+        trace && trace->phase == diag::Phase::Dispatch && cbuf_index == 0 && cbuf_offset == 0x50;
+    if (matching) {
+        if (trace->descriptor_seen) {
+            trace->duplicate_descriptor = true;
+        } else {
+            trace->descriptor_seen = true;
+            trace->descriptor_index = static_cast<u32>(ssbo_index);
+            trace->is_written = is_written;
+            trace->descriptor_indirect = false;
+            trace->binding_state = diag::BindingState::Descriptor;
+        }
+    }
+    if (ssbo_index >= channel_state->compute_storage_buffers.size()) [[unlikely]] {
+        LOG_ERROR(HW_GPU, "Storage buffer index {} exceeds maximum storage buffer count",
+                  ssbo_index);
+        if (matching && !trace->duplicate_descriptor)
+            trace->binding_state = diag::BindingState::IndexOutOfRange;
+        return;
+    }
+    const bool already_enabled =
+        ((channel_state->enabled_compute_storage_buffers >> ssbo_index) & 1U) != 0;
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
+            const u32 max_bindings = runtime.GetMaxDynamicStorageBuffers();
+            if (channel_state->total_compute_storage_buffers >= max_bindings) {
+                LOG_WARNING(HW_GPU,
+                            "Skipping compute storage buffer {} due to driver limit {}",
+                            ssbo_index, max_bindings);
+                if (matching && !trace->duplicate_descriptor)
+                    trace->binding_state = diag::BindingState::LimitSkipped;
+                return;
+            }
+        }
+    }
+    channel_state->enabled_compute_storage_buffers |= 1U << ssbo_index;
+    channel_state->written_compute_storage_buffers |= (is_written ? 1U : 0U) << ssbo_index;
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
+            ++channel_state->total_compute_storage_buffers;
+        }
+    }
+
+    const auto& launch_desc = kepler_compute->launch_description;
+    if (((launch_desc.const_buffer_enable_mask >> cbuf_index) & 1) == 0) {
+        LOG_WARNING(HW_GPU, "Skipped binding SSBO: cbuf index {} is not enabled", cbuf_index);
+        if (matching && !trace->duplicate_descriptor)
+            trace->binding_state = diag::BindingState::Disabled;
+        return;
+    }
+    ASSERT(((launch_desc.const_buffer_enable_mask >> cbuf_index) & 1) != 0);
+
+    const auto& cbufs = launch_desc.const_buffer_config;
+    const GPUVAddr ssbo_addr = cbufs[cbuf_index].Address() + cbuf_offset;
+    channel_state->compute_storage_buffers[ssbo_index] =
+        StorageBufferBinding(ssbo_addr, cbuf_index, is_written,
+                             kepler_compute->IsNativeMode(), matching && !trace->duplicate_descriptor);
+}
+
+template <class P>
+void BufferCache<P>::UnbindComputeTextureBuffers() {
+    channel_state->enabled_compute_texture_buffers = 0;
+    channel_state->written_compute_texture_buffers = 0;
+    channel_state->image_compute_texture_buffers = 0;
+}
+
+template <class P>
+void BufferCache<P>::BindComputeTextureBuffer(size_t tbo_index, GPUVAddr gpu_addr, u32 size,
+                                              PixelFormat format, bool is_written, bool is_image) {
+    if (tbo_index >= channel_state->compute_texture_buffers.size()) [[unlikely]] {
+        LOG_ERROR(HW_GPU, "Texture buffer index {} exceeds maximum texture buffer count",
+                  tbo_index);
+        return;
+    }
+    channel_state->enabled_compute_texture_buffers |= 1U << tbo_index;
+    channel_state->written_compute_texture_buffers |= (is_written ? 1U : 0U) << tbo_index;
+    if constexpr (SEPARATE_IMAGE_BUFFERS_BINDINGS) {
+        channel_state->image_compute_texture_buffers |= (is_image ? 1U : 0U) << tbo_index;
+    }
+    channel_state->compute_texture_buffers[tbo_index] =
+        GetTextureBufferBinding(gpu_addr, size, format);
+}
+
+template <class P>
+void BufferCache<P>::FlushCachedWrites() {
+    memory_tracker.FlushCachedWrites();
+}
+
+template <class P>
+bool BufferCache<P>::HasUncommittedFlushes() const noexcept {
+    return !uncommitted_gpu_modified_ranges.Empty() || !committed_gpu_modified_ranges.empty();
+}
+
+template <class P>
+void BufferCache<P>::AccumulateFlushes() {
+    if (uncommitted_gpu_modified_ranges.Empty()) {
+        return;
+    }
+    committed_gpu_modified_ranges.emplace_back(std::move(uncommitted_gpu_modified_ranges));
+}
+
+template <class P>
+bool BufferCache<P>::ShouldWaitAsyncFlushes() const noexcept {
+    return (!async_buffers.empty() && async_buffers.front().has_value());
+}
+
+template <class P>
+void BufferCache<P>::CommitAsyncFlushesHigh() {
+    // A frame may contain thousands of readbacks. Reclaim those whose fence and guest copy
+    // have completed before allocating another, even when no new frame has been presented.
+    // PopAsyncBuffers runs on the fencing thread: it must not mutate the shared staging pool.
+    ReleaseCompletedAsyncBuffers();
+    AccumulateFlushes();
+
+    if (committed_gpu_modified_ranges.empty()) {
+        async_buffers.emplace_back(std::optional<Async_Buffer>{});
+        return;
+    }
+
+    auto it = committed_gpu_modified_ranges.begin();
+    while (it != committed_gpu_modified_ranges.end()) {
+        auto& current_intervals = *it;
+        auto next_it = std::next(it);
+        while (next_it != committed_gpu_modified_ranges.end()) {
+            next_it->ForEach([&current_intervals](DAddr start, DAddr end) {
+                current_intervals.Subtract(start, end - start);
+            });
+            next_it++;
+        }
+        it++;
+    }
+
+    boost::container::small_vector<std::pair<BufferCopy, BufferId>, 16> downloads;
+    u64 total_size_bytes = 0;
+    u64 largest_copy = 0;
+    for (const Common::RangeSet<DAddr>& range_set : committed_gpu_modified_ranges) {
+        range_set.ForEach([&](DAddr interval_lower, DAddr interval_upper) {
+            const std::size_t size = interval_upper - interval_lower;
+            const DAddr device_addr = interval_lower;
+            ForEachBufferInRange(device_addr, size, [&](BufferId buffer_id, Buffer& buffer) {
+                const DAddr buffer_start = buffer.CpuAddr();
+                const DAddr buffer_end = buffer_start + buffer.SizeBytes();
+                const DAddr new_start = (std::max)(buffer_start, device_addr);
+                const DAddr new_end = (std::min)(buffer_end, device_addr + size);
+                memory_tracker.ForEachDownloadRange(
+                    new_start, new_end - new_start, false,
+                    [&](u64 device_addr_out, u64 range_size) {
+                        const DAddr buffer_addr = buffer.CpuAddr();
+                        const auto add_download = [&](DAddr start, DAddr end) {
+                            const u64 new_offset = start - buffer_addr;
+                            const u64 new_size = end - start;
+                            downloads.push_back({
+                                BufferCopy{
+                                    .src_offset = new_offset,
+                                    .dst_offset = total_size_bytes,
+                                    .size = new_size,
+                                },
+                                buffer_id,
+                            });
+                            // Align up to avoid cache conflicts
+                            constexpr u64 align = 64ULL;
+                            constexpr u64 mask = ~(align - 1ULL);
+                            total_size_bytes += (new_size + align - 1) & mask;
+                            largest_copy = (std::max)(largest_copy, new_size);
+                        };
+
+                        gpu_modified_ranges.ForEachInRange(device_addr_out, range_size,
+                                                           add_download);
+                    });
+            });
+        });
+    }
+    committed_gpu_modified_ranges.clear();
+    if (downloads.empty()) {
+        async_buffers.emplace_back(std::optional<Async_Buffer>{});
+        return;
+    }
+    Nx2Profile::Add(Nx2Profile::Counter::DownloadBytes, total_size_bytes);
+    Nx2Profile::Add(Nx2Profile::Counter::DownloadCopies, downloads.size());
+    auto download_staging = runtime.DownloadStagingBuffer(total_size_bytes, true);
+    boost::container::small_vector<BufferCopy, 4> normalized_copies;
+    Common::RangeSet<DAddr> download_ranges;
+    runtime.PreCopyBarrier();
+    for (auto& [copy, buffer_id] : downloads) {
+        copy.dst_offset += download_staging.offset;
+        const std::array copies{copy};
+        BufferCopy second_copy{copy};
+        Buffer& buffer = slot_buffers[buffer_id];
+        second_copy.src_offset = static_cast<size_t>(buffer.CpuAddr()) + copy.src_offset;
+        const DAddr orig_device_addr = static_cast<DAddr>(second_copy.src_offset);
+        if (Nx2Profile::Enabled()) {
+            u64 on_dma_pages = 0;
+            const auto& pages = Nx2Profile::DmaReadPages();
+            for (DAddr page = orig_device_addr >> 12; page <= (orig_device_addr + copy.size - 1) >> 12;
+                 ++page) {
+                if (pages.contains(page)) {
+                    const DAddr begin = (std::max)(orig_device_addr, page << 12);
+                    const DAddr end = (std::min)(orig_device_addr + copy.size, (page + 1) << 12);
+                    on_dma_pages += end - begin;
+                }
+            }
+            Nx2Profile::Add(Nx2Profile::Counter::DownloadBytesOnDmaPages, on_dma_pages);
+        }
+        download_ranges.Add(orig_device_addr, copy.size);
+        buffer.MarkUsage(copy.src_offset, copy.size);
+        runtime.CopyBuffer(download_staging.buffer, buffer, copies, false);
+        normalized_copies.push_back(second_copy);
+    }
+    runtime.PostCopyBarrier();
+    cpu_held_ranges.ForEach([&](DAddr start, DAddr end) {
+        download_ranges.Subtract(start, end - start);
+    });
+    pending_downloads.emplace_back(std::move(normalized_copies));
+    pending_download_ranges.emplace_back(std::move(download_ranges));
+    async_buffers.emplace_back(download_staging);
+    pending_async_download_bytes += download_staging.mapped_span.size();
+}
+
+template <class P>
+bool BufferCache<P>::WaitAsyncFlushBudget(std::stop_token stop_token, size_t budget) {
+    std::unique_lock lock{mutex};
+    if (pending_async_download_bytes < budget) {
+        return !stop_token.stop_requested();
+    }
+    // One newly committed batch may exceed the soft budget. Its fence is submitted before
+    // the next call waits, and releasing the cache lock lets the fencing thread copy it out.
+    return async_download_progress.wait(lock, stop_token, [this, budget] {
+        return pending_async_download_bytes < budget;
+    }) && !stop_token.stop_requested();
+}
+
+template <class P>
+void BufferCache<P>::CommitAsyncFlushes() {
+    CommitAsyncFlushesHigh();
+}
+
+template <class P>
+void BufferCache<P>::PopAsyncFlushes() {
+    PopAsyncBuffers();
+}
+
+template <class P>
+void BufferCache<P>::ReleaseCompletedAsyncBuffers() {
+    for (auto& buffer : async_buffers_death_ring) {
+        if constexpr (requires { runtime.FreeCompletedDeferredStagingBuffer(buffer); }) {
+            runtime.FreeCompletedDeferredStagingBuffer(buffer);
+        } else {
+            runtime.FreeDeferredStagingBuffer(buffer);
+        }
+    }
+    async_buffers_death_ring.clear();
+}
+
+template <class P>
+void BufferCache<P>::PopAsyncBuffers() {
+    if (async_buffers.empty()) {
+        return;
+    }
+    if (!async_buffers.front().has_value()) {
+        async_buffers.pop_front();
+        return;
+    }
+    auto& downloads = pending_downloads.front();
+    auto& ranges = pending_download_ranges.front();
+    auto& async_buffer = async_buffers.front();
+    u8* base = async_buffer->mapped_span.data();
+    const size_t base_offset = async_buffer->offset;
+    for (const auto& copy : downloads) {
+        const DAddr device_addr = static_cast<DAddr>(copy.src_offset);
+        const u64 dst_offset = copy.dst_offset - base_offset;
+        const u8* read_mapped_memory = base + dst_offset;
+        // Only what no write replaced since the copy was taken: the rest is older than guest
+        // memory (CPU writes) or than the GPU's copy (GPU writes, still to be downloaded).
+        ranges.ForEachInRange(device_addr, copy.size, [&](DAddr start, DAddr end) {
+            device_memory.WriteBlockUnsafe(start, &read_mapped_memory[start - device_addr],
+                                           end - start);
+            if (uncommitted_gpu_modified_ranges.Intersects(start, end - start) ||
+                std::ranges::any_of(committed_gpu_modified_ranges, [&](const auto& committed) {
+                    return committed.Intersects(start, end - start);
+                })) {
+                return;
+            }
+            gpu_modified_ranges.Subtract(start, end - start);
+        });
+    }
+    async_buffers_death_ring.emplace_back(*async_buffer);
+    pending_async_download_bytes -= async_buffer->mapped_span.size();
+    async_download_progress.notify_all();
+    async_buffers.pop_front();
+    pending_downloads.pop_front();
+    pending_download_ranges.pop_front();
+}
+
+template <class P>
+bool BufferCache<P>::IsRegionExactlyGpuModified(DAddr addr, size_t size) {
+    return VideoCommon::IsRegionExactlyGpuModified(approx_gpu_modified_ranges, gpu_modified_ranges,
+                                                   addr, size);
+}
+
+template <class P>
+bool BufferCache<P>::IsRegionGpuModified(DAddr addr, size_t size) {
+    // One lookup instead of visiting every range inside (~4% of the GPU thread for title 1's
+    // inline uploads once GPU-written ranges are no longer cleared by downloads).
+    return gpu_modified_ranges.Intersects(addr, size);
+}
+
+template <class P>
+void BufferCache<P>::NoteCpuRead(DAddr addr, size_t size) {
+    if (AsyncBufferDownloads()) {
+        return;
+    }
+    size_t covered = 0;
+    cpu_read_ranges.ForEachInRange(addr, size,
+                                   [&](DAddr start, DAddr end) { covered += end - start; });
+    if (covered >= size) {
+        return;
+    }
+    cpu_read_ranges.Add(addr, size);
+    if (Nx2Profile::Enabled()) {
+        static u64 noted{};
+        if ((++noted & 255) == 1) {
+            LOG_INFO(HW_GPU, "CPU-read buffer pages noted: {} (latest {:#x})", noted, addr);
+        }
+    }
+}
+
+template <class P>
+bool BufferCache<P>::IsRegionRegistered(DAddr addr, size_t size) {
+    const DAddr end_addr = addr + size;
+    const u64 page_end = Common::DivCeil(end_addr, CACHING_PAGESIZE);
+    for (u64 page = addr >> CACHING_PAGEBITS; page < page_end;) {
+        const BufferId buffer_id = page_table[page];
+        if (!buffer_id) {
+            ++page;
+            continue;
+        }
+        Buffer& buffer = slot_buffers[buffer_id];
+        const DAddr buf_start_addr = buffer.CpuAddr();
+        const DAddr buf_end_addr = buf_start_addr + buffer.SizeBytes();
+        if (buf_start_addr < end_addr && addr < buf_end_addr) {
+            return true;
+        }
+        page = Common::DivCeil(end_addr, CACHING_PAGESIZE);
+    }
+    return false;
+}
+
+template <class P>
+bool BufferCache<P>::IsRegionCpuModified(DAddr addr, size_t size) {
+    return memory_tracker.IsRegionCpuModified(addr, size);
+}
+
+template <class P>
+void BufferCache<P>::BindHostIndexBuffer() {
+    Buffer& buffer = slot_buffers[channel_state->index_buffer.buffer_id];
+    TouchBuffer(buffer, channel_state->index_buffer.buffer_id);
+    const u32 offset = buffer.Offset(channel_state->index_buffer.device_addr);
+    const u32 size = channel_state->index_buffer.size;
+    const auto& draw_state = maxwell3d->draw_manager.draw_state;
+    if (draw_state.inline_index_draw_indexes.empty()) {
+        SynchronizeBuffer(buffer, channel_state->index_buffer.device_addr, size);
+    } else {
+        if constexpr (USE_MEMORY_MAPS_FOR_UPLOADS) {
+            auto upload_staging = runtime.UploadStagingBuffer(size);
+            std::array<BufferCopy, 1> copies{{BufferCopy{.src_offset = upload_staging.offset, .dst_offset = 0, .size = size}}};
+            std::memcpy(upload_staging.mapped_span.data(), draw_state.inline_index_draw_indexes.data(), size);
+            runtime.CopyBuffer(buffer, upload_staging.buffer, copies, true);
+        } else {
+            buffer.ImmediateUpload(0, draw_state.inline_index_draw_indexes);
+        }
+    }
+    if constexpr (HAS_FULL_INDEX_AND_PRIMITIVE_SUPPORT) {
+        const u32 new_offset = offset + draw_state.index_buffer.first * u32(draw_state.index_buffer.FormatSizeInBytes());
+        runtime.BindIndexBuffer(buffer, new_offset, size);
+    } else {
+        buffer.MarkUsage(offset, size);
+        runtime.BindIndexBuffer(draw_state.topology, draw_state.index_buffer.format, draw_state.index_buffer.first, draw_state.index_buffer.count, buffer, offset, size);
+    }
+}
+
+template <class P>
+void BufferCache<P>::BindHostVertexBuffer(u32 index, Buffer& buffer, u32 offset, u32 size,
+                                          u32 stride) {
+    if constexpr (IS_OPENGL) {
+        runtime.BindVertexBuffer(index, buffer, offset, size, stride);
+    } else {
+        runtime.BindVertexBuffer(index, buffer.Handle(), offset, size, stride);
+    }
+}
+
+template <class P>
+Binding& BufferCache<P>::VertexBufferSlot(u32 index) {
+    ASSERT(index < NUM_VERTEX_BUFFERS);
+    return v_buffer[index];
+}
+
+template <class P>
+const Binding& BufferCache<P>::VertexBufferSlot(u32 index) const {
+    ASSERT(index < NUM_VERTEX_BUFFERS);
+    return v_buffer[index];
+}
+
+template <class P>
+void BufferCache<P>::UpdateVertexBufferSlot(u32 index, const Binding& binding) {
+    Binding& slot = VertexBufferSlot(index);
+    if (slot.device_addr != binding.device_addr || slot.size != binding.size) {
+        ++vertex_buffers_serial;
+    }
+    slot = binding;
+    if (binding.buffer_id != NULL_BUFFER_ID && binding.size != 0) {
+        enabled_vertex_buffers_mask |= (1u << index);
+    } else {
+        enabled_vertex_buffers_mask &= ~(1u << index);
+    }
+}
+
+template <class P>
+void BufferCache<P>::MarkVertexBuffersStale(DAddr device_addr, u64 size) {
+    if constexpr (requires { runtime.IsVertexRepacked(u32{}); }) {
+        u32 mask = enabled_vertex_buffers_mask;
+        while (mask != 0) {
+            const u32 index = std::countr_zero(mask);
+            mask &= mask - 1;
+            const Binding& binding = v_buffer[index];
+            if (device_addr < binding.device_addr + binding.size &&
+                binding.device_addr < device_addr + size) {
+                stale_vertex_buffers_mask |= 1U << index;
+            }
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::RefreshRepackedVertexBuffers() {
+    if constexpr (requires { runtime.IsVertexRepacked(u32{}); }) {
+        u32 mask = std::exchange(stale_vertex_buffers_mask, 0) & enabled_vertex_buffers_mask;
+        auto& flags = maxwell3d->dirty.flags;
+        while (mask != 0) {
+            const u32 index = std::countr_zero(mask);
+            mask &= mask - 1;
+            if (runtime.IsVertexRepacked(index)) {
+                flags[Dirty::VertexBuffer0 + index] = true;
+            }
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::BindHostVertexBuffers() {
+    RefreshRepackedVertexBuffers();
+
+#ifdef __ANDROID__
+    const bool use_optimized_vertex_buffers = Settings::values.use_optimized_vertex_buffers.GetValue();
+#else
+    constexpr bool use_optimized_vertex_buffers = true;
+#endif
+
+    if (use_optimized_vertex_buffers) {
+        auto& flags = maxwell3d->dirty.flags;
+        u32 enabled_mask = enabled_vertex_buffers_mask;
+        HostBindings<Buffer> bindings{};
+        u32 last_index = (std::numeric_limits<u32>::max)();
+        const auto flush_bindings = [&]() {
+            if (bindings.buffers.empty()) {
+                return;
+            }
+            bindings.max_index = bindings.min_index + static_cast<u32>(bindings.buffers.size());
+            runtime.BindVertexBuffers(bindings);
+            bindings = HostBindings<Buffer>{};
+            last_index = (std::numeric_limits<u32>::max)();
+        };
+        while (enabled_mask != 0) {
+            const u32 index = std::countr_zero(enabled_mask);
+            enabled_mask &= (enabled_mask - 1);
+            const Binding& binding = VertexBufferSlot(index);
+            Buffer& buffer = slot_buffers[binding.buffer_id];
+            TouchBuffer(buffer, binding.buffer_id);
+            // Checking every page of a large vertex buffer for CPU writes cost 7% of Bananza's
+            // draw time; none of them became CPU modified since the last check: skip it.
+            Nx2SyncedVertexBuffer& synced = nx2_synced_vertex_buffers[index];
+            const u64 epoch = Nx2DrawTuning()
+                                  ? memory_tracker.CpuWriteEpoch(binding.device_addr, binding.size)
+                                  : ~u64{0};
+            if (epoch == ~u64{0} || synced.epoch != epoch || synced.buffer_id != binding.buffer_id ||
+                synced.device_addr != binding.device_addr || synced.size != binding.size) {
+                SynchronizeBuffer(buffer, binding.device_addr, binding.size);
+                synced = {binding.buffer_id, binding.device_addr, binding.size, epoch};
+            }
+            const u32 offset = buffer.Offset(binding.device_addr);
+            // Still read by this draw when the binding is unchanged: unmarked, a later upload to
+            // these vertices was reordered in front of this draw once TickFrame reset the tracker.
+            buffer.MarkUsage(offset, binding.size);
+            if (!flags[Dirty::VertexBuffer0 + index]) {
+                flush_bindings();
+                continue;
+            }
+            flags[Dirty::VertexBuffer0 + index] = false;
+            const u32 stride = maxwell3d->regs.vertex_streams[index].stride;
+            if (!bindings.buffers.empty() && index != last_index + 1) {
+                flush_bindings();
+            }
+            if (bindings.buffers.empty()) {
+                bindings.min_index = index;
+            }
+            bindings.buffers.push_back(&buffer);
+            bindings.offsets.push_back(offset);
+            bindings.sizes.push_back(binding.size);
+            bindings.strides.push_back(stride);
+            last_index = index;
+        }
+        flush_bindings();
+    } else {
+        HostBindings<typename P::Buffer> host_bindings;
+        bool any_valid{false};
+        auto& flags = maxwell3d->dirty.flags;
+        for (u32 index = 0; index < NUM_VERTEX_BUFFERS; ++index) {
+            const Binding& binding = channel_state->vertex_buffers[index];
+            Buffer& buffer = slot_buffers[binding.buffer_id];
+            TouchBuffer(buffer, binding.buffer_id);
+            SynchronizeBuffer(buffer, binding.device_addr, binding.size);
+            if (!flags[Dirty::VertexBuffer0 + index]) {
+                continue;
+            }
+            flags[Dirty::VertexBuffer0 + index] = false;
+
+            host_bindings.min_index = (std::min)(host_bindings.min_index, index);
+            host_bindings.max_index = (std::max)(host_bindings.max_index, index);
+            any_valid = true;
+        }
+
+        if (any_valid) {
+            host_bindings.max_index++;
+            for (u32 index = host_bindings.min_index; index < host_bindings.max_index; index++) {
+                flags[Dirty::VertexBuffer0 + index] = false;
+
+                const Binding& binding = channel_state->vertex_buffers[index];
+                Buffer& buffer = slot_buffers[binding.buffer_id];
+
+                const u32 stride = maxwell3d->regs.vertex_streams[index].stride;
+                const u32 offset = buffer.Offset(binding.device_addr);
+                buffer.MarkUsage(offset, binding.size);
+
+                host_bindings.buffers.push_back(&buffer);
+                host_bindings.offsets.push_back(offset);
+                host_bindings.sizes.push_back(binding.size);
+                host_bindings.strides.push_back(stride);
+            }
+            runtime.BindVertexBuffers(host_bindings);
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::BindHostDrawIndirectBuffers() {
+    const auto bind_buffer = [this](const Binding& binding) {
+        Buffer& buffer = slot_buffers[binding.buffer_id];
+        TouchBuffer(buffer, binding.buffer_id);
+        SynchronizeBuffer(buffer, binding.device_addr, binding.size);
+        // The draw reads these parameters: keep later uploads to them behind it.
+        buffer.MarkUsage(buffer.Offset(binding.device_addr), binding.size);
+    };
+    if (current_draw_indirect->include_count) {
+        bind_buffer(channel_state->count_buffer_binding);
+    }
+    bind_buffer(channel_state->indirect_buffer_binding);
+}
+
+template <class P>
+void BufferCache<P>::PrepareGraphicsUniformDownloads() {
+    if constexpr (IS_OPENGL) {
+        return;
+    }
+    if (gpu_memory == nullptr || gpu_memory->UsesNativeTiling()) {
+        return;
+    }
+    for (auto& stage : channel_state->legacy_uniform_eligibility) {
+        for (auto& mapping : stage) {
+            mapping.ClearPrepared();
+        }
+    }
+    // All stages are prepared before any one stage binds uniforms/storage. Storage binding can
+    // mark pending-draw writes GPU modified; those must not be mistaken for prior GPU writes.
+    for (size_t stage = 0; stage < NUM_STAGES; ++stage) {
+        ForEachEnabledBit(channel_state->enabled_uniform_buffer_masks[stage], [&](u32 index) {
+            const Binding& binding = channel_state->uniform_buffers[stage][index];
+            const u32 shader_size = (*channel_state->uniform_buffer_sizes)[stage][index];
+            if (binding.size != 0x10000 || shader_size != 0x10000) {
+                return;
+            }
+            auto& mapping = channel_state->legacy_uniform_eligibility[stage][index];
+            const auto segments = mapping.SplitSegments(
+                *gpu_memory, binding.gpu_addr, binding.device_addr, binding.size, shader_size);
+            if (segments.empty()) {
+                return;
+            }
+            const bool trace = Common::HitchDiagnostic::Enabled();
+            const s64 begin = trace ? Common::HitchDiagnostic::NowNs() : 0;
+            u32 downloaded_segments{};
+            if (PrepareSplitUniformBank(
+                    segments,
+                    [&](u64 address, u32 length) {
+                        return memory_tracker.IsRegionGpuModified(address, length);
+                    },
+                    [&](u64 address, u32 length) {
+                        ++downloaded_segments;
+                        DownloadMemory(address, length);
+                    })) {
+                // Copy a per-draw snapshot. Binding later consumes this view without consulting
+                // a new GPU epoch or performing any download after earlier streams were allocated.
+                mapping.SetPrepared(segments, downloaded_segments, begin,
+                                    trace ? Common::HitchDiagnostic::NowNs() : 0);
+            }
+        });
+    }
+}
+
+template <class P>
+void BufferCache<P>::BindHostGraphicsUniformBuffers(size_t stage) {
+    u32 dirty = ~0U;
+    if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
+        dirty = std::exchange(channel_state->dirty_uniform_buffers[stage], 0);
+    }
+    u32 binding_index = 0;
+    ForEachEnabledBit(channel_state->enabled_uniform_buffer_masks[stage], [&](u32 index) {
+        const bool needs_bind = ((dirty >> index) & 1) != 0;
+        BindHostGraphicsUniformBuffer(stage, index, binding_index, needs_bind);
+        if constexpr (NEEDS_BIND_UNIFORM_INDEX) {
+            ++binding_index;
+        }
+    });
+}
+
+template <class P>
+void BufferCache<P>::BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 binding_index, bool needs_bind) {
+    ++channel_state->uniform_cache_shots[0];
+    // Bank 24 (root table 0, NVN2's push constants) is read from bank 17, which such games do not
+    // bind: stream the table's current words as that buffer.
+    if (index == 17 && maxwell3d->root_tables.loaded && channel_state->uniform_buffers[stage][index].size == 0) {
+        const auto& words = maxwell3d->root_tables.tables[0];
+        const u32 size = (*channel_state->uniform_buffer_sizes)[stage][index];
+        const u32 copied = (std::min)(size, static_cast<u32>(sizeof(words)));
+        if constexpr (IS_OPENGL) {
+            std::array<u8, sizeof(words)> data{};
+            std::memcpy(data.data(), words.data(), copied);
+            runtime.BindFastUniformBuffer(stage, binding_index, copied);
+            runtime.PushFastUniformBuffer(stage, binding_index, std::span<const u8>(data.data(), copied));
+        } else {
+            const std::span<u8> span = runtime.BindMappedUniformBuffer(stage, binding_index, size);
+            std::memset(span.data(), 0, span.size());
+            std::memcpy(span.data(), words.data(), copied);
+        }
+        channel_state->fast_bound_uniform_buffers[stage] |= 1u << binding_index;
+        channel_state->uniform_buffer_binding_sizes[stage][binding_index] = size;
+        return;
+    }
+    const Binding& binding = channel_state->uniform_buffers[stage][index];
+    const DAddr device_addr = binding.device_addr;
+    const u32 size = (std::min)(binding.size, (*channel_state->uniform_buffer_sizes)[stage][index]);
+    // OpenGL may use fast-subdata/PABO instead of a mapped stream; keep its existing route.
+    if (!IS_OPENGL && gpu_memory != nullptr && !gpu_memory->UsesNativeTiling()) {
+        auto& mapping = channel_state->legacy_uniform_eligibility[stage][index];
+        const auto& prepared = mapping.Prepared();
+        const std::span<const LegacyUniformSegment> segments = prepared.segments;
+        if (!segments.empty()) {
+            const bool trace = Common::HitchDiagnostic::Enabled();
+            const s64 begin = trace ? Common::HitchDiagnostic::NowNs() : 0;
+            const bool streamed = StreamSplitUniformBank(device_memory, segments, [&](u32 length) {
+                return runtime.BindMappedUniformBuffer(stage, binding_index, length);
+            });
+            if (streamed) {
+                channel_state->fast_bound_uniform_buffers[stage] |= 1u << binding_index;
+                channel_state->uniform_buffer_binding_sizes[stage][binding_index] = size;
+                if (trace && legacy_uniform_gather_diagnostic_count < 32 &&
+                    (prepared.downloaded_segments != 0 || mapping.ClaimSplitDiagnostic())) {
+                    ++legacy_uniform_gather_diagnostic_count;
+                    LOG_WARNING(Render,
+                                "LegacyUniformGather begin_ns={} end_ns={} prepare_begin_ns={} "
+                                "prepare_end_ns={} gpu=0x{:X} descriptor={} bound={} segments={} "
+                                "first_device=0x{:X}+{} last_device=0x{:X}+{} "
+                                "gpu_download_segments={} gpu_epoch={} policy=pagewise-gpu-segments",
+                                begin, Common::HitchDiagnostic::NowNs(), prepared.begin_ns,
+                                prepared.end_ns, binding.gpu_addr, binding.size, size,
+                                segments.size(), segments.front().device_address,
+                                segments.front().size, segments.back().device_address,
+                                segments.back().size, prepared.downloaded_segments,
+                                prepared.gpu_generation);
+                    if (legacy_uniform_gather_diagnostic_count == 32) {
+                        LOG_WARNING(Render, "LegacyUniformGather cap_reached=32");
+                    }
+                }
+                return;
+            }
+        }
+    }
+    Buffer& buffer = slot_buffers[binding.buffer_id];
+    TouchBuffer(buffer, binding.buffer_id);
+    const bool has_host_buffer = binding.buffer_id != NULL_BUFFER_ID;
+    const u32 offset = has_host_buffer ? buffer.Offset(device_addr) : 0;
+    const bool needs_alignment_stream = [&]() {
+        if constexpr (IS_OPENGL) {
+            return false;
+        } else {
+            if (!has_host_buffer) {
+                return false;
+            }
+            const u32 alignment = runtime.GetUniformBufferAlignment();
+            return alignment > 1 && (offset % alignment) != 0;
+        }
+    }();
+    const bool sparse_uniform = gpu_memory != nullptr && gpu_memory->UsesNativeTiling() &&
+                                (*channel_state->uniform_buffer_sizes)[stage][index] == 0x10000;
+    // Native programs indirectly read a full bank beside their code. Refresh the whole bank,
+    // including holes and mapped suffixes, so prior host bytes cannot survive an unmap. A remap
+    // can install backing without a CPU write notification, requiring another refresh this frame.
+    if (has_host_buffer && sparse_uniform && size != 0 &&
+        !memory_tracker.IsRegionGpuModified(device_addr, size) &&
+        native_indirect_uniform_refresh.NeedsRefresh(device_addr, size, frame_tick,
+                                                     device_memory.MappingGeneration())) {
+        memory_tracker.MarkRegionAsCpuModified(device_addr, size);
+    }
+    const bool use_fast_buffer =
+        needs_alignment_stream ||
+        (has_host_buffer && size <= channel_state->uniform_buffer_skip_cache_size &&
+         !memory_tracker.IsRegionGpuModified(device_addr, size));
+    if (use_fast_buffer) {
+        if constexpr (IS_OPENGL) {
+            if (runtime.HasFastBufferSubData()) {
+                // Fast path for Nvidia
+                const bool should_fast_bind =
+                    !HasFastUniformBufferBound(stage, binding_index) ||
+                    channel_state->uniform_buffer_binding_sizes[stage][binding_index] != size;
+                if (should_fast_bind) {
+                    // We only have to bind when the currently bound buffer is not the fast version
+                    channel_state->fast_bound_uniform_buffers[stage] |= 1u << binding_index;
+                    channel_state->uniform_buffer_binding_sizes[stage][binding_index] = size;
+                    runtime.BindFastUniformBuffer(stage, binding_index, size);
+                }
+                const auto span = ImmediateBufferWithData(device_addr, size, sparse_uniform);
+                runtime.PushFastUniformBuffer(stage, binding_index, span);
+                return;
+            }
+        }
+        channel_state->fast_bound_uniform_buffers[stage] |= 1u << binding_index;
+        channel_state->uniform_buffer_binding_sizes[stage][binding_index] = size;
+        // Stream buffer path to avoid stalling on non-Nvidia drivers or Vulkan
+        bool streamed = false;
+        if constexpr (!IS_OPENGL && VideoCommon::StreamUniformReusable<Runtime>) {
+            // The same bytes as this slot's previous bind, in the same command buffer: bind that
+            // stream allocation again instead of allocating and copying (uniform_stream_reuse.h).
+            // EDEN_NX2_UBOREUSE=0 turns it off.
+            if (VideoCommon::UniformStreamReuseEnabled()) {
+                if (sparse_uniform) {
+                    SparseUniformReadView view{device_memory};
+                    streamed = VideoCommon::BindSmallUniformReusing(
+                        runtime, view, stage, index, binding_index, device_addr, size);
+                } else {
+                    streamed = VideoCommon::BindSmallUniformReusing(
+                        runtime, device_memory, stage, index, binding_index, device_addr, size);
+                }
+            }
+        }
+        if (!streamed) {
+            const std::span<u8> span = runtime.BindMappedUniformBuffer(stage, binding_index, size);
+            if (sparse_uniform) {
+                ReadSparseUniformMemory(device_memory, device_addr, span.first(size));
+            } else {
+                device_memory.ReadBlockUnsafe(device_addr, span.data(), size);
+            }
+        }
+        return;
+    }
+    // Classic cached path
+    if (SynchronizeBuffer(buffer, device_addr, size, sparse_uniform)) {
+        ++channel_state->uniform_cache_hits[0];
+    }
+    // Skip binding if it's not needed and if the bound buffer is not the fast version
+    // This exists to avoid instances where the fast buffer is bound and a GPU write happens
+    needs_bind |= HasFastUniformBufferBound(stage, binding_index);
+    if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
+        needs_bind |= channel_state->uniform_buffer_binding_sizes[stage][binding_index] != size;
+    }
+    if (!needs_bind) {
+        return;
+    }
+    if constexpr (IS_OPENGL) {
+        // Mark the index as dirty if offset doesn't match
+        const bool is_copy_bind = offset != 0 && !runtime.SupportsNonZeroUniformOffset();
+        channel_state->dirty_uniform_buffers[stage] |= (is_copy_bind ? 1U : 0U) << index;
+    }
+    if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
+        channel_state->uniform_buffer_binding_sizes[stage][binding_index] = size;
+    }
+    buffer.MarkUsage(offset, size);
+    if constexpr (NEEDS_BIND_UNIFORM_INDEX) {
+        runtime.BindUniformBuffer(stage, binding_index, buffer, offset, size);
+    } else {
+        runtime.BindUniformBuffer(buffer, offset, size);
+    }
+    channel_state->fast_bound_uniform_buffers[stage] &= ~(1u << binding_index);
+}
+
+template <class P>
+void BufferCache<P>::ResolveMultiRangeStorage(Binding& binding, bool is_written,
+                                              std::vector<MultiRangeSegment>& pool) {
+    binding.segment_first = 0;
+    binding.segment_count = 0;
+    if constexpr (requires { runtime.BindMultiRangeStorageBuffer(u64{}, bool{}); }) {
+        if (binding.gpu_addr == 0 || binding.size == 0) {
+            return;
+        }
+        if (is_written && !runtime.PrefersSparseSources()) {
+            return;
+        }
+        // A range inside one 4 KiB page has one segment at most. Bananza binds a new written
+        // address in most draws; each such miss walked the page table and added a cache entry.
+        if ((binding.gpu_addr >> 12) == ((binding.gpu_addr + binding.size - 1) >> 12)) {
+            return;
+        }
+        const VirtualSegments* found =
+            virtual_ranges.Query(*gpu_memory, binding.gpu_addr, binding.size);
+        if (!found || found->size() < 2) {
+            return;
+        }
+        const VirtualSegments segments = *found;
+        const u32 first = static_cast<u32>(pool.size());
+        const bool prefer_sparse = runtime.PrefersSparseSources();
+        for (const VirtualSegment& segment : segments) {
+            const BufferId buffer_id =
+                FindBuffer(segment.device_addr, segment.size, prefer_sparse);
+            if (!buffer_id) {
+                pool.resize(first);
+                return;
+            }
+            pool.push_back(MultiRangeSegment{
+                .buffer_id = buffer_id,
+                .device_addr = segment.device_addr,
+                .size = segment.size,
+            });
+        }
+        binding.segment_first = first;
+        binding.segment_count = static_cast<u32>(segments.size());
+    }
+}
+
+template <class P>
+bool BufferCache<P>::BindMultiRangeStorage(const Binding& binding, bool is_written,
+                                           std::span<const MultiRangeSegment> pool) {
+    if constexpr (requires { runtime.BindMultiRangeStorageBuffer(u64{}, bool{}); }) {
+        if (binding.segment_count < 2) {
+            return false;
+        }
+        if (binding.segment_first > pool.size() ||
+            binding.segment_count > pool.size() - binding.segment_first) {
+            return false;
+        }
+        const auto segments = pool.subspan(binding.segment_first, binding.segment_count);
+        if (std::ranges::any_of(segments,
+                                [](const MultiRangeSegment& segment) { return !segment.buffer_id; })) {
+            return false;
+        }
+        // A segment whose buffer was joined into another (deleted) since it was resolved: binding
+        // the dead slot put its freed LRU item back in the list, and the collector later deleted
+        // the slot again, wiping another buffer's page entries.
+        for (u32 index = 0; index < binding.segment_count; ++index) {
+            const BufferId id = pool[binding.segment_first + index].buffer_id;
+            if (!id || !slot_buffers.contains(id)) [[unlikely]] {
+                return false;
+            }
+        }
+        const u64 key = (static_cast<u64>(gpu_memory->GetID()) << 48) ^ binding.gpu_addr;
+        runtime.ResetMultiRange();
+        for (u32 index = 0; index < binding.segment_count; ++index) {
+            const MultiRangeSegment& segment = pool[binding.segment_first + index];
+            Buffer& buffer = slot_buffers[segment.buffer_id];
+            TouchBuffer(buffer, segment.buffer_id);
+            SynchronizeBuffer(buffer, segment.device_addr, segment.size);
+            const u32 offset = buffer.Offset(segment.device_addr);
+            buffer.MarkUsage(offset, segment.size);
+            runtime.PushMultiRangeSource(buffer, offset, segment.size);
+        }
+        runtime.InvalidateMultiRange(key);
+        if (!runtime.BindMultiRangeStorageBuffer(key, is_written)) {
+            return false;
+        }
+        if (is_written) {
+            for (const MultiRangeSegment& segment : segments) {
+                MarkWrittenBuffer(segment.buffer_id, segment.device_addr, segment.size);
+            }
+        }
+        return true;
+    } else {
+        return false;
+    }
+}
+
+template <class P>
+void BufferCache<P>::RefreshMultiRangeSegments(std::span<MultiRangeSegment> pool) {
+    if constexpr (requires { runtime.BindMultiRangeStorageBuffer(u64{}, bool{}); }) {
+        const bool prefer_sparse = runtime.PrefersSparseSources();
+        // Finding one segment's buffer can merge away another's: retry a bounded number of times,
+        // BindMultiRangeStorage refuses a binding that still has a dead segment.
+        for (u32 pass = 0; pass < 16; ++pass) {
+            bool all_live = true;
+            for (MultiRangeSegment& segment : pool) {
+                if (!segment.buffer_id) {
+                    segment.buffer_id = FindBuffer(segment.device_addr, segment.size, prefer_sparse);
+                    all_live = false;
+                }
+            }
+            if (all_live) {
+                return;
+            }
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::BindHostGraphicsStorageBuffers(size_t stage) {
+    u32 binding_index = 0;
+    ForEachEnabledBit(channel_state->enabled_storage_buffers[stage], [&](u32 index) {
+        const Binding& binding = channel_state->storage_buffers[stage][index];
+        const bool is_written = ((channel_state->written_storage_buffers[stage] >> index) & 1) != 0;
+        if (BindMultiRangeStorage(binding, is_written, graphics_segments)) {
+            return;
+        }
+        Buffer& buffer = slot_buffers[binding.buffer_id];
+        TouchBuffer(buffer, binding.buffer_id);
+        const u32 size = binding.size;
+        SynchronizeBuffer(buffer, binding.device_addr, size);
+
+        const u32 offset = buffer.Offset(binding.device_addr);
+        buffer.MarkUsage(offset, size);
+
+        if (is_written) {
+            MarkWrittenBuffer(binding.buffer_id, binding.device_addr, size);
+        }
+
+        if constexpr (NEEDS_BIND_STORAGE_INDEX) {
+            runtime.BindStorageBuffer(stage, binding_index, buffer, offset, size, is_written);
+            ++binding_index;
+        } else {
+            runtime.BindStorageBuffer(buffer, offset, size, is_written);
+        }
+    });
+}
+
+template <class P>
+void BufferCache<P>::BindHostGraphicsTextureBuffers(size_t stage) {
+    ForEachEnabledBit(channel_state->enabled_texture_buffers[stage], [&](u32 index) {
+        const TextureBufferBinding& binding = channel_state->texture_buffers[stage][index];
+        Buffer& buffer = slot_buffers[binding.buffer_id];
+        const u32 size = binding.size;
+        SynchronizeBuffer(buffer, binding.device_addr, size);
+
+        const bool is_written = ((channel_state->written_texture_buffers[stage] >> index) & 1) != 0;
+        if (is_written) {
+            MarkWrittenBuffer(binding.buffer_id, binding.device_addr, size);
+        }
+
+        const u32 offset = buffer.Offset(binding.device_addr);
+        const PixelFormat format = binding.format;
+        buffer.MarkUsage(offset, size);
+        if constexpr (SEPARATE_IMAGE_BUFFERS_BINDINGS) {
+            if (((channel_state->image_texture_buffers[stage] >> index) & 1) != 0) {
+                runtime.BindImageBuffer(buffer, offset, size, format);
+            } else {
+                runtime.BindTextureBuffer(buffer, offset, size, format);
+            }
+        } else {
+            runtime.BindTextureBuffer(buffer, offset, size, format);
+        }
+    });
+}
+
+template <class P>
+void BufferCache<P>::BindHostTransformFeedbackBuffers() {
+    if (maxwell3d->regs.transform_feedback_enabled == 0) {
+        return;
+    }
+    HostBindings<typename P::Buffer> host_bindings;
+    for (u32 index = 0; index < NUM_TRANSFORM_FEEDBACK_BUFFERS; ++index) {
+        const Binding& binding = channel_state->transform_feedback_buffers[index];
+        const auto& control = maxwell3d->regs.transform_feedback.controls[index];
+        const bool has_layout = control.varying_count != 0 || control.stride != 0;
+
+        Buffer* host_buffer = &slot_buffers[NULL_BUFFER_ID];
+        u32 offset = 0;
+        u32 size = 0;
+
+        if (has_layout && binding.buffer_id != NULL_BUFFER_ID && binding.size != 0) {
+            Buffer& buffer = slot_buffers[binding.buffer_id];
+            TouchBuffer(buffer, binding.buffer_id);
+            size = binding.size;
+            SynchronizeBuffer(buffer, binding.device_addr, size);
+            MarkWrittenBuffer(binding.buffer_id, binding.device_addr, size);
+            offset = buffer.Offset(binding.device_addr);
+            buffer.MarkUsage(offset, size);
+            host_buffer = &buffer;
+        }
+
+        host_bindings.buffers.push_back(host_buffer);
+        host_bindings.offsets.push_back(offset);
+        host_bindings.sizes.push_back(size);
+    }
+    runtime.BindTransformFeedbackBuffers(host_bindings);
+}
+
+template <class P>
+void BufferCache<P>::BindHostComputeUniformBuffers() {
+    if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
+        // Mark all uniform buffers as dirty
+        channel_state->dirty_uniform_buffers.fill(~u32{0});
+        channel_state->fast_bound_uniform_buffers.fill(0);
+    }
+    u32 binding_index = 0;
+    ForEachEnabledBit(channel_state->enabled_compute_uniform_buffer_mask, [&](u32 index) {
+        const Binding& binding = channel_state->compute_uniform_buffers[index];
+        Buffer& buffer = slot_buffers[binding.buffer_id];
+        TouchBuffer(buffer, binding.buffer_id);
+        const u32 size =
+            (std::min)(binding.size, (*channel_state->compute_uniform_buffer_sizes)[index]);
+        const bool has_host_buffer = binding.buffer_id != NULL_BUFFER_ID;
+        const u32 offset = has_host_buffer ? buffer.Offset(binding.device_addr) : 0;
+        const bool needs_alignment_stream = [&]() {
+            if constexpr (IS_OPENGL) {
+                return false;
+            } else {
+                if (!has_host_buffer) {
+                    return false;
+                }
+                const u32 alignment = runtime.GetUniformBufferAlignment();
+                return alignment > 1 && (offset % alignment) != 0;
+            }
+        }();
+        // Small buffers the GPU has not written are streamed, as graphics ones are: synchronizing
+        // them made every dispatch re-protect pages an inline upload had just unprotected (two
+        // VirtualProtect calls per dispatch, ~4,000 dispatches a second in title 1).
+        const bool use_fast_buffer =
+            needs_alignment_stream ||
+            (has_host_buffer && size <= channel_state->uniform_buffer_skip_cache_size &&
+             !memory_tracker.IsRegionGpuModified(binding.device_addr, size));
+        if constexpr (!IS_OPENGL) {
+            if (use_fast_buffer) {
+                const std::span<u8> span =
+                    runtime.BindMappedUniformBuffer(0, binding_index, size);
+                device_memory.ReadBlockUnsafe(binding.device_addr, span.data(), size);
+                return;
+            }
+        }
+
+        SynchronizeBuffer(buffer, binding.device_addr, size);
+
+        buffer.MarkUsage(offset, size);
+        if constexpr (NEEDS_BIND_UNIFORM_INDEX) {
+            runtime.BindComputeUniformBuffer(binding_index, buffer, offset, size);
+            ++binding_index;
+        } else {
+            runtime.BindUniformBuffer(buffer, offset, size);
+        }
+    });
+}
+
+template <class P>
+void BufferCache<P>::BindHostComputeStorageBuffers() {
+    u32 binding_index = 0;
+    ForEachEnabledBit(channel_state->enabled_compute_storage_buffers, [&](u32 index) {
+        namespace diag = ComputeBindingDiagnostic;
+        auto* const trace = diag::current;
+        const bool matching = diag::IsTarget(index, 0, 0x50);
+        Binding& binding = channel_state->compute_storage_buffers[index];
+        const bool is_written =
+            ((channel_state->written_compute_storage_buffers >> index) & 1) != 0;
+        if (BindMultiRangeStorage(binding, is_written, compute_segments)) {
+            if (matching)
+                trace->binding_state = diag::BindingState::MultiRange;
+            return;
+        }
+        const u32 size = binding.physical_size ? binding.physical_size : binding.size;
+        if (!binding.buffer_id && size != 0) {
+            binding.buffer_id = FindBuffer(binding.device_addr, size, false);
+        }
+        Buffer& buffer = slot_buffers[binding.buffer_id];
+        TouchBuffer(buffer, binding.buffer_id);
+        SynchronizeBuffer(buffer, binding.device_addr, size);
+
+        const u32 offset = buffer.Offset(binding.device_addr);
+        buffer.MarkUsage(offset, size);
+
+        if (is_written) {
+            // Native compute (physical_size set) only has a guessed extent.
+            MarkWrittenBuffer(binding.buffer_id, binding.device_addr, size, true,
+                              binding.physical_size != 0);
+        }
+        if (matching && trace->binding_state == diag::BindingState::Descriptor) {
+            trace->binding_state = diag::BindingState::Normal;
+            if (binding.buffer_id)
+                trace->cache_buffer_id = binding.buffer_id.Value();
+            trace->descriptor_offset = offset;
+            trace->descriptor_range = size;
+            if constexpr (NEEDS_BIND_STORAGE_INDEX)
+                trace->descriptor_binding = binding_index;
+        }
+
+        if constexpr (NEEDS_BIND_STORAGE_INDEX) {
+            runtime.BindComputeStorageBuffer(binding_index, buffer, offset, size, is_written);
+            ++binding_index;
+        } else {
+            runtime.BindStorageBuffer(buffer, offset, size, is_written);
+        }
+    });
+}
+
+template <class P>
+void BufferCache<P>::BindHostComputeTextureBuffers() {
+    ForEachEnabledBit(channel_state->enabled_compute_texture_buffers, [&](u32 index) {
+        const TextureBufferBinding& binding = channel_state->compute_texture_buffers[index];
+        Buffer& buffer = slot_buffers[binding.buffer_id];
+        const u32 size = binding.size;
+        SynchronizeBuffer(buffer, binding.device_addr, size);
+
+        const bool is_written =
+            ((channel_state->written_compute_texture_buffers >> index) & 1) != 0;
+        if (is_written) {
+            MarkWrittenBuffer(binding.buffer_id, binding.device_addr, size);
+        }
+
+        const u32 offset = buffer.Offset(binding.device_addr);
+        const PixelFormat format = binding.format;
+        buffer.MarkUsage(offset, size);
+        if constexpr (SEPARATE_IMAGE_BUFFERS_BINDINGS) {
+            if (((channel_state->image_compute_texture_buffers >> index) & 1) != 0) {
+                runtime.BindImageBuffer(buffer, offset, size, format);
+            } else {
+                runtime.BindTextureBuffer(buffer, offset, size, format);
+            }
+        } else {
+            runtime.BindTextureBuffer(buffer, offset, size, format);
+        }
+    });
+}
+
+template <class P>
+void BufferCache<P>::DoUpdateGraphicsBuffers(bool is_indexed) {
+    graphics_segments.clear();
+    BufferOperations([&]() {
+        if (is_indexed) {
+            UpdateIndexBuffer();
+        }
+        UpdateVertexBuffers();
+        UpdateTransformFeedbackBuffers();
+        for (size_t stage = 0; stage < NUM_STAGES; ++stage) {
+            UpdateUniformBuffers(stage);
+            UpdateStorageBuffers(stage);
+            UpdateTextureBuffers(stage);
+        }
+        if (current_draw_indirect) {
+            UpdateDrawIndirect();
+        }
+        RefreshMultiRangeSegments(graphics_segments);
+    });
+}
+
+template <class P>
+void BufferCache<P>::DoUpdateComputeBuffers() {
+    compute_segments.clear();
+    BufferOperations([&]() {
+        UpdateComputeUniformBuffers();
+        UpdateComputeStorageBuffers();
+        UpdateComputeTextureBuffers();
+        RefreshMultiRangeSegments(compute_segments);
+    });
+}
+
+template <class P>
+void BufferCache<P>::RefreshMultiRangeSegments(std::vector<MultiRangeSegment>& pool) {
+    if constexpr (requires { runtime.BindMultiRangeStorageBuffer(u64{}, bool{}); }) {
+        // Resolving one segment can join, and so delete, the buffer of another (DeleteBuffer
+        // clears its id): repeat until every segment points at a live buffer.
+        for (int pass = 0; pass < 16; ++pass) {
+            bool resolved = false;
+            for (MultiRangeSegment& segment : pool) {
+                if (!segment.buffer_id) {
+                    segment.buffer_id = FindBuffer(segment.device_addr, segment.size,
+                                                   runtime.PrefersSparseSources());
+                    resolved = true;
+                }
+            }
+            if (!resolved) {
+                return;
+            }
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::UpdateIndexBuffer() {
+    // We have to check for the dirty flags and index count
+    // The index count is currently changed without updating the dirty flags
+    const auto& draw_state = maxwell3d->draw_manager.draw_state;
+    const auto& index_buffer_ref = draw_state.index_buffer;
+    auto& flags = maxwell3d->dirty.flags;
+    if (!flags[Dirty::IndexBuffer]) {
+        return;
+    }
+    flags[Dirty::IndexBuffer] = false;
+    if (!draw_state.inline_index_draw_indexes.empty()) [[unlikely]] {
+        auto inline_index_size = static_cast<u32>(draw_state.inline_index_draw_indexes.size());
+        u32 buffer_size = Common::AlignUp(inline_index_size, CACHING_PAGESIZE);
+        if (inline_buffer_id == NULL_BUFFER_ID) [[unlikely]] {
+            LOG_INFO(HW_GPU, "Creating inline index buffer of {:#x} bytes", buffer_size);
+            inline_buffer_id = CreateBuffer(0, buffer_size, false);
+        }
+        if (slot_buffers[inline_buffer_id].SizeBytes() < buffer_size) [[unlikely]] {
+            LOG_INFO(HW_GPU, "Growing inline index buffer to {:#x} bytes", buffer_size);
+            // Erasing the slot directly left its page table entries and LRU item behind, so a
+            // later CreateBuffer could reuse the slot and join the new buffer with itself.
+            DeleteBuffer(inline_buffer_id, true);
+            inline_buffer_id = CreateBuffer(0, buffer_size, false);
+        }
+        channel_state->index_buffer = Binding{
+            .device_addr = 0,
+            .size = inline_index_size,
+            .buffer_id = inline_buffer_id,
+        };
+        return;
+    }
+
+    const GPUVAddr gpu_addr_begin = index_buffer_ref.StartAddress();
+    const GPUVAddr gpu_addr_end = index_buffer_ref.EndAddress();
+    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr_begin);
+    const u32 address_size = static_cast<u32>(gpu_addr_end - gpu_addr_begin);
+    const u32 draw_size = (index_buffer_ref.count + index_buffer_ref.first) * u32(index_buffer_ref.FormatSizeInBytes());
+    const u32 size = (std::min)(address_size, draw_size);
+    if (size == 0 || !device_addr) {
+        channel_state->index_buffer = NULL_BINDING;
+        return;
+    }
+    channel_state->index_buffer = Binding{
+        .device_addr = *device_addr,
+        .size = size,
+        .buffer_id = FindBuffer(*device_addr, size, false),
+    };
+}
+
+template <class P>
+void BufferCache<P>::UpdateVertexBuffers() {
+    auto& flags = maxwell3d->dirty.flags;
+    if (!maxwell3d->dirty.flags[Dirty::VertexBuffers]) {
+        return;
+    }
+    flags[Dirty::VertexBuffers] = false;
+
+    for (u32 index = 0; index < NUM_VERTEX_BUFFERS; ++index) {
+        UpdateVertexBuffer(index);
+    }
+}
+
+template <class P>
+void BufferCache<P>::UpdateVertexBuffer(u32 index) {
+    if (!maxwell3d->dirty.flags[Dirty::VertexBuffer0 + index]) {
+        return;
+    }
+    const auto& array = maxwell3d->regs.vertex_streams[index];
+    if (array.enable == 0) {
+        channel_state->vertex_buffers[index] = NULL_BINDING;
+        UpdateVertexBufferSlot(index, NULL_BINDING);
+        return;
+    }
+    const auto& limit = maxwell3d->regs.vertex_stream_limits[index];
+    const GPUVAddr gpu_addr_begin = array.Address();
+    const bool native = maxwell3d->GetNativeMacroEngine().native_turing;
+    u64 native_size = native ? maxwell3d->regs.NativeVertexStreamSize(index) : 0;
+    if (native && native_size > (std::numeric_limits<u32>::max)()) {
+        // A misread or stale size: bounded by what's mapped below instead. Thrown on the GPU
+        // thread, it aborted Mario Kart World as it booted.
+        static std::atomic<u32> reports{};
+        if (reports.fetch_add(1, std::memory_order_relaxed) < 8) {
+            LOG_WARNING(HW_GPU, "Native vertex stream {} size {:#x} exceeds 32 bits, clamped", index,
+                        native_size);
+        }
+        native_size = (std::numeric_limits<u32>::max)();
+    }
+    const GPUVAddr gpu_addr_end = native ? gpu_addr_begin + native_size : limit.Address() + 1;
+    const u32 address_size = static_cast<u32>(gpu_addr_end - gpu_addr_begin);
+    u32 size = address_size; // TODO: Analyze stride and number of vertices
+    if (size == 0) {
+        channel_state->vertex_buffers[index] = NULL_BINDING;
+        UpdateVertexBufferSlot(index, NULL_BINDING);
+        return;
+    }
+    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr_begin);
+    if (!device_addr) {
+        channel_state->vertex_buffers[index] = NULL_BINDING;
+        UpdateVertexBufferSlot(index, NULL_BINDING);
+        return;
+    }
+    if (!gpu_memory->IsWithinGPUAddressRange(gpu_addr_end) || size >= 64_MiB) {
+        size = static_cast<u32>(gpu_memory->MaxContinuousRange(gpu_addr_begin, size));
+    }
+    const BufferId buffer_id = FindBuffer(*device_addr, size, false);
+    const Binding binding{
+        .device_addr = *device_addr,
+        .size = size,
+        .buffer_id = buffer_id,
+    };
+    channel_state->vertex_buffers[index] = binding;
+    UpdateVertexBufferSlot(index, binding);
+}
+
+template <class P>
+void BufferCache<P>::UpdateDrawIndirect() {
+    const auto update = [this](GPUVAddr gpu_addr, size_t size, Binding& binding) {
+        const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
+        if (!device_addr) {
+            binding = NULL_BINDING;
+            return;
+        }
+        binding = Binding{
+            .device_addr = *device_addr,
+            .size = static_cast<u32>(size),
+            .buffer_id = FindBuffer(*device_addr, static_cast<u32>(size), false),
+        };
+    };
+    if (current_draw_indirect->include_count) {
+        update(current_draw_indirect->count_start_address, sizeof(u32),
+               channel_state->count_buffer_binding);
+    }
+    update(current_draw_indirect->indirect_start_address, current_draw_indirect->buffer_size,
+           channel_state->indirect_buffer_binding);
+}
+
+template <class P>
+void BufferCache<P>::UpdateUniformBuffers(size_t stage) {
+    if (channel_state->enabled_uniform_buffer_masks[stage] == 0) [[likely]] {
+        return;
+    }
+    ForEachEnabledBit(channel_state->enabled_uniform_buffer_masks[stage], [&](u32 index) {
+        Binding& binding = channel_state->uniform_buffers[stage][index];
+        if (binding.buffer_id) {
+            // Already updated
+            return;
+        }
+        // Mark as dirty
+        if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
+            channel_state->dirty_uniform_buffers[stage] |= 1U << index;
+        }
+        // Resolve buffer
+        binding.buffer_id = FindBuffer(binding.device_addr, binding.size, false);
+    });
+}
+
+template <class P>
+void BufferCache<P>::UpdateStorageBuffers(size_t stage) {
+    if (channel_state->enabled_storage_buffers[stage] == 0) [[likely]] {
+        return;
+    }
+    ForEachEnabledBit(channel_state->enabled_storage_buffers[stage], [&](u32 index) {
+        // Resolve buffer
+        Binding& binding = channel_state->storage_buffers[stage][index];
+        const BufferId buffer_id = FindBuffer(binding.device_addr, binding.size, false);
+        binding.buffer_id = buffer_id;
+        const bool is_written = ((channel_state->written_storage_buffers[stage] >> index) & 1) != 0;
+        ResolveMultiRangeStorage(binding, is_written, graphics_segments);
+    });
+}
+
+template <class P>
+void BufferCache<P>::UpdateTextureBuffers(size_t stage) {
+    if (channel_state->enabled_texture_buffers[stage] == 0) [[likely]] {
+        return;
+    }
+    ForEachEnabledBit(channel_state->enabled_texture_buffers[stage], [&](u32 index) {
+        Binding& binding = channel_state->texture_buffers[stage][index];
+        binding.buffer_id = FindBuffer(binding.device_addr, binding.size, false);
+    });
+}
+
+template <class P>
+void BufferCache<P>::UpdateTransformFeedbackBuffers() {
+    if (maxwell3d->regs.transform_feedback_enabled == 0) {
+        return;
+    }
+    for (u32 index = 0; index < NUM_TRANSFORM_FEEDBACK_BUFFERS; ++index) {
+        UpdateTransformFeedbackBuffer(index);
+    }
+}
+
+template <class P>
+void BufferCache<P>::UpdateTransformFeedbackBuffer(u32 index) {
+    const auto& binding = maxwell3d->regs.transform_feedback.buffers[index];
+    const GPUVAddr gpu_addr = binding.Address() + binding.start_offset;
+    const u32 size = binding.size;
+    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
+    if (binding.enable == 0 || size == 0 || !device_addr) {
+        channel_state->transform_feedback_buffers[index] = NULL_BINDING;
+        return;
+    }
+    const BufferId buffer_id = FindBuffer(*device_addr, size, false);
+    channel_state->transform_feedback_buffers[index] = Binding{
+        .device_addr = *device_addr,
+        .size = size,
+        .buffer_id = buffer_id,
+    };
+}
+
+template <class P>
+void BufferCache<P>::UpdateComputeUniformBuffers() {
+    ForEachEnabledBit(channel_state->enabled_compute_uniform_buffer_mask, [&](u32 index) {
+        Binding& binding = channel_state->compute_uniform_buffers[index];
+        binding = NULL_BINDING;
+        const auto& launch_desc = kepler_compute->launch_description;
+        if (((launch_desc.const_buffer_enable_mask >> index) & 1) != 0) {
+            const auto& cbuf = launch_desc.const_buffer_config[index];
+            const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(cbuf.Address());
+            if (device_addr) {
+                binding.device_addr = *device_addr;
+                binding.size = cbuf.size;
+            }
+        }
+        binding.buffer_id = FindBuffer(binding.device_addr, binding.size, false);
+    });
+}
+
+template <class P>
+void BufferCache<P>::UpdateComputeStorageBuffers() {
+    ForEachEnabledBit(channel_state->enabled_compute_storage_buffers, [&](u32 index) {
+        // Resolve buffer
+        Binding& binding = channel_state->compute_storage_buffers[index];
+        const u32 physical_size = binding.physical_size ? binding.physical_size : binding.size;
+        binding.buffer_id = FindBuffer(binding.device_addr, physical_size, false);
+        const bool is_written =
+            ((channel_state->written_compute_storage_buffers >> index) & 1) != 0;
+        ResolveMultiRangeStorage(binding, is_written, compute_segments);
+    });
+}
+
+template <class P>
+void BufferCache<P>::UpdateComputeTextureBuffers() {
+    ForEachEnabledBit(channel_state->enabled_compute_texture_buffers, [&](u32 index) {
+        Binding& binding = channel_state->compute_texture_buffers[index];
+        binding.buffer_id = FindBuffer(binding.device_addr, binding.size, false);
+    });
+}
+
+template <class P>
+void BufferCache<P>::MarkWrittenBuffer(BufferId buffer_id, DAddr device_addr, u32 size, bool needs_sync,
+                                       bool approximate) {
+    if constexpr (!IS_OPENGL) {
+        if (needs_sync) {
+            Buffer& buffer = slot_buffers[buffer_id];
+            buffer.setWriteTick(runtime.CurrentTick());
+        }
+    }
+    // The downloads already taken over this range hold older bytes: when their fences pop
+    // they must not write them over this write's result in guest memory, nor drop the range
+    // from gpu_modified_ranges (the next fence downloads it instead).
+    for (auto& ranges : pending_download_ranges) {
+        ranges.Subtract(device_addr, size);
+    }
+    if (approximate) {
+        NoteApproximateGpuWrite(approx_gpu_modified_ranges, gpu_modified_ranges, device_addr, size);
+    } else {
+        approx_gpu_modified_ranges.Subtract(device_addr, size);
+        NoteExactGpuWrite(device_addr, size);
+    }
+    memory_tracker.MarkRegionAsGpuModified(device_addr, size);
+    MarkVertexBuffersStale(device_addr, size);
+    Nx2AddRangeOnce(gpu_modified_ranges, nx2_recent_gpu_ranges, nx2_recent_gpu_next, device_addr,
+                    size);
+    QueueDownload(device_addr, size);
+    if (Tegra::g_nx2_ampere.load(std::memory_order_relaxed)) {
+        Tegra::Nx2MarkGpuWritten(device_addr, size);
+        Nx2NoteListWrite(buffer_id, device_addr, size);
+    }
+}
+
+template <class P>
+void BufferCache<P>::Nx2NoteListWrite(BufferId buffer_id, DAddr device_addr, u64 size) {
+    if constexpr (!IS_OPENGL) {
+        if (size == 0 || !Tegra::g_nx2_has_command_list_pages.load(std::memory_order_relaxed)) {
+            return;
+        }
+        constexpr u64 page_bits = Tegra::Nx2WrittenPageBits;
+        const u64 last = (std::min<u64>)((device_addr + size - 1) >> page_bits,
+                                         Tegra::g_nx2_command_list_pages.size() * 64 - 1);
+        for (u64 page = device_addr >> page_bits; page <= last;) {
+            // Storage buffers can be large: skip 64 pages at a time where none is a list page.
+            const u64 word =
+                Tegra::g_nx2_command_list_pages[page / 64].load(std::memory_order_relaxed) >>
+                (page % 64);
+            if (word == 0) {
+                page = (page / 64 + 1) * 64;
+                continue;
+            }
+            if (word & 1) {
+                const DAddr page_addr = page << page_bits;
+                {
+                    std::scoped_lock lock{nx2_list_mutex};
+                    Nx2ListPage& entry = nx2_list_pages[page_addr];
+                    ++entry.writes;
+                    if (!nx2_collect_list_copies && !entry.draw_written) {
+                        entry.draw_written = true;
+                        LOG_INFO(HW_GPU, "Command list page {:#x} is written by draws too: its "
+                                         "lists drain the split",
+                                 page_addr);
+                    }
+                }
+                if (nx2_collect_list_copies) {
+                    nx2_list_copy_requests.emplace_back(buffer_id, page_addr);
+                }
+            }
+            ++page;
+        }
+    }
+}
+
+template <class P>
+bool BufferCache<P>::Nx2CopyListPages(u64 tick) {
+    if constexpr (IS_OPENGL) {
+        return false;
+    } else {
+        if (nx2_list_copy_requests.empty()) {
+            return false;
+        }
+        std::ranges::sort(nx2_list_copy_requests, {}, &std::pair<BufferId, DAddr>::second);
+        constexpr DAddr page_size = DAddr{1} << Tegra::Nx2WrittenPageBits;
+        bool recorded = false;
+        for (size_t i = 0; i < nx2_list_copy_requests.size(); ++i) {
+            const auto [buffer_id, page] = nx2_list_copy_requests[i];
+            if (i + 1 < nx2_list_copy_requests.size() &&
+                nx2_list_copy_requests[i + 1].second == page) {
+                continue;
+            }
+            Buffer& buffer = slot_buffers[buffer_id];
+            const DAddr begin = (std::max<DAddr>)(page, buffer.CpuAddr());
+            const DAddr end =
+                (std::min<DAddr>)(page + page_size, buffer.CpuAddr() + buffer.SizeBytes());
+            if (begin >= end) {
+                continue;
+            }
+            Nx2Staging staging = runtime.DownloadStagingBuffer(page_size, true);
+            const BufferCopy copy{
+                .src_offset = buffer.Offset(begin),
+                .dst_offset = staging.offset + (begin - page),
+                .size = end - begin,
+            };
+            buffer.MarkUsage(copy.src_offset, copy.size);
+            // These copies read guest buffers and write separate staging ranges. Synchronize
+            // the batch once instead of serializing graphics/compute for every list page.
+            if (!recorded) {
+                runtime.PreCopyBarrier();
+            }
+            runtime.CopyBuffer(staging.buffer, buffer, std::span{&copy, 1}, false);
+            recorded = true;
+            std::scoped_lock lock{nx2_list_mutex};
+            Nx2ListPage& entry = nx2_list_pages[page];
+            if (entry.copy) {
+                nx2_retired_list_copies.emplace_back(entry.copy_tick, std::move(*entry.copy));
+            }
+            entry.copy = staging;
+            entry.copy_writes = entry.writes;
+            entry.copy_tick = tick;
+            entry.copy_begin = static_cast<u32>(begin - page);
+            entry.copy_end = static_cast<u32>(end - page);
+        }
+        if (recorded) {
+            runtime.PostCopyBarrier();
+        }
+        nx2_list_copy_requests.clear();
+        std::erase_if(nx2_retired_list_copies, [this](auto& retired) {
+            if (!runtime.IsFree(retired.first)) {
+                return false;
+            }
+            runtime.FreeDeferredStagingBuffer(retired.second);
+            return true;
+        });
+        return recorded;
+    }
+}
+
+template <class P>
+auto BufferCache<P>::Nx2ReadListCopy(DAddr device_addr, std::span<u8> out) -> Nx2ListRead {
+    if constexpr (IS_OPENGL) {
+        return Nx2ListRead::Unknown;
+    } else {
+        constexpr DAddr page_size = DAddr{1} << Tegra::Nx2WrittenPageBits;
+        const DAddr page = device_addr & ~(page_size - 1);
+        const u64 offset = device_addr - page;
+        if (offset + out.size() > page_size) {
+            return Nx2ListRead::Unknown;
+        }
+        const auto current = [&](const Nx2ListPage& entry) {
+            return entry.copy && !entry.draw_written && entry.copy_writes == entry.writes &&
+                   offset >= entry.copy_begin && offset + out.size() <= entry.copy_end;
+        };
+        u64 tick{};
+        u64 writes{};
+        {
+            std::scoped_lock lock{nx2_list_mutex};
+            const auto it = nx2_list_pages.find(page);
+            if (it == nx2_list_pages.end()) {
+                return Nx2ListRead::Unknown;
+            }
+            const Nx2ListPage& entry = it->second;
+            // Pages the CPU writes the lists of (GPU-written once, long before) stay synced.
+            if (!entry.draw_written && entry.synced_writes == entry.writes) {
+                return Nx2ListRead::Synced;
+            }
+            if (!current(entry)) {
+                return Nx2ListRead::Unknown;
+            }
+            // The lists after the first of a batch find the copy done: read it at once.
+            if (runtime.IsFree(entry.copy_tick)) {
+                std::memcpy(out.data(), entry.copy->mapped_span.data() + offset, out.size());
+                return Nx2ListRead::Copied;
+            }
+            tick = entry.copy_tick;
+            writes = entry.copy_writes;
+        }
+        // Submitted with the work that wrote the page (Nx2CopyListPages's caller flushes).
+        runtime.WaitSubmittedTick(tick);
+        std::scoped_lock lock{nx2_list_mutex};
+        const auto it = nx2_list_pages.find(page);
+        if (it == nx2_list_pages.end() || !current(it->second) || it->second.copy_tick != tick ||
+            it->second.copy_writes != writes) {
+            return Nx2ListRead::Unknown;
+        }
+        std::memcpy(out.data(), it->second.copy->mapped_span.data() + offset, out.size());
+        return Nx2ListRead::Copied;
+    }
+}
+
+template <class P>
+void BufferCache<P>::Nx2NoteListSynced(DAddr page) {
+    if constexpr (!IS_OPENGL) {
+        std::scoped_lock lock{nx2_list_mutex};
+        Nx2ListPage& entry = nx2_list_pages[page];
+        entry.synced_writes = entry.writes;
+    }
+}
+
+template <class P>
+void BufferCache<P>::Nx2NoteListHostWrite(DAddr device_addr, u64 size) {
+    if constexpr (!IS_OPENGL) {
+        if (size == 0 || !Tegra::g_nx2_has_command_list_pages.load(std::memory_order_relaxed)) {
+            return;
+        }
+        constexpr u64 page_bits = Tegra::Nx2WrittenPageBits;
+        const u64 last = (std::min<u64>)((device_addr + size - 1) >> page_bits,
+                                         Tegra::g_nx2_command_list_pages.size() * 64 - 1);
+        for (u64 page = device_addr >> page_bits; page <= last; ++page) {
+            if (!((Tegra::g_nx2_command_list_pages[page / 64].load(std::memory_order_relaxed) >>
+                   (page % 64)) &
+                  1)) {
+                continue;
+            }
+            std::scoped_lock lock{nx2_list_mutex};
+            const auto it = nx2_list_pages.find(page << page_bits);
+            if (it == nx2_list_pages.end()) {
+                continue;
+            }
+            Nx2ListPage& entry = it->second;
+            const bool synced = entry.synced_writes == entry.writes;
+            ++entry.writes;
+            if (synced) {
+                entry.synced_writes = entry.writes;
+            }
+        }
+    }
+}
+
+template <class P>
+BufferId BufferCache<P>::FindBuffer(DAddr device_addr, u32 size, bool sparse_compatible) {
+    const u64 page = device_addr >> CACHING_PAGEBITS;
+    if (device_addr == 0 || page >= page_table.size()) {
+        return NULL_BUFFER_ID;
+    }
+    const BufferId buffer_id = page_table[page];
+    if (buffer_id) {
+        Buffer& buffer = slot_buffers[buffer_id];
+        if (buffer.IsInBounds(device_addr, size)) {
+            const bool should_sync = Settings::IsGPUFenceBehaviorAccurate();
+            if (should_sync) {
+                SynchronizeBufferWrites(buffer);
+            }
+            bool usable = true;
+            if constexpr (requires { buffer.IsSparseCompatible(); }) {
+                if (sparse_compatible && !buffer.IsSparseCompatible()) {
+                    usable = false;
+                }
+            }
+            if (usable) {
+                return buffer_id;
+            }
+        }
+    }
+    return CreateBuffer(device_addr, size, sparse_compatible);
+}
+
+template <class P>
+void BufferCache<P>::SynchronizeBufferWrites(Buffer& buffer) {
+    if constexpr (!IS_OPENGL) {
+        const u64 buffer_tick = buffer.getWriteTick();
+        if (!runtime.IsFree(buffer_tick)) {
+            runtime.Wait(buffer_tick);
+        }
+    }
+}
+
+template <class P>
+typename BufferCache<P>::OverlapResult BufferCache<P>::ResolveOverlaps(DAddr device_addr,
+                                                                       u32 wanted_size) {
+    static constexpr int STREAM_LEAP_THRESHOLD = 16;
+    boost::container::small_vector<BufferId, 16> overlap_ids;
+    DAddr begin = device_addr;
+    DAddr end = device_addr + wanted_size;
+    int stream_score = 0;
+    bool has_stream_leap = false;
+    auto expand_begin = [&](DAddr add_value) {
+        static constexpr DAddr min_page = CACHING_PAGESIZE + Core::DEVICE_PAGESIZE;
+        if (add_value > begin - min_page) {
+            begin = min_page;
+            device_addr = Core::DEVICE_PAGESIZE;
+            return;
+        }
+        begin -= add_value;
+        device_addr = begin - CACHING_PAGESIZE;
+    };
+    auto expand_end = [&](DAddr add_value) {
+        static constexpr DAddr max_page = 1ULL << Tegra::MaxwellDeviceMemoryManager::AS_BITS;
+        if (add_value > max_page - end) {
+            end = max_page;
+            return;
+        }
+        end += add_value;
+    };
+    if (begin == 0) {
+        return OverlapResult{
+            .ids = std::move(overlap_ids),
+            .begin = begin,
+            .end = end,
+            .has_stream_leap = has_stream_leap,
+        };
+    }
+    for (; device_addr >> CACHING_PAGEBITS < Common::DivCeil(end, CACHING_PAGESIZE);
+         device_addr += CACHING_PAGESIZE) {
+        const BufferId overlap_id = page_table[device_addr >> CACHING_PAGEBITS];
+        if (!overlap_id) {
+            continue;
+        }
+        if (!slot_buffers.contains(overlap_id)) [[unlikely]] {
+            // A deleted buffer is still in the page table. Joining it would delete whichever
+            // buffer reuses the slot next, possibly the one being created here.
+            static u32 stale_logs = 0;
+            if (stale_logs < 16) {
+                ++stale_logs;
+                LOG_ERROR(HW_GPU, "Stale buffer page: device_addr={:#x} buffer_id={}",
+                          device_addr, overlap_id.index);
+            }
+            page_table[device_addr >> CACHING_PAGEBITS] = BufferId{};
+            continue;
+        }
+        Buffer& overlap = slot_buffers[overlap_id];
+        if (overlap.IsPicked()) {
+            continue;
+        }
+        overlap_ids.push_back(overlap_id);
+        overlap.Pick();
+        const DAddr overlap_device_addr = overlap.CpuAddr();
+        const bool expands_left = overlap_device_addr < begin;
+        if (expands_left) {
+            begin = overlap_device_addr;
+        }
+        const DAddr overlap_end = overlap_device_addr + overlap.SizeBytes();
+        const bool expands_right = overlap_end > end;
+        if (overlap_end > end) {
+            end = overlap_end;
+        }
+        stream_score += overlap.StreamScore();
+        if (stream_score > STREAM_LEAP_THRESHOLD && !has_stream_leap) {
+            // When this memory region has been joined a bunch of times, we assume it's being used
+            // as a stream buffer. Increase the size to skip constantly recreating buffers.
+            has_stream_leap = true;
+            if (expands_right) {
+                expand_begin(CACHING_PAGESIZE * 128);
+            }
+            if (expands_left) {
+                expand_end(CACHING_PAGESIZE * 128);
+            }
+        }
+    }
+    return OverlapResult{
+        .ids = std::move(overlap_ids),
+        .begin = begin,
+        .end = end,
+        .has_stream_leap = has_stream_leap,
+    };
+}
+
+template <class P>
+void BufferCache<P>::JoinOverlap(BufferId new_buffer_id, BufferId overlap_id,
+                                 bool accumulate_stream_score) {
+    Buffer& new_buffer = slot_buffers[new_buffer_id];
+    Buffer& overlap = slot_buffers[overlap_id];
+    if (accumulate_stream_score) {
+        new_buffer.IncreaseStreamScore(overlap.StreamScore() + 1);
+    }
+    boost::container::small_vector<BufferCopy, 10> copies;
+    const size_t dst_base_offset = overlap.CpuAddr() - new_buffer.CpuAddr();
+    copies.push_back(BufferCopy{
+        .src_offset = 0,
+        .dst_offset = dst_base_offset,
+        .size = overlap.SizeBytes(),
+    });
+    new_buffer.MarkUsage(copies[0].dst_offset, copies[0].size);
+    runtime.CopyBuffer(new_buffer, overlap, copies, true);
+#ifdef YUZU_LEGACY
+    if (immediately_free)
+        runtime.Finish();
+#endif
+    DeleteBuffer(overlap_id, true);
+}
+
+template <class P>
+BufferId BufferCache<P>::CreateBuffer(DAddr device_addr, u32 wanted_size,
+                                      bool sparse_compatible) {
+    // The synchronized-range tables hold Buffer pointers and ids that this may move or reuse.
+    nx2_synced_ranges.fill({});
+    nx2_synced_vertex_buffers.fill({});
+    DAddr device_addr_end = Common::AlignUp(device_addr + wanted_size, CACHING_PAGESIZE);
+    device_addr = Common::AlignDown(device_addr, CACHING_PAGESIZE);
+    wanted_size = static_cast<u32>(device_addr_end - device_addr);
+    const OverlapResult overlap = ResolveOverlaps(device_addr, wanted_size);
+    const u32 size = static_cast<u32>(overlap.end - overlap.begin);
+    const BufferId new_buffer_id =
+        slot_buffers.insert(runtime, overlap.begin, size, sparse_compatible);
+    auto& new_buffer = slot_buffers[new_buffer_id];
+    const size_t size_bytes = new_buffer.SizeBytes();
+    runtime.ClearBuffer(new_buffer, 0, size_bytes, 0);
+    new_buffer.MarkUsage(0, size_bytes);
+    for (const BufferId overlap_id : overlap.ids) {
+        JoinOverlap(new_buffer_id, overlap_id, !overlap.has_stream_leap);
+    }
+    Register(new_buffer_id);
+    TouchBuffer(new_buffer, new_buffer_id);
+    return new_buffer_id;
+}
+
+template <class P>
+void BufferCache<P>::Register(BufferId buffer_id) {
+    ChangeRegister<true>(buffer_id);
+}
+
+template <class P>
+void BufferCache<P>::Unregister(BufferId buffer_id) {
+    ChangeRegister<false>(buffer_id);
+}
+
+template <class P>
+template <bool insert>
+void BufferCache<P>::ChangeRegister(BufferId buffer_id) {
+    Buffer& buffer = slot_buffers[buffer_id];
+    const auto size = buffer.SizeBytes();
+    if (insert) {
+        buffer_bytes += Common::AlignUp(size, 1024);
+        total_used_memory += Common::AlignUp(size, 1024);
+        buffer.setLRUID(lru_cache.Insert(buffer_id, frame_tick));
+    } else {
+        buffer_bytes -= Common::AlignUp(size, 1024);
+        total_used_memory -= Common::AlignUp(size, 1024);
+        // Only a registered buffer has an LRU item (freeing SIZE_MAX crashed in Free).
+        if (buffer.getLRUID() != SIZE_MAX) {
+            lru_cache.Free(buffer.getLRUID());
+            buffer.setLRUID(SIZE_MAX);
+        }
+    }
+    const DAddr device_addr_begin = buffer.CpuAddr();
+    const DAddr device_addr_end = device_addr_begin + size;
+    const u64 page_begin = device_addr_begin / CACHING_PAGESIZE;
+    const u64 page_end = Common::DivCeil(device_addr_end, CACHING_PAGESIZE);
+    for (u64 page = page_begin; page != page_end; ++page) {
+        if constexpr (insert) {
+            page_table[page] = buffer_id;
+        } else if (page_table[page] == buffer_id) {
+            // Only its own entries: another buffer's would go stale.
+            page_table[page] = BufferId{};
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept {
+    if (buffer_id != NULL_BUFFER_ID && buffer.getLRUID() != SIZE_MAX) {
+        lru_cache.Touch(buffer.getLRUID(), frame_tick);
+    }
+}
+
+template <class P>
+bool BufferCache<P>::SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 size,
+                                       bool sparse_uniform, std::source_location caller) {
+    Common::UnmappedReadDiagnostic::Scope trace;
+    trace.Sync(device_addr, size, caller);
+    if (!Nx2DrawTuning() || size == 0) {
+        return SynchronizeBufferPages(buffer, device_addr, size, sparse_uniform);
+    }
+    // No page of the range became CPU modified since this buffer's range was last checked: there
+    // is nothing to upload (the check walks every page; Bananza binds the same buffers thousands
+    // of times a frame).
+    const u64 epoch = memory_tracker.CpuWriteEpoch(device_addr, size);
+    if (epoch == ~u64{0}) {
+        return SynchronizeBufferPages(buffer, device_addr, size, sparse_uniform);
+    }
+    const size_t slot_index =
+        static_cast<size_t>(((device_addr >> 6) ^ (device_addr >> 20) ^ size) %
+                            nx2_synced_ranges.size());
+    Nx2SyncedRange& slot = nx2_synced_ranges[slot_index];
+    if (slot.buffer == &buffer && slot.device_addr == device_addr && slot.size == size &&
+        slot.epoch == epoch && slot.sparse_uniform == sparse_uniform) {
+        return true;
+    }
+    const bool synchronized = SynchronizeBufferPages(buffer, device_addr, size, sparse_uniform);
+    slot = {&buffer, device_addr, size, epoch, sparse_uniform};
+    return synchronized;
+}
+
+template <class P>
+bool BufferCache<P>::SynchronizeBufferPages(Buffer& buffer, DAddr device_addr, u32 size,
+                                            bool sparse_uniform) {
+#ifdef __ANDROID__
+    const bool use_optimized_vertex_buffers = Settings::values.use_optimized_vertex_buffers.GetValue();
+#else
+    constexpr bool use_optimized_vertex_buffers = true;
+#endif
+
+    if (use_optimized_vertex_buffers) {
+        upload_copies.clear();
+        u64 total_size_bytes = 0;
+        u64 largest_copy = 0;
+        const DAddr buffer_start = buffer.cpu_addr_cached;
+        const auto add_upload = [&](DAddr start, DAddr end) {
+            if (start == end) return;
+            const u64 range_size = end - start;
+            upload_copies.push_back(BufferCopy{
+                .src_offset = total_size_bytes,
+                .dst_offset = start - buffer_start,
+                .size = range_size,
+            });
+            total_size_bytes += range_size;
+            largest_copy = (std::max)(largest_copy, range_size);
+        };
+        memory_tracker.ForEachUploadRange(device_addr, size, [&](u64 device_addr_out, u64 range_size) {
+            DAddr upload_start = device_addr_out;
+            gpu_modified_ranges.ForEachInRange(device_addr_out, range_size, [&](DAddr gpu_start, DAddr gpu_end) {
+                add_upload(upload_start, gpu_start);
+                upload_start = gpu_end;
+            });
+            add_upload(upload_start, device_addr_out + range_size);
+        });
+        if (total_size_bytes == 0) {
+            return true;
+        }
+        const std::span<BufferCopy> copies_span(upload_copies.data(), upload_copies.size());
+        UploadMemory(buffer, total_size_bytes, largest_copy, copies_span, sparse_uniform);
+        // Mapped uploads carry their own barriers (or run in the upload command buffer, which
+        // ends with one); another barrier here only ended the render pass (~50 times a frame in
+        // Pokopia).
+        if constexpr (!USE_MEMORY_MAPS_FOR_UPLOADS) {
+            any_buffer_uploaded = true;
+        }
+        return false;
+    } else {
+        boost::container::small_vector<BufferCopy, 4> copies;
+        u64 total_size_bytes = 0;
+        u64 largest_copy = 0;
+        DAddr buffer_start = buffer.CpuAddr();
+        memory_tracker.ForEachUploadRange(device_addr, size, [&](u64 device_addr_out, u64 range_size) {
+            copies.push_back(BufferCopy{
+                .src_offset = total_size_bytes,
+                .dst_offset = device_addr_out - buffer_start,
+                .size = range_size,
+            });
+            total_size_bytes += range_size;
+            largest_copy = (std::max)(largest_copy, range_size);
+        });
+        if (total_size_bytes == 0) {
+            return true;
+        }
+        const std::span<BufferCopy> copies_span(copies.data(), copies.size());
+        UploadMemory(buffer, total_size_bytes, largest_copy, copies_span, sparse_uniform);
+        return false;
+    }
+}
+
+template <class P>
+void BufferCache<P>::UploadMemory(Buffer& buffer, u64 total_size_bytes, u64 largest_copy,
+                                  std::span<BufferCopy> copies, bool sparse_uniform) {
+    if constexpr (USE_MEMORY_MAPS_FOR_UPLOADS) {
+        MappedUploadMemory(buffer, total_size_bytes, copies, sparse_uniform);
+    } else {
+        ImmediateUploadMemory(buffer, largest_copy, copies, sparse_uniform);
+    }
+}
+
+template <class P>
+void BufferCache<P>::ImmediateUploadMemory([[maybe_unused]] Buffer& buffer,
+                                           [[maybe_unused]] u64 largest_copy,
+                                           [[maybe_unused]] std::span<const BufferCopy> copies,
+                                           [[maybe_unused]] bool sparse_uniform) {
+    if constexpr (!USE_MEMORY_MAPS_FOR_UPLOADS) {
+        std::span<u8> immediate_buffer;
+        for (const BufferCopy& copy : copies) {
+            std::span<const u8> upload_span;
+            const DAddr device_addr = buffer.CpuAddr() + copy.dst_offset;
+            if (sparse_uniform) {
+                if (immediate_buffer.empty()) {
+                    immediate_buffer = ImmediateBuffer(largest_copy);
+                }
+                ReadSparseUniformMemory(device_memory, device_addr,
+                                        immediate_buffer.first(copy.size));
+                upload_span = immediate_buffer.first(copy.size);
+            } else if (IsRangeGranular(device_addr, copy.size)) {
+                auto* const ptr = device_memory.GetPointer<u8>(device_addr);
+                if (ptr != nullptr) {
+                    upload_span = std::span(ptr, copy.size);
+                }
+            } else {
+                if (immediate_buffer.empty()) {
+                    immediate_buffer = ImmediateBuffer(largest_copy);
+                }
+                device_memory.ReadBlockUnsafe(device_addr, immediate_buffer.data(), copy.size);
+                upload_span = immediate_buffer.subspan(0, copy.size);
+            }
+            buffer.ImmediateUpload(copy.dst_offset, upload_span);
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::MappedUploadMemory([[maybe_unused]] Buffer& buffer,
+                                        [[maybe_unused]] u64 total_size_bytes,
+                                        [[maybe_unused]] std::span<BufferCopy> copies,
+                                        [[maybe_unused]] bool sparse_uniform) {
+    if constexpr (USE_MEMORY_MAPS) {
+        auto upload_staging = runtime.UploadStagingBuffer(total_size_bytes);
+        const std::span<u8> staging_pointer = upload_staging.mapped_span;
+        for (BufferCopy& copy : copies) {
+            u8* const src_pointer = staging_pointer.data() + copy.src_offset;
+            const DAddr device_addr = buffer.CpuAddr() + copy.dst_offset;
+            if (sparse_uniform) {
+                ReadSparseUniformMemory(device_memory, device_addr,
+                                        std::span{src_pointer, static_cast<size_t>(copy.size)});
+            } else {
+                device_memory.ReadBlockUnsafe(device_addr, src_pointer, copy.size);
+            }
+            // Large uploads are mostly geometry the host GPU now has its own copy of: TickFrame
+            // marks their guest memory cold (see TextureCache::RefreshContents).
+            if (copy.size >= 256_KiB) {
+                uploaded_buffer_ranges.emplace_back(device_addr, copy.size);
+            }
+            // Apply the staging offset
+            copy.src_offset += upload_staging.offset;
+        }
+        const bool can_reorder = runtime.CanReorderUpload(buffer, copies);
+        runtime.CopyBuffer(buffer, upload_staging.buffer, copies, true, can_reorder);
+        MarkUploaded(buffer, copies);
+    }
+}
+
+template <class P>
+void BufferCache<P>::MarkUploaded(Buffer& buffer, std::span<const BufferCopy> copies) {
+    // An upload that stayed in this command buffer (its region was in use, or the stream buffer
+    // was full) did not mark its bytes: a later upload to them was reordered in front of it, and
+    // this older copy overwrote the newer data.
+    for (const BufferCopy& copy : copies) {
+        buffer.MarkUsage(copy.dst_offset, copy.size);
+    }
+}
+
+template <class P>
+bool BufferCache<P>::InlineMemory(DAddr dest_address, size_t copy_size,
+                                  std::span<const u8> inlined_buffer) {
+    const bool is_dirty = IsRegionRegistered(dest_address, copy_size);
+    if (!is_dirty) {
+        return false;
+    }
+    DAddr aligned_start = Common::AlignDown(dest_address, DEVICE_PAGESIZE);
+    DAddr aligned_end = Common::AlignUp(dest_address + copy_size, DEVICE_PAGESIZE);
+    if (!IsRegionGpuModified(aligned_start, aligned_end - aligned_start)) {
+        return false;
+    }
+
+    InlineMemoryImplementation(dest_address, copy_size, inlined_buffer);
+
+    return true;
+}
+
+template <class P>
+void BufferCache<P>::InlineMemoryImplementation(DAddr dest_address, size_t copy_size,
+                                                std::span<const u8> inlined_buffer) {
+    ClearDownload(dest_address, copy_size);
+    gpu_modified_ranges.Subtract(dest_address, copy_size);
+    MarkVertexBuffersStale(dest_address, copy_size);
+
+    BufferId buffer_id = FindBuffer(dest_address, static_cast<u32>(copy_size), false);
+    auto& buffer = slot_buffers[buffer_id];
+    SynchronizeBuffer(buffer, dest_address, static_cast<u32>(copy_size));
+
+    if constexpr (USE_MEMORY_MAPS_FOR_UPLOADS) {
+        auto upload_staging = runtime.UploadStagingBuffer(copy_size);
+        std::array copies{BufferCopy{
+            .src_offset = upload_staging.offset,
+            .dst_offset = buffer.Offset(dest_address),
+            .size = copy_size,
+        }};
+        u8* const src_pointer = upload_staging.mapped_span.data();
+        std::memcpy(src_pointer, inlined_buffer.data(), copy_size);
+        const bool can_reorder = runtime.CanReorderUpload(buffer, copies);
+        runtime.CopyBuffer(buffer, upload_staging.buffer, copies, true, can_reorder);
+        MarkUploaded(buffer, copies);
+    } else {
+        buffer.ImmediateUpload(buffer.Offset(dest_address), inlined_buffer.first(copy_size));
+    }
+}
+
+template <class P>
+void BufferCache<P>::DownloadBufferMemory(Buffer& buffer) {
+    DownloadBufferMemory(buffer, buffer.CpuAddr(), buffer.SizeBytes());
+}
+
+template <class P>
+void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids) {
+    struct Download {
+        BufferId buffer_id;
+        BufferCopy copy;
+    };
+    std::vector<Download> downloads;
+    u64 total_size_bytes = 0;
+    for (const BufferId buffer_id : buffer_ids) {
+        Buffer& buffer = slot_buffers[buffer_id];
+        const DAddr buffer_addr = buffer.CpuAddr();
+        memory_tracker.ForEachDownloadRangeAndClear(
+            buffer_addr, buffer.SizeBytes(), [&](u64 device_addr_out, u64 range_size) {
+                gpu_modified_ranges.ForEachInRange(device_addr_out, range_size,
+                                                   [&](DAddr start, DAddr end) {
+                    downloads.push_back({buffer_id, BufferCopy{
+                                                        .src_offset = start - buffer_addr,
+                                                        .dst_offset = total_size_bytes,
+                                                        .size = end - start,
+                                                    }});
+                    total_size_bytes += Common::AlignUp(end - start, 64);
+                });
+                ClearDownload(device_addr_out, range_size);
+                gpu_modified_ranges.Subtract(device_addr_out, range_size);
+            });
+    }
+    if (total_size_bytes == 0) {
+        return;
+    }
+    auto download_staging = runtime.DownloadStagingBuffer(total_size_bytes);
+    for (Download& download : downloads) {
+        download.copy.dst_offset += download_staging.offset;
+        Buffer& buffer = slot_buffers[download.buffer_id];
+        buffer.MarkUsage(download.copy.src_offset, download.copy.size);
+        runtime.CopyBuffer(download_staging.buffer, buffer, std::span{&download.copy, 1}, true);
+    }
+    runtime.Finish();
+    const u8* const mapped_memory = download_staging.mapped_span.data();
+    for (const Download& download : downloads) {
+        const DAddr device_addr = slot_buffers[download.buffer_id].CpuAddr() + download.copy.src_offset;
+        WriteDownloadToGuest(
+            device_addr, mapped_memory + (download.copy.dst_offset - download_staging.offset),
+            download.copy.size);
+    }
+}
+
+template <class P>
+void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64 size) {
+    boost::container::small_vector<BufferCopy, 1> copies;
+    u64 total_size_bytes = 0;
+    u64 largest_copy = 0;
+    memory_tracker.ForEachDownloadRangeAndClear(
+        device_addr, size, [&](u64 device_addr_out, u64 range_size) {
+            const DAddr buffer_addr = buffer.CpuAddr();
+            const auto add_download = [&](DAddr start, DAddr end) {
+                const u64 new_offset = start - buffer_addr;
+                const u64 new_size = end - start;
+                copies.push_back(BufferCopy{
+                    .src_offset = new_offset,
+                    .dst_offset = total_size_bytes,
+                    .size = new_size,
+                });
+                // Align up to avoid cache conflicts
+                constexpr u64 align = 64ULL;
+                constexpr u64 mask = ~(align - 1ULL);
+                total_size_bytes += (new_size + align - 1) & mask;
+                largest_copy = (std::max)(largest_copy, new_size);
+            };
+
+            gpu_modified_ranges.ForEachInRange(device_addr_out, range_size, add_download);
+            ClearDownload(device_addr_out, range_size);
+            gpu_modified_ranges.Subtract(device_addr_out, range_size);
+        });
+    if (total_size_bytes == 0) {
+        return;
+    }
+
+    if constexpr (USE_MEMORY_MAPS) {
+        auto download_staging = runtime.DownloadStagingBuffer(total_size_bytes);
+        const u8* const mapped_memory = download_staging.mapped_span.data();
+        const std::span<BufferCopy> copies_span(copies.data(), copies.data() + copies.size());
+        for (BufferCopy& copy : copies) {
+            // Modify copies to have the staging offset in mind
+            copy.dst_offset += download_staging.offset;
+            buffer.MarkUsage(copy.src_offset, copy.size);
+        }
+        runtime.CopyBuffer(download_staging.buffer, buffer, copies_span, true);
+        runtime.Finish();
+        for (const BufferCopy& copy : copies) {
+            const DAddr copy_device_addr = buffer.CpuAddr() + copy.src_offset;
+            // Undo the modified offset
+            const u64 dst_offset = copy.dst_offset - download_staging.offset;
+            const u8* copy_mapped_memory = mapped_memory + dst_offset;
+            WriteDownloadToGuest(copy_device_addr, copy_mapped_memory, copy.size);
+        }
+    } else {
+        const std::span<u8> immediate_buffer = ImmediateBuffer(largest_copy);
+        for (const BufferCopy& copy : copies) {
+            buffer.ImmediateDownload(copy.src_offset, immediate_buffer.subspan(0, copy.size));
+            const DAddr copy_device_addr = buffer.CpuAddr() + copy.src_offset;
+            WriteDownloadToGuest(copy_device_addr, immediate_buffer.data(), copy.size);
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::DeleteBuffer(BufferId buffer_id, bool do_not_mark) {
+    nx2_synced_ranges.fill({});
+    nx2_synced_vertex_buffers.fill({});
+    if (buffer_id == inline_buffer_id) {
+        // The garbage collector can delete the inline index buffer; recreate it on next use.
+        inline_buffer_id = NULL_BUFFER_ID;
+    }
+    if constexpr (requires { runtime.OnBufferDeleted(slot_buffers[buffer_id]); }) {
+        runtime.OnBufferDeleted(slot_buffers[buffer_id]);
+    }
+    read_trapped_ranges.Subtract(slot_buffers[buffer_id].CpuAddr(),
+                                 slot_buffers[buffer_id].SizeBytes());
+    bool dirty_index{false};
+    boost::container::small_vector<u64, NUM_VERTEX_BUFFERS> dirty_vertex_buffers;
+    const auto scalar_replace = [buffer_id](Binding& binding) {
+        if (binding.buffer_id == buffer_id) {
+            binding.buffer_id = BufferId{};
+        }
+    };
+    const auto replace = [scalar_replace](std::span<Binding> bindings) {
+        std::ranges::for_each(bindings, scalar_replace);
+    };
+
+    if (channel_state->index_buffer.buffer_id == buffer_id) {
+        channel_state->index_buffer.buffer_id = BufferId{};
+        dirty_index = true;
+    }
+    // Multi-range storage segments too: the update pass resolves them again.
+    for (auto* const pool : {&graphics_segments, &compute_segments}) {
+        for (MultiRangeSegment& segment : *pool) {
+            if (segment.buffer_id == buffer_id) {
+                segment.buffer_id = BufferId{};
+            }
+        }
+    }
+
+    for (u32 index = 0; index < channel_state->vertex_buffers.size(); index++) {
+        auto& binding = channel_state->vertex_buffers[index];
+        if (binding.buffer_id == buffer_id) {
+            binding.buffer_id = BufferId{};
+            UpdateVertexBufferSlot(index, binding);
+            dirty_vertex_buffers.push_back(index);
+        }
+    }
+    std::ranges::for_each(channel_state->uniform_buffers, replace);
+    std::ranges::for_each(channel_state->storage_buffers, replace);
+    replace(channel_state->transform_feedback_buffers);
+    replace(channel_state->compute_uniform_buffers);
+    replace(channel_state->compute_storage_buffers);
+    // Segments resolved earlier in this update can point at a buffer a later lookup merged away.
+    for (auto* const pool : {&graphics_segments, &compute_segments}) {
+        for (MultiRangeSegment& segment : *pool) {
+            if (segment.buffer_id == buffer_id) {
+                segment.buffer_id = BufferId{};
+            }
+        }
+    }
+
+    // Mark the whole buffer as CPU written to stop tracking CPU writes
+    if (!do_not_mark) {
+        Buffer& buffer = slot_buffers[buffer_id];
+        memory_tracker.MarkRegionAsCpuModified(buffer.CpuAddr(), buffer.SizeBytes());
+    }
+
+    Unregister(buffer_id);
+
+#ifdef YUZU_LEGACY
+    if (!do_not_mark || !immediately_free)
+#endif
+        delayed_destruction_ring.Push(std::move(slot_buffers[buffer_id]));
+
+    slot_buffers.erase(buffer_id);
+
+    if constexpr (HAS_PERSISTENT_UNIFORM_BUFFER_BINDINGS) {
+        channel_state->dirty_uniform_buffers.fill(~u32{0});
+        channel_state->uniform_buffer_binding_sizes.fill({});
+    }
+
+    auto& flags = maxwell3d->dirty.flags;
+    if (dirty_index) {
+        flags[Dirty::IndexBuffer] = true;
+    }
+
+    if (dirty_vertex_buffers.size() > 0) {
+        flags[Dirty::VertexBuffers] = true;
+        for (auto index : dirty_vertex_buffers) {
+            flags[Dirty::VertexBuffer0 + index] = true;
+        }
+    }
+    channel_state->has_deleted_buffers = true;
+}
+
+template <class P>
+Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
+                                             bool is_written, bool native_compute,
+                                             bool diagnostic_target) const {
+    namespace diag = ComputeBindingDiagnostic;
+    auto* const trace = diagnostic_target ? diag::current : nullptr;
+    const auto descriptor = ReadStorageBufferDescriptor(*gpu_memory, ssbo_addr, native_compute);
+    const GPUVAddr gpu_addr = descriptor[0];
+    if (trace)
+        trace->pointer = gpu_addr;
+
+    if (gpu_addr == 0) {
+        if (trace)
+            trace->binding_state = diag::BindingState::NullPointer;
+        return NULL_BINDING;
+    }
+    // The device ranges are reusable while the page table is stable. A legacy remap can
+    // be inside its rasterizer callback with some pages already changed.
+    const auto generation = gpu_memory->StableMappingGeneration();
+    if (trace || !generation) {
+        return ResolveStorageBufferBinding(descriptor, cbuf_index, is_written, native_compute,
+                                           trace);
+    }
+    const StorageBindingKey key{
+        .address_space = gpu_memory->GetID(),
+        .generation = *generation,
+        .pointer = gpu_addr,
+        .next_word = descriptor[1],
+        .alignment = runtime.GetStorageBufferAlignment(),
+        .is_written = is_written,
+        .native_compute = native_compute,
+    };
+    if (const Binding* const cached = storage_bindings.Find(key)) {
+        return *cached;
+    }
+    const Binding binding =
+        ResolveStorageBufferBinding(descriptor, cbuf_index, is_written, native_compute, nullptr);
+    storage_bindings.Insert(key, binding);
+    return binding;
+}
+
+template <class P>
+Binding BufferCache<P>::ResolveStorageBufferBinding(
+    const std::array<u64, 2>& descriptor, u32 cbuf_index, bool is_written, bool native_compute,
+    ComputeBindingDiagnostic::Record* trace) const {
+    namespace diag = ComputeBindingDiagnostic;
+    const GPUVAddr gpu_addr = descriptor[0];
+
+    const auto size = [&]() -> u32 {
+        const u64 layout_size = gpu_memory->GetMemoryLayoutSize(gpu_addr);
+        if (trace)
+            trace->layout_size = layout_size;
+        // Keep the existing NVN/graphics behaviour; bare pointers must be capped before
+        // conversion, since a kind range can be 4 GiB or larger.
+        const u64 memory_layout_size =
+            native_compute ? layout_size : static_cast<u32>(layout_size);
+        // Native compute pointers are bare; the next word is another shader parameter.
+        const u64 next_qword = descriptor[1];
+        const u32 limit = StorageBufferSizeLimit(memory_layout_size, next_qword, native_compute);
+        if (native_compute && limit != 0) {
+            const auto ranges = gpu_memory->GetSubmappedRange(gpu_addr, limit);
+            return StorageBufferMappedPrefix(gpu_addr, limit, ranges);
+        }
+        return limit;
+    }();
+
+    // Alignment only applies to the offset of the buffer
+    const u32 alignment = runtime.GetStorageBufferAlignment();
+    const GPUVAddr aligned_gpu_addr = Common::AlignDown(gpu_addr, alignment);
+    if (trace) {
+        trace->selected_size = size;
+        trace->alignment = alignment;
+        trace->aligned_gpu = aligned_gpu_addr;
+    }
+    const u32 aligned_size = static_cast<u32>(gpu_addr - aligned_gpu_addr) + size;
+
+    const std::optional<DAddr> aligned_device_addr = gpu_memory->GpuToCpuAddress(aligned_gpu_addr);
+    if (!aligned_device_addr || size == 0) {
+        LOG_DEBUG(HW_GPU, "Failed to find storage buffer for cbuf index {}", cbuf_index);
+        if (trace)
+            trace->binding_state =
+                size == 0 ? diag::BindingState::EmptyRange : diag::BindingState::UnmappedAligned;
+        return NULL_BINDING;
+    }
+    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
+    if (!device_addr) {
+        LOG_DEBUG(HW_GPU, "Unmapped storage buffer address for cbuf index {}", cbuf_index);
+        if (trace)
+            trace->binding_state = diag::BindingState::UnmappedPointer;
+        return NULL_BINDING;
+    }
+    if (trace)
+        trace->device_address = *device_addr;
+    // The end address used for size calculation does not need to be aligned
+    const DAddr cpu_end = Common::AlignUp(*device_addr + size, Core::DEVICE_PAGESIZE);
+
+    u32 binding_size = static_cast<u32>(cpu_end - *aligned_device_addr);
+    if (is_written || native_compute) {
+        binding_size = aligned_size;
+    }
+    // Keep a safe fallback if multi-range storage cannot be used (including non-sparse writes).
+    // Starting from the aligned address also checks that the alignment prefix is contiguous.
+    const u32 physical_size = native_compute
+        ? static_cast<u32>(gpu_memory->MaxContinuousRange(aligned_gpu_addr, binding_size))
+        : 0;
+    if (trace) {
+        trace->logical_size = binding_size;
+        trace->physical_size = physical_size;
+    }
+    if (native_compute && physical_size <= gpu_addr - aligned_gpu_addr) {
+        if (trace)
+            trace->binding_state = diag::BindingState::NoPhysicalPrefix;
+        return NULL_BINDING;
+    }
+    const Binding binding{
+        .device_addr = *aligned_device_addr,
+        .gpu_addr = aligned_gpu_addr,
+        .size = binding_size,
+        .buffer_id = BufferId{},
+        .physical_size = physical_size,
+    };
+    return binding;
+}
+
+template <class P>
+TextureBufferBinding BufferCache<P>::GetTextureBufferBinding(GPUVAddr gpu_addr, u32 size,
+                                                             PixelFormat format) {
+    const std::optional<DAddr> device_addr = gpu_memory->GpuToCpuAddress(gpu_addr);
+    TextureBufferBinding binding;
+    if (!device_addr || size == 0) {
+        binding.device_addr = 0;
+        binding.size = 0;
+        binding.buffer_id = NULL_BUFFER_ID;
+        binding.format = PixelFormat::Invalid;
+    } else {
+        binding.device_addr = *device_addr;
+        binding.size = size;
+        binding.buffer_id = BufferId{};
+        binding.format = format;
+    }
+    return binding;
+}
+
+template <class P>
+std::span<const u8> BufferCache<P>::ImmediateBufferWithData(DAddr device_addr, size_t size,
+                                                          bool sparse_uniform) {
+    if (sparse_uniform) {
+        constexpr u64 address_limit = u64{1} << Tegra::MaxwellDeviceMemoryManager::AS_BITS;
+        if (device_addr < address_limit && size <= address_limit - device_addr) {
+            if (const u8* pointer = device_memory.GetSpan(device_addr, size)) {
+                return std::span(pointer, size);
+            }
+        }
+        const std::span<u8> span = ImmediateBuffer(size);
+        ReadSparseUniformMemory(device_memory, device_addr, span);
+        return span;
+    }
+    u8* const base_pointer = device_memory.GetPointer<u8>(device_addr);
+    if (IsRangeGranular(device_addr, size) ||
+        base_pointer + size == device_memory.GetPointer<u8>(device_addr + size)) {
+        return std::span(base_pointer, size);
+    } else {
+        const std::span<u8> span = ImmediateBuffer(size);
+        device_memory.ReadBlockUnsafe(device_addr, span.data(), size);
+        return span;
+    }
+}
+
+template <class P>
+std::span<u8> BufferCache<P>::ImmediateBuffer(size_t wanted_capacity) {
+    immediate_buffer_alloc.resize_destructive(wanted_capacity);
+    return std::span<u8>(immediate_buffer_alloc.data(), wanted_capacity);
+}
+
+template <class P>
+bool BufferCache<P>::HasFastUniformBufferBound(size_t stage, u32 binding_index) const noexcept {
+    return ((channel_state->fast_bound_uniform_buffers[stage] >> binding_index) & 1u) != 0;
+}
+
+template <class P>
+std::pair<typename BufferCache<P>::Buffer*, u32> BufferCache<P>::GetDrawIndirectCount() {
+    auto& buffer = slot_buffers[channel_state->count_buffer_binding.buffer_id];
+    return std::make_pair(&buffer, buffer.Offset(channel_state->count_buffer_binding.device_addr));
+}
+
+template <class P>
+std::pair<typename BufferCache<P>::Buffer*, u32> BufferCache<P>::GetDrawIndirectBuffer() {
+    auto& buffer = slot_buffers[channel_state->indirect_buffer_binding.buffer_id];
+    return std::make_pair(&buffer,
+                          buffer.Offset(channel_state->indirect_buffer_binding.device_addr));
+}
+
+} // namespace VideoCommon

@@ -1,0 +1,107 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#pragma once
+
+#include <algorithm>
+#include <cstring>
+#include <bit>
+#include <vector>
+
+#include "common/alignment.h"
+#include "common/common_types.h"
+#include "common/div_ceil.h"
+#include "common/assert.h"
+#include "core/memory.h"
+#include "video_core/memory_manager.h"
+#include "video_core/rasterizer_interface.h"
+
+namespace VideoCommon {
+
+template <typename T>
+class DescriptorTable {
+public:
+    [[nodiscard]] bool Synchronize(GPUVAddr gpu_addr, u32 limit) noexcept {
+        bool ret = !(current_gpu_addr == gpu_addr && current_limit == limit);
+        if (ret) {
+            Refresh(gpu_addr, limit);
+        }
+        return ret;
+    }
+
+    void Invalidate() noexcept {
+        // Cleared on the next read: the texture cache invalidates every channel's tables for
+        // each image it deletes, dozens of times a frame while its collector runs.
+        invalidated = true;
+    }
+
+    template <class MemoryManager>
+    [[nodiscard]] std::pair<T, bool> Read(const MemoryManager& gpu_memory, u32 index) noexcept {
+        DEBUG_ASSERT(index <= current_limit);
+        if (invalidated) {
+            ClearReadDescriptors();
+            invalidated = false;
+        }
+        const GPUVAddr gpu_addr = current_gpu_addr + index * sizeof(T);
+        std::pair<T, bool> result;
+        // This runs for every texture and sampler of every draw. An entry within one page is
+        // contiguous in host memory, so a single page lookup replaces the generic block read.
+        const bool one_page =
+            (gpu_addr & Core::Memory::YUZU_PAGEMASK) + sizeof(T) <= Core::Memory::YUZU_PAGESIZE;
+        if (const u8* const host = one_page ? gpu_memory.GetPointer(gpu_addr) : nullptr) {
+            std::memcpy(std::addressof(result.first), host, sizeof(T));
+        } else {
+            gpu_memory.ReadBlockUnsafe(gpu_addr, std::addressof(result.first), sizeof(T));
+        }
+        if ((read_descriptors[index / 64] & (1ULL << (index % 64))) != 0) {
+            result.second = result.first != descriptors[index];
+        } else {
+            read_descriptors[index / 64] |= 1ULL << (index % 64);
+            result.second = true;
+        }
+        if (result.second) {
+            descriptors[index] = result.first;
+        }
+        return result;
+    }
+
+    void Refresh(GPUVAddr gpu_addr, u32 limit) noexcept {
+        current_gpu_addr = gpu_addr;
+        current_limit = limit;
+        // Small tables round up geometrically: the 0x80000-entry steps below allocated 16 MiB
+        // for every small 32-byte descriptor table. Large ones keep those steps (Mario
+        // Brothership reallocates a lot of times; std::vector's growth isn't enough for it).
+        const size_t num_descriptors = limit < 0x80000
+                                           ? std::bit_ceil(static_cast<size_t>(limit) + 1)
+                                           : ((limit + 0x80000) & (~0x7ffff)) + 1;
+        read_descriptors.resize(Common::DivCeil(num_descriptors, 64U));
+        ClearReadDescriptors();
+        invalidated = false;
+        //
+        descriptors.resize(num_descriptors);
+        ids.resize(num_descriptors);
+    }
+
+    std::vector<u64> read_descriptors;
+    std::vector<T> descriptors;
+    /// What the texture cache made of each descriptor (an image view or sampler id), valid while
+    /// Read reports the descriptor as not new: the texture cache stores it whenever Read returns
+    /// new, and Invalidate/Refresh make every descriptor new again. Saves a hash lookup per
+    /// texture per draw.
+    std::vector<u32> ids;
+    GPUVAddr current_gpu_addr{};
+    u32 current_limit{};
+    bool invalidated{}; ///< read_descriptors is to be cleared before the next read
+
+private:
+    void ClearReadDescriptors() noexcept {
+        // Reserved capacity is not addressable. A later limit increase clears its new range.
+        const size_t words = (std::min)(read_descriptors.size(), size_t{current_limit} / 64 + 1);
+        std::fill_n(read_descriptors.begin(), words, u64{0});
+    }
+};
+
+} // namespace VideoCommon

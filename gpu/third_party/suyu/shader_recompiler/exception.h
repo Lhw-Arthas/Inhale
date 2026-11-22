@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -46,6 +46,12 @@ public:
     template <typename... Args>
     explicit RuntimeError(const char* message, Args&&... args)
         : Exception{fmt::format(fmt::runtime(message), std::forward<Args>(args)...)} {}
+};
+
+class TensorRejected : public RuntimeError {
+public:
+    explicit TensorRejected(std::string_view reason)
+        : RuntimeError{"native matrix multiply rejected: {}", reason} {}
 };
 
 class NotImplementedException : public Exception {

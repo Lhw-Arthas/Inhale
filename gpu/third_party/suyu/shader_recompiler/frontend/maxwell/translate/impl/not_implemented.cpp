@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -13,10 +13,6 @@ namespace Shader::Maxwell {
 
 [[noreturn]] static void ThrowNotImplemented(Opcode opcode) {
     throw NotImplementedException("Instruction {} is not implemented", opcode);
-}
-
-void TranslatorVisitor::ATOM_cas(u64) {
-    ThrowNotImplemented(Opcode::ATOM_cas);
 }
 
 void TranslatorVisitor::ATOMS_cas(u64) {
@@ -193,22 +189,6 @@ void TranslatorVisitor::PLONGJMP(u64) {
 
 void TranslatorVisitor::PRET(u64) {
     ThrowNotImplemented(Opcode::PRET);
-}
-
-void TranslatorVisitor::PRMT_reg(u64) {
-    ThrowNotImplemented(Opcode::PRMT_reg);
-}
-
-void TranslatorVisitor::PRMT_rc(u64) {
-    ThrowNotImplemented(Opcode::PRMT_rc);
-}
-
-void TranslatorVisitor::PRMT_cr(u64) {
-    ThrowNotImplemented(Opcode::PRMT_cr);
-}
-
-void TranslatorVisitor::PRMT_imm(u64) {
-    ThrowNotImplemented(Opcode::PRMT_imm);
 }
 
 void TranslatorVisitor::R2B(u64) {

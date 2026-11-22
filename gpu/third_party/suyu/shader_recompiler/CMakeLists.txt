@@ -6,55 +6,7 @@
 
 add_library(shader_recompiler STATIC
     backend/bindings.h
-    backend/glasm/emit_glasm.cpp
-    backend/glasm/emit_glasm.h
-    backend/glasm/emit_glasm_barriers.cpp
-    backend/glasm/emit_glasm_bitwise_conversion.cpp
-    backend/glasm/emit_glasm_composite.cpp
-    backend/glasm/emit_glasm_context_get_set.cpp
-    backend/glasm/emit_glasm_control_flow.cpp
-    backend/glasm/emit_glasm_convert.cpp
-    backend/glasm/emit_glasm_floating_point.cpp
-    backend/glasm/emit_glasm_image.cpp
-    backend/glasm/emit_glasm_instructions.h
-    backend/glasm/emit_glasm_integer.cpp
-    backend/glasm/emit_glasm_logical.cpp
-    backend/glasm/emit_glasm_memory.cpp
-    backend/glasm/emit_glasm_not_implemented.cpp
-    backend/glasm/emit_glasm_select.cpp
-    backend/glasm/emit_glasm_shared_memory.cpp
-    backend/glasm/emit_glasm_special.cpp
-    backend/glasm/emit_glasm_undefined.cpp
-    backend/glasm/emit_glasm_warp.cpp
-    backend/glasm/glasm_emit_context.cpp
-    backend/glasm/glasm_emit_context.h
-    backend/glasm/reg_alloc.cpp
-    backend/glasm/reg_alloc.h
-    backend/glsl/emit_glsl.cpp
-    backend/glsl/emit_glsl.h
-    backend/glsl/emit_glsl_atomic.cpp
-    backend/glsl/emit_glsl_barriers.cpp
-    backend/glsl/emit_glsl_bitwise_conversion.cpp
-    backend/glsl/emit_glsl_composite.cpp
-    backend/glsl/emit_glsl_context_get_set.cpp
-    backend/glsl/emit_glsl_control_flow.cpp
-    backend/glsl/emit_glsl_convert.cpp
-    backend/glsl/emit_glsl_floating_point.cpp
-    backend/glsl/emit_glsl_image.cpp
-    backend/glsl/emit_glsl_instructions.h
-    backend/glsl/emit_glsl_integer.cpp
-    backend/glsl/emit_glsl_logical.cpp
-    backend/glsl/emit_glsl_memory.cpp
-    backend/glsl/emit_glsl_not_implemented.cpp
-    backend/glsl/emit_glsl_select.cpp
-    backend/glsl/emit_glsl_shared_memory.cpp
-    backend/glsl/emit_glsl_special.cpp
-    backend/glsl/emit_glsl_undefined.cpp
-    backend/glsl/emit_glsl_warp.cpp
-    backend/glsl/glsl_emit_context.cpp
-    backend/glsl/glsl_emit_context.h
-    backend/glsl/var_alloc.cpp
-    backend/glsl/var_alloc.h
+    backend/nvn_storage_descriptor.h
     backend/spirv/emit_spirv.cpp
     backend/spirv/emit_spirv.h
     backend/spirv/emit_spirv_atomic.cpp
@@ -73,7 +25,9 @@ add_library(shader_recompiler STATIC
     backend/spirv/emit_spirv_memory.cpp
     backend/spirv/emit_spirv_select.cpp
     backend/spirv/emit_spirv_shared_memory.cpp
+    backend/spirv/emit_spirv_mesh.cpp
     backend/spirv/emit_spirv_special.cpp
+    backend/spirv/emit_spirv_tensor.cpp
     backend/spirv/emit_spirv_undefined.cpp
     backend/spirv/emit_spirv_warp.cpp
     backend/spirv/spirv_emit_context.cpp
@@ -107,6 +61,11 @@ add_library(shader_recompiler STATIC
     frontend/ir/type.h
     frontend/ir/value.cpp
     frontend/ir/value.h
+    frontend/ampere/instruction.h
+    frontend/ampere/lower_to_maxwell.h
+    frontend/ampere/register_pressure.h
+    frontend/ampere/program_override.h
+    frontend/ampere/program_address_map.h
     frontend/maxwell/control_flow.cpp
     frontend/maxwell/control_flow.h
     frontend/maxwell/decode.cpp
@@ -162,6 +121,7 @@ add_library(shader_recompiler STATIC
     frontend/maxwell/translate/impl/impl.h
     frontend/maxwell/translate/impl/integer_add.cpp
     frontend/maxwell/translate/impl/integer_add_three_input.cpp
+    frontend/maxwell/translate/impl/integer_byte_permute.cpp
     frontend/maxwell/translate/impl/integer_compare.cpp
     frontend/maxwell/translate/impl/integer_compare_and_set.cpp
     frontend/maxwell/translate/impl/integer_floating_point_conversion.cpp
@@ -211,6 +171,7 @@ add_library(shader_recompiler STATIC
     frontend/maxwell/translate/impl/video_set_predicate.cpp
     frontend/maxwell/translate/impl/vote.cpp
     frontend/maxwell/translate/impl/warp_shuffle.cpp
+    frontend/maxwell/translate/impl/tensor_mul_add.cpp
     frontend/maxwell/translate/translate.cpp
     frontend/maxwell/translate/translate.h
     frontend/maxwell/translate_program.cpp
@@ -221,6 +182,7 @@ add_library(shader_recompiler STATIC
     ir_opt/constant_propagation_pass.cpp
     ir_opt/dead_code_elimination_pass.cpp
     ir_opt/dual_vertex_pass.cpp
+    ir_opt/geometry_compaction_pass.cpp
     ir_opt/global_memory_to_storage_buffer_pass.cpp
     ir_opt/identity_removal_pass.cpp
     ir_opt/layer_pass.cpp
@@ -228,6 +190,7 @@ add_library(shader_recompiler STATIC
     ir_opt/lower_fp64_to_fp32.cpp
     ir_opt/lower_int64_to_int32.cpp
     ir_opt/passes.h
+    ir_opt/predicate_mask.h
     ir_opt/position_pass.cpp
     ir_opt/rescaling_pass.cpp
     ir_opt/ssa_rewrite_pass.cpp
@@ -239,9 +202,60 @@ add_library(shader_recompiler STATIC
     program_header.h
     runtime_info.h
     shader_info.h
-    varying_state.h
+    varying_state.h)
 
-)
+if (ENABLE_OPENGL)
+    target_sources(shader_recompiler PRIVATE
+        backend/glasm/emit_glasm.cpp
+        backend/glasm/emit_glasm.h
+        backend/glasm/emit_glasm_barriers.cpp
+        backend/glasm/emit_glasm_bitwise_conversion.cpp
+        backend/glasm/emit_glasm_composite.cpp
+        backend/glasm/emit_glasm_context_get_set.cpp
+        backend/glasm/emit_glasm_control_flow.cpp
+        backend/glasm/emit_glasm_convert.cpp
+        backend/glasm/emit_glasm_floating_point.cpp
+        backend/glasm/emit_glasm_image.cpp
+        backend/glasm/emit_glasm_instructions.h
+        backend/glasm/emit_glasm_integer.cpp
+        backend/glasm/emit_glasm_logical.cpp
+        backend/glasm/emit_glasm_memory.cpp
+        backend/glasm/emit_glasm_not_implemented.cpp
+        backend/glasm/emit_glasm_select.cpp
+        backend/glasm/emit_glasm_shared_memory.cpp
+        backend/glasm/emit_glasm_special.cpp
+        backend/glasm/emit_glasm_undefined.cpp
+        backend/glasm/emit_glasm_warp.cpp
+        backend/glasm/glasm_emit_context.cpp
+        backend/glasm/glasm_emit_context.h
+        backend/glasm/reg_alloc.cpp
+        backend/glasm/reg_alloc.h
+        backend/glsl/emit_glsl.cpp
+        backend/glsl/emit_glsl.h
+        backend/glsl/emit_glsl_atomic.cpp
+        backend/glsl/emit_glsl_barriers.cpp
+        backend/glsl/emit_glsl_bitwise_conversion.cpp
+        backend/glsl/emit_glsl_composite.cpp
+        backend/glsl/emit_glsl_context_get_set.cpp
+        backend/glsl/emit_glsl_control_flow.cpp
+        backend/glsl/emit_glsl_convert.cpp
+        backend/glsl/emit_glsl_floating_point.cpp
+        backend/glsl/emit_glsl_image.cpp
+        backend/glsl/emit_glsl_instructions.h
+        backend/glsl/emit_glsl_integer.cpp
+        backend/glsl/emit_glsl_logical.cpp
+        backend/glsl/emit_glsl_memory.cpp
+        backend/glsl/emit_glsl_not_implemented.cpp
+        backend/glsl/emit_glsl_select.cpp
+        backend/glsl/emit_glsl_shared_memory.cpp
+        backend/glsl/emit_glsl_special.cpp
+        backend/glsl/emit_glsl_undefined.cpp
+        backend/glsl/emit_glsl_warp.cpp
+        backend/glsl/glsl_emit_context.cpp
+        backend/glsl/glsl_emit_context.h
+        backend/glsl/var_alloc.cpp
+        backend/glsl/var_alloc.h)
+endif()
 
 target_link_libraries(shader_recompiler PUBLIC common fmt::fmt sirit::sirit)
 
@@ -253,7 +267,7 @@ if (MSVC)
     )
 else()
     target_compile_options(shader_recompiler PRIVATE
-        $<$<COMPILE_LANGUAGE:C,CXX>:-Werror=conversion>
+        $<$<COMPILE_LANGUAGE:C,CXX>:-Wconversion>
         # Bracket depth determines maximum size of a fold expression in Clang since 9c9974c3ccb6.
         # And this in turns limits the size of a std::array.
         $<$<CXX_COMPILER_ID:Clang>:-fbracket-depth=1024>

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -327,6 +327,22 @@ F32 IREmitter::GetPatch(Patch patch) {
 
 void IREmitter::SetPatch(Patch patch, const F32& value) {
     Inst(Opcode::SetPatch, patch, value);
+}
+
+U32 IREmitter::IsbeRead(const U32& address) {
+    return Inst<U32>(Opcode::IsbeRead, address);
+}
+
+void IREmitter::IsbeWriteAttribute(const U32& address, const U32& value) {
+    Inst(Opcode::IsbeWriteAttribute, address, value);
+}
+
+void IREmitter::IsbeWriteMapU8(const U32& address, const U32& value) {
+    Inst(Opcode::IsbeWriteMapU8, address, value);
+}
+
+void IREmitter::IsbeWriteMapU32(const U32& address, const U32& value) {
+    Inst(Opcode::IsbeWriteMapU32, address, value);
 }
 
 void IREmitter::SetFragColor(u32 index, u32 component, const F32& value) {
@@ -1528,6 +1544,12 @@ U32U64 IREmitter::GlobalAtomicExchange(const U64& pointer_offset, const U32U64& 
     }
 }
 
+/// Stores value at the address if the word there equals comparator; returns the old word.
+U32 IREmitter::GlobalAtomicCompareExchange(const U64& pointer_offset, const U32& comparator,
+                                         const U32& value) {
+    return Inst<U32>(Opcode::GlobalAtomicCompareExchange32, pointer_offset, comparator, value);
+}
+
 F32 IREmitter::GlobalAtomicF32Add(const U64& pointer_offset, const Value& value,
                                   const FpControl control) {
     return Inst<F32>(Opcode::GlobalAtomicAddF32, Flags{control}, pointer_offset, value);
@@ -2098,6 +2120,14 @@ U32 IREmitter::ShuffleDown(const IR::U32& value, const IR::U32& index, const IR:
 U32 IREmitter::ShuffleButterfly(const IR::U32& value, const IR::U32& index, const IR::U32& clamp,
                                 const IR::U32& seg_mask) {
     return Inst<U32>(Opcode::ShuffleButterfly, value, index, clamp, seg_mask);
+}
+
+U32 IREmitter::QuadBroadcast(const IR::U32& value, const IR::U32& lane) {
+    return Inst<U32>(Opcode::QuadBroadcast, value, lane);
+}
+
+U32 IREmitter::QuadSwap(const IR::U32& value, const IR::U32& direction) {
+    return Inst<U32>(Opcode::QuadSwap, value, direction);
 }
 
 F32 IREmitter::FSwizzleAdd(const F32& a, const F32& b, const U32& swizzle, FpControl control) {

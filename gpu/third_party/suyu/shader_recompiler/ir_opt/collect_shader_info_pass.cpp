@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 suyu Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -388,6 +388,7 @@ void VisitUsages(Info& info, IR::Inst& inst) {
     case IR::Opcode::GlobalAtomicOr32:
     case IR::Opcode::GlobalAtomicXor32:
     case IR::Opcode::GlobalAtomicExchange32:
+    case IR::Opcode::GlobalAtomicCompareExchange32:
     case IR::Opcode::GlobalAtomicIAdd64:
     case IR::Opcode::GlobalAtomicSMin64:
     case IR::Opcode::GlobalAtomicUMin64:
@@ -492,11 +493,19 @@ void VisitUsages(Info& info, IR::Inst& inst) {
     case IR::Opcode::LaneId:
         info.uses_subgroup_invocation_id = true;
         break;
+    case IR::Opcode::TensorMulAdd:
+        info.uses_tensor_mul_add = true;
+        info.uses_subgroup_invocation_id = true;
+        break;
     case IR::Opcode::ShuffleIndex:
     case IR::Opcode::ShuffleUp:
     case IR::Opcode::ShuffleDown:
     case IR::Opcode::ShuffleButterfly:
         info.uses_subgroup_shuffles = true;
+        break;
+    case IR::Opcode::QuadBroadcast:
+    case IR::Opcode::QuadSwap:
+        info.uses_quad_shuffles = true;
         break;
     case IR::Opcode::GetCbufU8:
     case IR::Opcode::GetCbufS8:
@@ -626,6 +635,7 @@ void VisitUsages(Info& info, IR::Inst& inst) {
     case IR::Opcode::StorageAtomicOr32:
     case IR::Opcode::StorageAtomicXor32:
     case IR::Opcode::StorageAtomicExchange32:
+    case IR::Opcode::StorageAtomicCompareExchange32:
         info.used_storage_buffer_types |= IR::Type::U32;
         break;
     case IR::Opcode::LoadStorage64:
@@ -803,6 +813,8 @@ void VisitFpModifiers(Info& info, IR::Inst& inst) {
     case IR::Opcode::FPAdd32:
     case IR::Opcode::FPFma32:
     case IR::Opcode::FPMul32:
+    case IR::Opcode::FPMin32:
+    case IR::Opcode::FPMax32:
     case IR::Opcode::FPRoundEven32:
     case IR::Opcode::FPFloor32:
     case IR::Opcode::FPCeil32:
@@ -959,10 +971,12 @@ void CollectShaderInfoPass(Environment& env, IR::Program& program) {
         switch (program.stage) {
         case Stage::VertexA:
         case Stage::VertexB:
+        case Stage::Task: // bound in the vertex slot
             return 0x110u;
         case Stage::TessellationControl:
             return 0x210u;
         case Stage::TessellationEval:
+        case Stage::Mesh: // bound in the tessellation slot
             return 0x310u;
         case Stage::Geometry:
             return 0x410u;
@@ -974,6 +988,11 @@ void CollectShaderInfoPass(Environment& env, IR::Program& program) {
         throw InvalidArgument("Invalid stage {}", program.stage);
     }()};
     info.nvn_buffer_base = base;
+    if (program.stage == Stage::Task || program.stage == Stage::Mesh) {
+        // The stage buffer reads the workgroup index; the epilogue splits work by invocation.
+        info.uses_workgroup_id = true;
+        info.uses_local_invocation_id = true;
+    }
 
     for (IR::Block* const block : program.post_order_blocks) {
         for (IR::Inst& inst : block->Instructions()) {

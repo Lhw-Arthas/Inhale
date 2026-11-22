@@ -6,6 +6,7 @@
 #include <memory>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace Shader {
 
@@ -21,6 +22,12 @@ public:
         requires std::is_constructible_v<T, Args...>
     [[nodiscard]] T* Create(Args&&... args) {
         return std::construct_at(Memory(), std::forward<Args>(args)...);
+    }
+
+    /// Destroy objects and release their backing storage instead of retaining it for reuse.
+    void Free() {
+        chunks.clear();
+        node = &chunks.emplace_back(new_chunk_size);
     }
 
     void ReleaseContents() {
@@ -75,8 +82,13 @@ private:
             Release();
         }
 
+        // Destroys the objects themselves: Storage's destructor is empty on purpose (the union
+        // also holds unused slots), so destroying the Storage elements would skip T's
+        // destructor and leak what the objects own (e.g. an IR::Inst's phi operand list).
         void Release() {
-            std::destroy_n(storage.get(), used_objects);
+            for (size_t index = 0; index < used_objects; ++index) {
+                std::destroy_at(&storage[index].object);
+            }
             used_objects = 0;
         }
 

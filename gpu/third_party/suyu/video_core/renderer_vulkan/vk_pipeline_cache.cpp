@@ -1,0 +1,2074 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include <algorithm>
+#include <bit>
+#include <chrono>
+#include <cstddef>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <numeric>
+#include <optional>
+#include <span>
+#include <thread>
+#include <vector>
+#include "common/cityhash.h"
+#include "common/fs/fs.h"
+#include "common/fs/path_util.h"
+#include "common/scope_exit.h"
+#include "common/thread_worker.h"
+#include "core/core.h"
+#include "shader_recompiler/backend/spirv/emit_spirv.h"
+#include "shader_recompiler/environment.h"
+#include "shader_recompiler/frontend/maxwell/control_flow.h"
+#include "shader_recompiler/frontend/maxwell/translate_program.h"
+#include "shader_recompiler/ir_opt/passes.h"
+#include "shader_recompiler/program_header.h"
+#include "video_core/compute_binding_diagnostic.h"
+#include "video_core/engines/kepler_compute.h"
+#include "video_core/engines/maxwell_3d.h"
+#include "video_core/gpu_logging/gpu_logging.h"
+#include "video_core/memory_manager.h"
+#include "video_core/renderer_vulkan/fixed_pipeline_state.h"
+#include "video_core/renderer_vulkan/maxwell_to_vk.h"
+#include "video_core/renderer_vulkan/pipeline_helper.h"
+#include "video_core/renderer_vulkan/pipeline_statistics.h"
+#include "video_core/renderer_vulkan/vertex_repack.h"
+#include "video_core/renderer_vulkan/vk_compute_pipeline.h"
+#include "video_core/renderer_vulkan/vk_descriptor_pool.h"
+#include "video_core/renderer_vulkan/vk_pipeline_cache.h"
+#include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_shader_reuse.h"
+#include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/renderer_vulkan/vk_update_descriptor.h"
+#include "video_core/shader_cache.h"
+#include "video_core/shader_environment.h"
+#include "video_core/shader_notify.h"
+#include "video_core/stall_diagnostics.h"
+#include "video_core/surface.h"
+#include "video_core/vulkan_common/vulkan_device.h"
+#include "video_core/vulkan_common/vulkan_wrapper.h"
+
+#ifdef __ANDROID__
+#include "../../android/app/src/main/jni/android_settings.h"
+#endif
+
+namespace Vulkan {
+
+namespace {
+using Shader::Backend::SPIRV::EmitSPIRV;
+using Shader::Maxwell::ConvertLegacyToGeneric;
+using Shader::Maxwell::GenerateGeometryPassthrough;
+using Shader::Maxwell::MergeDualVertexPrograms;
+using Shader::Maxwell::TranslateProgram;
+using VideoCommon::ComputeEnvironment;
+using VideoCommon::FileEnvironment;
+using VideoCommon::GenericEnvironment;
+using VideoCommon::GraphicsEnvironment;
+using VideoCommon::ShaderSnapshotFailure;
+
+constexpr u32 CACHE_VERSION = 0x4e4f0009;
+constexpr size_t VULKAN_CACHE_FLUSH_PIPELINES = 128;
+constexpr size_t VULKAN_CACHE_FLUSH_MIN_SECONDS = 30;
+constexpr std::array<char, 8> VULKAN_CACHE_MAGIC_NUMBER{'y', 'u', 'z', 'u', 'v', 'k', 'c', 'h'};
+
+template <typename Container>
+auto MakeSpan(Container& container) {
+    return std::span(container.data(), container.size());
+}
+
+Shader::OutputTopology MaxwellToOutputTopology(Maxwell::PrimitiveTopology topology) {
+    switch (topology) {
+    case Maxwell::PrimitiveTopology::Points:
+        return Shader::OutputTopology::PointList;
+    case Maxwell::PrimitiveTopology::LineStrip:
+        return Shader::OutputTopology::LineStrip;
+    default:
+        return Shader::OutputTopology::TriangleStrip;
+    }
+}
+
+Shader::CompareFunction MaxwellToCompareFunction(Maxwell::ComparisonOp comparison) {
+    switch (comparison) {
+    case Maxwell::ComparisonOp::Never_D3D:
+    case Maxwell::ComparisonOp::Never_GL:
+        return Shader::CompareFunction::Never;
+    case Maxwell::ComparisonOp::Less_D3D:
+    case Maxwell::ComparisonOp::Less_GL:
+        return Shader::CompareFunction::Less;
+    case Maxwell::ComparisonOp::Equal_D3D:
+    case Maxwell::ComparisonOp::Equal_GL:
+        return Shader::CompareFunction::Equal;
+    case Maxwell::ComparisonOp::LessEqual_D3D:
+    case Maxwell::ComparisonOp::LessEqual_GL:
+        return Shader::CompareFunction::LessThanEqual;
+    case Maxwell::ComparisonOp::Greater_D3D:
+    case Maxwell::ComparisonOp::Greater_GL:
+        return Shader::CompareFunction::Greater;
+    case Maxwell::ComparisonOp::NotEqual_D3D:
+    case Maxwell::ComparisonOp::NotEqual_GL:
+        return Shader::CompareFunction::NotEqual;
+    case Maxwell::ComparisonOp::GreaterEqual_D3D:
+    case Maxwell::ComparisonOp::GreaterEqual_GL:
+        return Shader::CompareFunction::GreaterThanEqual;
+    case Maxwell::ComparisonOp::Always_D3D:
+    case Maxwell::ComparisonOp::Always_GL:
+        return Shader::CompareFunction::Always;
+    }
+    UNIMPLEMENTED_MSG("Unimplemented comparison op={}", comparison);
+    return {};
+}
+
+Shader::AttributeType CastAttributeType(const FixedPipelineState::VertexAttribute& attr) {
+    if (attr.enabled == 0) {
+        return Shader::AttributeType::Disabled;
+    }
+    switch (attr.Type()) {
+    case Maxwell::VertexAttribute::Type::UnusedEnumDoNotUseBecauseItWillGoAway:
+        ASSERT_MSG(false, "Invalid vertex attribute type!");
+        return Shader::AttributeType::Disabled;
+    case Maxwell::VertexAttribute::Type::SNorm:
+    case Maxwell::VertexAttribute::Type::UNorm:
+    case Maxwell::VertexAttribute::Type::Float:
+        return Shader::AttributeType::Float;
+    case Maxwell::VertexAttribute::Type::SInt:
+        return Shader::AttributeType::SignedInt;
+    case Maxwell::VertexAttribute::Type::UInt:
+        return Shader::AttributeType::UnsignedInt;
+    case Maxwell::VertexAttribute::Type::UScaled:
+        return Shader::AttributeType::UnsignedScaled;
+    case Maxwell::VertexAttribute::Type::SScaled:
+        return Shader::AttributeType::SignedScaled;
+    }
+    return Shader::AttributeType::Float;
+}
+
+Shader::AttributeType AttributeType(const FixedPipelineState& state, size_t index) {
+    switch (state.DynamicAttributeType(index)) {
+    case 0:
+        return Shader::AttributeType::Disabled;
+    case 1:
+        return Shader::AttributeType::Float;
+    case 2:
+        return Shader::AttributeType::SignedInt;
+    case 3:
+        return Shader::AttributeType::UnsignedInt;
+    }
+    return Shader::AttributeType::Disabled;
+}
+
+Shader::InputTopology MaxwellToInputTopology(Maxwell::PrimitiveTopology topology) {
+    switch (topology) {
+    case Maxwell::PrimitiveTopology::Points:
+        return Shader::InputTopology::Points;
+    case Maxwell::PrimitiveTopology::Lines:
+    case Maxwell::PrimitiveTopology::LineLoop:
+    case Maxwell::PrimitiveTopology::LineStrip:
+        return Shader::InputTopology::Lines;
+    case Maxwell::PrimitiveTopology::Triangles:
+    case Maxwell::PrimitiveTopology::TriangleStrip:
+    case Maxwell::PrimitiveTopology::TriangleFan:
+    case Maxwell::PrimitiveTopology::Quads:
+    case Maxwell::PrimitiveTopology::QuadStrip:
+    case Maxwell::PrimitiveTopology::Polygon:
+    case Maxwell::PrimitiveTopology::Patches:
+        return Shader::InputTopology::Triangles;
+    case Maxwell::PrimitiveTopology::LinesAdjacency:
+    case Maxwell::PrimitiveTopology::LineStripAdjacency:
+        return Shader::InputTopology::LinesAdjacency;
+    case Maxwell::PrimitiveTopology::TrianglesAdjacency:
+    case Maxwell::PrimitiveTopology::TriangleStripAdjacency:
+        return Shader::InputTopology::TrianglesAdjacency;
+    }
+    return {};
+}
+
+Shader::TessPrimitive MaxwellToTessPrimitive(u32 raw) {
+    switch (static_cast<Maxwell::Tessellation::DomainType>(raw)) {
+    case Maxwell::Tessellation::DomainType::Isolines:
+        return Shader::TessPrimitive::Isolines;
+    case Maxwell::Tessellation::DomainType::Triangles:
+        return Shader::TessPrimitive::Triangles;
+    case Maxwell::Tessellation::DomainType::Quads:
+        return Shader::TessPrimitive::Quads;
+    }
+    ASSERT(false);
+    return Shader::TessPrimitive::Triangles;
+}
+
+Shader::TessSpacing MaxwellToTessSpacing(u32 raw) {
+    switch (static_cast<Maxwell::Tessellation::Spacing>(raw)) {
+    case Maxwell::Tessellation::Spacing::Integer:
+        return Shader::TessSpacing::Equal;
+    case Maxwell::Tessellation::Spacing::FractionalOdd:
+        return Shader::TessSpacing::FractionalOdd;
+    case Maxwell::Tessellation::Spacing::FractionalEven:
+        return Shader::TessSpacing::FractionalEven;
+    }
+    ASSERT(false);
+    return Shader::TessSpacing::Equal;
+}
+
+Shader::AttributeType ColorOutputType(u8 render_target_format) {
+    const auto format = static_cast<Tegra::RenderTargetFormat>(render_target_format);
+    if (format == Tegra::RenderTargetFormat::NONE) {
+        return Shader::AttributeType::Float;
+    }
+    const auto pixel_format = VideoCore::Surface::PixelFormatFromRenderTargetFormat(format);
+    if (!VideoCore::Surface::IsPixelFormatInteger(pixel_format)) {
+        return Shader::AttributeType::Float;
+    }
+    return VideoCore::Surface::IsPixelFormatSignedInteger(pixel_format)
+               ? Shader::AttributeType::SignedInt
+               : Shader::AttributeType::UnsignedInt;
+}
+
+// What translation and SPIR-V emission read of a pipeline key, plus the settings they read
+// (see vk_shader_reuse.h). MakeRuntimeInfo and the layer passthrough only get this key, so
+// nothing they use can be left out of it. A field is only filled when a stage of the pipeline
+// reads it: pipelines differing in state their shaders ignore then share the shaders.
+ShaderTranslationKey MakeShaderTranslationKey(const GraphicsPipelineCacheKey& pipeline_key,
+                                              const Device& device) {
+    const FixedPipelineState& state{pipeline_key.state};
+    const bool has_tessellation_eval{pipeline_key.unique_hashes[3] != 0};
+    const bool has_geometry{pipeline_key.unique_hashes[4] != 0};
+    const bool has_fragment{pipeline_key.unique_hashes[5] != 0};
+
+    ShaderTranslationKey key{};
+    key.unique_hashes = pipeline_key.unique_hashes;
+    key.input_topology = MaxwellToInputTopology(state.topology);
+    key.passthrough_topology = MaxwellToOutputTopology(state.topology);
+    key.convert_depth_mode = state.ndc_minus_one_to_one != 0;
+    key.force_early_z = state.early_z != 0;
+    key.y_negate = state.y_negate != 0;
+
+    if (state.dynamic_vertex_input) {
+        for (size_t index = 0; index < Maxwell::NumVertexAttributes; ++index) {
+            key.generic_input_types[index] = AttributeType(state, index);
+        }
+    } else {
+        std::ranges::transform(state.attributes, key.generic_input_types.begin(),
+                               &CastAttributeType);
+    }
+    // A fixed point size is written by the last vertex stage when points are drawn, and by a
+    // geometry stage that outputs points (a generated passthrough one outputs what is drawn).
+    if (key.input_topology == Shader::InputTopology::Points || has_geometry) {
+        key.point_size = state.point_size;
+    }
+    key.layer_viewport_relative = has_geometry && state.layer_viewport_relative != 0;
+    if (state.xfb_enabled) {
+        if (device.IsExtTransformFeedbackSupported()) {
+            key.xfb_enabled = true;
+            key.xfb_state = state.xfb_state;
+        } else {
+            LOG_WARNING(Render_Vulkan, "XFB requested in pipeline key but device lacks VK_EXT_transform_feedback; ignoring XFB decorations");
+        }
+    }
+    if (has_tessellation_eval) {
+        key.tess_clockwise = state.tessellation_clockwise != 0;
+        key.tess_primitive = MaxwellToTessPrimitive(state.tessellation_primitive.Value());
+        key.tess_spacing = MaxwellToTessSpacing(state.tessellation_spacing);
+    }
+    if (has_fragment) {
+        key.alpha_test_func = MaxwellToCompareFunction(
+            state.UnpackComparisonOp(state.alpha_test_func.Value()));
+        key.alpha_test_reference = state.alpha_test_ref;
+        key.dual_source_blend = state.attachment0_dual_source_blend != 0;
+        if (device.IsMoltenVK()) {
+            std::ranges::transform(state.color_formats, key.color_output_types.begin(),
+                                   &ColorOutputType);
+        }
+    }
+
+    const auto& resolution{Settings::values.resolution_info};
+    key.resolution_up_scale = resolution.up_scale;
+    key.resolution_down_shift = resolution.down_shift;
+    key.rescaling_active = resolution.active;
+    key.renderer_debug = Settings::values.renderer_debug.GetValue();
+    key.disable_shader_loop_safety_checks =
+        Settings::values.disable_shader_loop_safety_checks.GetValue();
+    key.fix_bloom_effects = Settings::values.fix_bloom_effects.GetValue();
+    return key;
+}
+
+void SetTransformFeedback(Shader::RuntimeInfo& info, const ShaderTranslationKey& key) {
+    if (key.xfb_enabled) {
+        auto [varyings, count] = VideoCommon::MakeTransformFeedbackVaryings(key.xfb_state);
+        info.xfb_varyings = varyings;
+        info.xfb_count = count;
+    }
+}
+
+// Switch 2 geometry shaders may write all 32 generic outputs next to Position and Layer: 133
+// components where Vulkan devices allow 128 (maxGeometryOutputComponents). AMD's Windows driver
+// closed the emulator compiling such a shader at the Mario Tennis Fever match start. Drop the
+// outputs the fragment shader never reads; skipped where it can't tell (legacy, indexed, XFB) and
+// for passthrough shaders the host runs natively (no IR writes the outputs there).
+void PruneUnreadGeometryOutputs(Shader::IR::Program& geometry, const Shader::IR::Program& fragment,
+                                const ShaderTranslationKey& key, bool native_passthrough) {
+    const Shader::Info& fs{fragment.info};
+    Shader::VaryingState& stores{geometry.info.stores};
+    if (fragment.stage != Shader::Stage::Fragment || key.xfb_enabled ||
+        (geometry.is_geometry_passthrough && native_passthrough) || fs.loads_indexed_attributes || fs.loads.Legacy() ||
+        stores.Legacy()) {
+        return;
+    }
+    for (size_t index = 0; index < Shader::IR::NUM_GENERICS; ++index) {
+        if (!fs.loads.Generic(index)) {
+            for (size_t element = 0; element < 4; ++element) {
+                stores.Set(Shader::IR::Attribute::Generic0X + index * 4 + element, false);
+            }
+        }
+    }
+}
+
+// Maxwell keeps screen-linear (noperspective) varyings linear in screen space where a primitive
+// is clipped; hosts clip them in clip space, wrong once a vertex lies behind the camera. Donkey
+// Kong Bananza's map draws boxes around the camera that pass screen positions this way: their
+// masks came out as a checkerboard and hatched the map (issue 53). Written times w and read
+// perspective-correct times FragCoord.w they are exact. Only for a vertex or tessellation
+// evaluation stage before the fragment stage: a geometry stage may emit a written output twice,
+// transform feedback would capture the scaled values, indexed or legacy reads skip the rescale.
+std::bitset<32> ScreenLinearGenerics(std::span<const Shader::IR::Program> programs,
+                                     const ShaderTranslationKey& key) {
+    std::bitset<32> generics;
+    const auto& fragment{programs[static_cast<size_t>(Maxwell::ShaderType::Pixel)]};
+    const bool has_geometry{key.unique_hashes[4] != 0 ||
+                            programs[4].stage == Shader::Stage::Geometry};
+    if (key.unique_hashes[5] == 0 || has_geometry || key.xfb_enabled ||
+        fragment.info.loads_indexed_attributes || fragment.info.loads.Legacy()) {
+        return generics;
+    }
+    for (size_t index = 0; index < generics.size(); ++index) {
+        generics[index] = fragment.info.interpolation[index] == Shader::Interpolation::NoPerspective &&
+                          fragment.info.loads.Generic(index);
+    }
+    return generics;
+}
+
+Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> programs,
+                                    const ShaderTranslationKey& key,
+                                    const Shader::IR::Program& program,
+                                    const Shader::IR::Program* previous_program) {
+    Shader::RuntimeInfo info;
+    if (previous_program) {
+        info.previous_stage_stores = previous_program->info.stores;
+        info.previous_stage_legacy_stores_mapping = previous_program->info.legacy_stores_mapping;
+        if (previous_program->is_geometry_passthrough) {
+            info.previous_stage_stores.mask |= previous_program->info.passthrough.mask;
+        }
+    } else {
+        info.previous_stage_stores.mask.set();
+    }
+    if (previous_program && previous_program->stage == Shader::Stage::Mesh) {
+        for (const u32 line : previous_program->mesh.primitive_lines) {
+            const auto attribute{static_cast<Shader::IR::Attribute>(line)};
+            if (Shader::IR::IsGeneric(attribute)) {
+                info.per_primitive_generics.set(Shader::IR::GenericAttributeIndex(attribute));
+            }
+        }
+    }
+    const Shader::Stage stage{program.stage};
+    const bool has_geometry{key.unique_hashes[4] != 0 && !programs[4].is_geometry_passthrough};
+    const bool feeds_fragment{stage == Shader::Stage::TessellationEval ||
+                              (stage == Shader::Stage::VertexB && key.unique_hashes[3] == 0)};
+    const bool after_vertex{stage == Shader::Stage::Fragment && previous_program &&
+                            (previous_program->stage == Shader::Stage::VertexB ||
+                             previous_program->stage == Shader::Stage::TessellationEval)};
+    if (feeds_fragment || after_vertex) {
+        info.screen_linear_generics = ScreenLinearGenerics(programs, key);
+    }
+    const float point_size{std::bit_cast<float>(key.point_size)};
+    switch (stage) {
+    case Shader::Stage::VertexB:
+        if (!has_geometry) {
+            if (key.input_topology == Shader::InputTopology::Points) {
+                info.fixed_state_point_size = point_size;
+            }
+            SetTransformFeedback(info, key);
+            info.convert_depth_mode = key.convert_depth_mode;
+        }
+        info.generic_input_types = key.generic_input_types;
+        break;
+    case Shader::Stage::TessellationEval:
+        info.tess_clockwise = key.tess_clockwise;
+        info.tess_primitive = key.tess_primitive;
+        info.tess_spacing = key.tess_spacing;
+        break;
+    case Shader::Stage::Mesh:
+        info.convert_depth_mode = key.convert_depth_mode;
+        break;
+    case Shader::Stage::Geometry:
+        if (program.output_topology == Shader::OutputTopology::PointList) {
+            info.fixed_state_point_size = point_size;
+        }
+        SetTransformFeedback(info, key);
+        info.convert_depth_mode = key.convert_depth_mode;
+        break;
+    case Shader::Stage::Fragment:
+        info.alpha_test_func = key.alpha_test_func;
+        info.alpha_test_reference = std::bit_cast<float>(key.alpha_test_reference);
+        info.dual_source_blend = key.dual_source_blend;
+        info.color_output_types = key.color_output_types;
+        break;
+    default:
+        break;
+    }
+    info.input_topology = key.input_topology;
+    info.force_early_z = key.force_early_z;
+    info.y_negate = key.y_negate;
+    return info;
+}
+
+// EDEN_NX2_SHADER_REUSE=0: translate every graphics pipeline's shaders, as before (for A/B
+// tests). Otherwise pipelines reuse the shaders of an earlier one when they fit (vk_shader_reuse.h).
+bool IsShaderReuseAllowed() {
+    const char* const value = std::getenv("EDEN_NX2_SHADER_REUSE");
+    return value == nullptr || value[0] != '0';
+}
+
+size_t GetTotalPipelineWorkers() {
+    const size_t max_core_threads =
+        std::max<size_t>(static_cast<size_t>(std::thread::hardware_concurrency()), 2ULL) - 1ULL;
+#ifdef __ANDROID__
+    const int configured = AndroidSettings::values.pipeline_worker_count.GetValue();
+    const int clamped = std::clamp(configured, 2, 8);
+    const size_t desired = static_cast<size_t>(clamped);
+    if (desired == 0) {
+        return 1ULL;
+    }
+    return std::min(max_core_threads, desired);
+#else
+    return max_core_threads;
+#endif
+}
+
+// EDEN_NX2_ASYNC_TRANSLATION=0: translate every graphics pipeline on the GPU thread, as before
+// (for A/B tests). Otherwise, with asynchronous shaders on, native graphics pipelines are
+// translated on worker threads.
+bool IsAsyncTranslationAllowed() {
+    const char* const value = std::getenv("EDEN_NX2_ASYNC_TRANSLATION");
+    return value == nullptr || value[0] != '0';
+}
+
+// Translation threads get half of the pipeline workers' count; driver compilation is queued
+// on the pipeline workers.
+size_t GetTotalTranslationWorkers() {
+    return std::max<size_t>(1, GetTotalPipelineWorkers() / 2);
+}
+
+} // Anonymous namespace
+
+size_t ComputePipelineCacheKey::Hash() const noexcept {
+    const u64 hash = Common::CityHash64(reinterpret_cast<const char*>(this), sizeof *this);
+    return static_cast<size_t>(hash);
+}
+
+bool ComputePipelineCacheKey::operator==(const ComputePipelineCacheKey& rhs) const noexcept {
+    return std::memcmp(&rhs, this, sizeof *this) == 0;
+}
+
+size_t GraphicsPipelineCacheKey::Hash() const noexcept {
+    const u64 hash = Common::CityHash64(reinterpret_cast<const char*>(this), Size());
+    return static_cast<size_t>(hash);
+}
+
+bool GraphicsPipelineCacheKey::operator==(const GraphicsPipelineCacheKey& rhs) const noexcept {
+    return std::memcmp(&rhs, this, Size()) == 0;
+}
+
+namespace {
+// NVIDIA's and AMD's drivers keep a disk cache of built pipelines of their own. Eden's copy on top
+// only kept every pipeline the title ever built in host memory (title 1: a 245 MB file, ~0.35 GB
+// of RAM for the session) and copied it whole at each save, which stalled frames; pipelines built
+// no slower without it.
+bool DriverCachesPipelines(const Device& device) {
+    switch (device.GetDriverID()) {
+    case VK_DRIVER_ID_NVIDIA_PROPRIETARY:
+    case VK_DRIVER_ID_AMD_PROPRIETARY:
+        return true;
+    default:
+        return false;
+    }
+}
+} // Anonymous namespace
+
+PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
+                             const Device& device_, Scheduler& scheduler_,
+                             DescriptorPool& descriptor_pool_,
+                             GuestDescriptorQueue& guest_descriptor_queue_,
+                             DescriptorBufferRing& descriptor_buffer_ring_,
+                             RenderPassCache& render_pass_cache_, BufferCache& buffer_cache_,
+                             TextureCache& texture_cache_, VideoCore::ShaderNotify& shader_notify_)
+    : VideoCommon::ShaderCache{device_memory_}, device{device_}, scheduler{scheduler_},
+      descriptor_pool{descriptor_pool_}, guest_descriptor_queue{guest_descriptor_queue_},
+      descriptor_buffer_ring{descriptor_buffer_ring_},
+      render_pass_cache{render_pass_cache_}, buffer_cache{buffer_cache_},
+      texture_cache{texture_cache_}, shader_notify{shader_notify_},
+      use_asynchronous_shaders{Settings::values.use_asynchronous_shaders.GetValue()},
+      use_vulkan_pipeline_cache{Settings::values.use_vulkan_driver_pipeline_cache.GetValue() &&
+                                !DriverCachesPipelines(device_)},
+      // Translation threads compile in parallel with the pipeline workers: not on drivers that
+      // break with parallel compiles.
+      use_async_translation{use_asynchronous_shaders && IsAsyncTranslationAllowed() &&
+                            !device.HasBrokenParallelShaderCompiling()},
+      use_shader_reuse{IsShaderReuseAllowed()},
+      num_translation_threads{use_async_translation ? GetTotalTranslationWorkers() : 0},
+      workers(device.HasBrokenParallelShaderCompiling() ? 1ULL : GetTotalPipelineWorkers(),
+              "VkPipelineBuilder", {}, Common::ThreadPlacement::Background),
+      serialization_thread(1, "VkPipelineSerialization", {},
+                           Common::ThreadPlacement::Background),
+    translation_workers(num_translation_threads, "VkPipelineTranslator", {},
+                        Common::ThreadPlacement::Background) {
+    VideoCommon::StallDiagnostics::Start();
+    const char* tensor_mode = std::getenv("EDEN_NX2_TENSOR");
+    const bool tensor_enabled = tensor_mode && std::string_view{tensor_mode} == "fast" &&
+                                device.IsExtCooperativeMatrixSupported();
+    const bool software_tensor_enabled = tensor_mode &&
+        std::string_view{tensor_mode} == "software" && device.IsSoftwareTensorSupported();
+    SetCooperativeMatrixSupported(tensor_enabled || software_tensor_enabled);
+    if (software_tensor_enabled) {
+        LOG_INFO(Render_Vulkan, "Native HMMA uses 32-lane software matrix arithmetic");
+    }
+    if (use_async_translation) {
+        LOG_INFO(Render_Vulkan, "Native graphics pipelines are translated on {} worker threads",
+                 num_translation_threads);
+    }
+    LOG_INFO(Render_Vulkan, "Graphics pipelines {} the shaders of earlier pipelines that fit them",
+             use_shader_reuse ? "reuse" : "do not reuse (EDEN_NX2_SHADER_REUSE=0)");
+    const auto& float_control{device.FloatControlProperties()};
+    const VkDriverId driver_id{device.GetDriverID()};
+    const VkShaderStageFlags subgroup_stages{device.GetSubgroupSupportedStages()};
+    const auto subgroup_stage_bit{[subgroup_stages](VkShaderStageFlags flag, Shader::Stage stage) {
+        return (subgroup_stages & flag) != 0 ? (1u << static_cast<u32>(stage)) : 0u;
+    }};
+    u32 supported_subgroup_stages{
+        subgroup_stage_bit(VK_SHADER_STAGE_VERTEX_BIT, Shader::Stage::VertexA) |
+        subgroup_stage_bit(VK_SHADER_STAGE_VERTEX_BIT, Shader::Stage::VertexB) |
+        subgroup_stage_bit(VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
+                           Shader::Stage::TessellationControl) |
+        subgroup_stage_bit(VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
+                           Shader::Stage::TessellationEval) |
+        subgroup_stage_bit(VK_SHADER_STAGE_GEOMETRY_BIT, Shader::Stage::Geometry) |
+        subgroup_stage_bit(VK_SHADER_STAGE_FRAGMENT_BIT, Shader::Stage::Fragment) |
+        subgroup_stage_bit(VK_SHADER_STAGE_COMPUTE_BIT, Shader::Stage::Compute) |
+        subgroup_stage_bit(VK_SHADER_STAGE_TASK_BIT_EXT, Shader::Stage::Task) |
+        subgroup_stage_bit(VK_SHADER_STAGE_MESH_BIT_EXT, Shader::Stage::Mesh)};
+    if (driver_id == VK_DRIVER_ID_MESA_TURNIP) {
+        supported_subgroup_stages &= ~(1u << static_cast<u32>(Shader::Stage::Geometry));
+    }
+    profile = Shader::Profile{
+        .supported_spirv = device.SupportedSpirvVersion(),
+        .unified_descriptor_binding = true,
+        .support_descriptor_aliasing = device.IsDescriptorAliasingSupported(),
+        .support_int8 = device.IsInt8Supported(),
+        .support_uniform_and_storage_buffer_8bit =
+            device.IsUniformAndStorageBuffer8BitAccessSupported(),
+        .support_storage_buffer_8bit = device.IsStorageBuffer8BitAccessSupported(),
+        .support_int16 = device.IsShaderInt16Supported(),
+        .support_uniform_and_storage_buffer_16bit =
+            device.IsUniformAndStorageBuffer16BitAccessSupported(),
+        .support_storage_buffer_16bit = device.IsStorageBuffer16BitAccessSupported(),
+        .support_int64 = device.IsShaderInt64Supported(),
+        .support_vertex_instance_id = false,
+        .support_float_controls = device.IsKhrShaderFloatControlsSupported(),
+        .support_separate_denorm_behavior =
+            float_control.denormBehaviorIndependence == VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL,
+        .support_separate_rounding_mode =
+            float_control.roundingModeIndependence == VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL,
+        .support_fp16_denorm_preserve = float_control.shaderDenormPreserveFloat16 != VK_FALSE,
+        .support_fp32_denorm_preserve = float_control.shaderDenormPreserveFloat32 != VK_FALSE,
+        .support_fp16_denorm_flush = float_control.shaderDenormFlushToZeroFloat16 != VK_FALSE,
+        .support_fp32_denorm_flush = float_control.shaderDenormFlushToZeroFloat32 != VK_FALSE,
+        .support_fp16_signed_zero_nan_preserve =
+            float_control.shaderSignedZeroInfNanPreserveFloat16 != VK_FALSE,
+        .support_fp32_signed_zero_nan_preserve =
+            float_control.shaderSignedZeroInfNanPreserveFloat32 != VK_FALSE,
+        .support_fp64_signed_zero_nan_preserve =
+            float_control.shaderSignedZeroInfNanPreserveFloat64 != VK_FALSE,
+        .support_explicit_workgroup_layout = device.IsKhrWorkgroupMemoryExplicitLayoutSupported(),
+        .support_workgroup_layout_8bit_access =
+            device.IsWorkgroupMemoryExplicitLayout8BitAccessSupported(),
+        .support_workgroup_layout_16bit_access =
+            device.IsWorkgroupMemoryExplicitLayout16BitAccessSupported(),
+        .support_shader_quad_control = device.IsKhrShaderQuadControlSupported(),
+        .support_quad_shuffles = device.IsSubgroupFeatureSupported(VK_SUBGROUP_FEATURE_QUAD_BIT),
+        .support_vote = device.IsSubgroupFeatureSupported(VK_SUBGROUP_FEATURE_VOTE_BIT),
+        .support_shuffle_relative =
+            device.IsSubgroupFeatureSupported(VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT),
+        .supported_subgroup_stages = supported_subgroup_stages,
+        .support_viewport_index_layer_non_geometry =
+            device.IsExtShaderViewportIndexLayerSupported(),
+        .support_viewport_mask = device.IsNvViewportArray2Supported(),
+        .support_typeless_image_loads = device.IsFormatlessImageLoadSupported(),
+        .support_demote_to_helper_invocation =
+            device.IsExtShaderDemoteToHelperInvocationSupported(),
+        .support_int64_atomics = device.IsExtShaderAtomicInt64Supported(),
+        .support_shared_int64_atomics = device.IsSharedInt64AtomicsSupported(),
+        .support_derivative_control = true,
+        .support_geometry_shader_passthrough = device.IsNvGeometryShaderPassthroughSupported(),
+        .support_native_ndc = device.IsExtDepthClipControlSupported(),
+        .support_scaled_attributes = !device.MustEmulateScaledFormats(),
+        .support_multi_viewport = device.SupportsMultiViewport(),
+        .support_geometry_streams = device.AreTransformFeedbackGeometryStreamsSupported(),
+        .support_sampled_image_array_nonuniform_indexing =
+            device.IsSampledImageArrayNonUniformIndexingSupported(),
+        .support_storage_image_array_nonuniform_indexing =
+            device.IsStorageImageArrayNonUniformIndexingSupported(),
+        .support_uniform_texel_buffer_array_nonuniform_indexing =
+            device.IsUniformTexelBufferArrayNonUniformIndexingSupported(),
+        .support_storage_texel_buffer_array_nonuniform_indexing =
+            device.IsStorageTexelBufferArrayNonUniformIndexingSupported(),
+
+        .warp_size_potentially_larger_than_guest = device.IsWarpSizePotentiallyBiggerThanGuest(),
+
+        .lower_left_origin_mode = false,
+        .need_declared_frag_colors = false,
+        .need_gather_subpixel_offset = driver_id == VK_DRIVER_ID_AMD_PROPRIETARY ||
+                                       driver_id == VK_DRIVER_ID_AMD_OPEN_SOURCE ||
+                                       driver_id == VK_DRIVER_ID_MESA_RADV ||
+                                       driver_id == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS ||
+                                       driver_id == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA ||
+                                       driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||
+                                       driver_id == VK_DRIVER_ID_MESA_TURNIP,
+
+        .has_broken_spirv_clamp = driver_id == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS,
+        .has_broken_spirv_position_input = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY,
+        .has_broken_unsigned_image_offsets = false,
+        .has_broken_signed_operations = false,
+        .has_broken_fp16_float_controls = driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY,
+        .has_broken_fp32_denorm_flush = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY,
+        .ignore_nan_fp_comparisons = false,
+        .has_broken_spirv_subgroup_mask_vector_extract_dynamic =
+            driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY &&
+            device.GetDriverVersion() < VK_MAKE_VERSION(512, 672, 0),
+        .has_broken_spirv_subgroup_shuffle = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY,
+        .max_subgroup_size = device.GetMaxSubgroupSize(),
+        .support_cooperative_matrix = tensor_enabled,
+        .support_software_tensor = software_tensor_enabled,
+        .max_compute_shared_memory_size = device.GetMaxComputeSharedMemorySize(),
+        .max_tensor_workgroup_size = device.GetMaxTensorWorkgroupSize(),
+        .has_broken_robust =
+            device.IsNvidia() && device.GetNvidiaArch() <= NvidiaArchitecture::Arch_Pascal,
+        .min_ssbo_alignment = device.GetStorageBufferAlignment(),
+        .max_user_clip_distances = device.GetMaxUserClipDistances()
+    };
+
+    host_info = Shader::HostTranslateInfo{
+        .min_ssbo_alignment = device.GetStorageBufferAlignment(),
+        .max_per_stage_descriptor_sampled_images = device.GetMaxPerStageDescriptorSampledImages(),
+        .max_per_stage_resources = device.GetMaxPerStageResources(),
+        .max_descriptor_set_samplers = device.GetMaxDescriptorSetSamplers(),
+        .max_descriptor_set_uniform_buffers = device.GetMaxDescriptorSetUniformBuffers(),
+        .max_descriptor_set_uniform_buffers_dynamic = device.GetMaxDescriptorSetUniformBuffersDynamic(),
+        .max_descriptor_set_storage_buffers = device.GetMaxDescriptorSetStorageBuffers(),
+        .max_descriptor_set_storage_buffers_dynamic = device.GetMaxDescriptorSetStorageBuffersDynamic(),
+        .max_descriptor_set_sampled_images = device.GetMaxDescriptorSetSampledImages(),
+        .max_descriptor_set_storage_images = device.GetMaxDescriptorSetStorageImages(),
+        .max_descriptor_set_input_attachements = device.GetMaxDescriptorSetInputAttachments(),
+        .support_float64 = device.IsFloat64Supported(),
+        .support_float16 = device.IsFloat16Supported(),
+        .support_int64 = device.IsShaderInt64Supported(),
+        .needs_demote_reorder = driver_id == VK_DRIVER_ID_AMD_PROPRIETARY ||
+                                driver_id == VK_DRIVER_ID_AMD_OPEN_SOURCE ||
+                                driver_id == VK_DRIVER_ID_SAMSUNG_PROPRIETARY,
+        .support_snorm_render_buffer = true,
+        .support_viewport_index_layer = device.IsExtShaderViewportIndexLayerSupported(),
+        .support_viewport_mask = device.IsNvViewportArray2Supported(),
+        .support_geometry_shader_passthrough = device.IsNvGeometryShaderPassthroughSupported(),
+        .support_conditional_barrier = device.SupportsConditionalBarriers(),
+        .single_lane_geometry_subgroups = !profile.SupportsSubgroupStage(Shader::Stage::Geometry),
+    };
+    host_info.ApplyDescriptorLimitPolicy();
+
+    if (device.GetMaxVertexInputAttributes() < Maxwell::NumVertexAttributes) {
+        LOG_WARNING(Render_Vulkan, "maxVertexInputAttributes is too low: {} < {}",
+                    device.GetMaxVertexInputAttributes(), Maxwell::NumVertexAttributes);
+    }
+    if (device.GetMaxVertexInputBindings() < Maxwell::NumVertexArrays) {
+        LOG_WARNING(Render_Vulkan, "maxVertexInputBindings is too low: {} < {}",
+                    device.GetMaxVertexInputBindings(), Maxwell::NumVertexArrays);
+    }
+
+    LOG_INFO(Render_Vulkan, "DynamicState setting value: {}", u32(Settings::values.dyna_state.GetValue()));
+
+    dynamic_features = {};
+    dynamic_features.driver_id = device.GetDriverID();
+    dynamic_features.driver_version = device.GetDriverVersion();
+
+    // User granularity enforced in vulkan_device.cpp switch statement:
+    //   Level 0: Core Dynamic States only
+    //   Level 1: Core + EDS1
+    //   Level 2: Core + EDS1 + EDS2 (accumulative)
+    //   Level 3: Core + EDS1 + EDS2 + EDS3 (accumulative)
+    // Here we only verify if extensions were successfully loaded by the device
+
+    dynamic_features.has_extended_dynamic_state =
+        device.IsExtExtendedDynamicStateSupported();
+
+    dynamic_features.has_extended_dynamic_state_2 =
+        device.IsExtExtendedDynamicState2Supported();
+    dynamic_features.has_extended_dynamic_state_2_logic_op =
+        device.IsExtExtendedDynamicState2ExtrasSupported();
+    dynamic_features.has_extended_dynamic_state_2_patch_control_points = false;
+
+    dynamic_features.has_extended_dynamic_state_3_blend =
+        device.IsExtExtendedDynamicState3BlendingSupported();
+    dynamic_features.has_extended_dynamic_state_3_enables =
+        device.IsExtExtendedDynamicState3EnablesSupported();
+    dynamic_features.has_color_write_enable =
+        device.IsExtColorWriteEnableSupported();
+    dynamic_features.has_dynamic_state3_depth_clamp_enable =
+        dynamic_features.has_extended_dynamic_state_3_enables &&
+        device.SupportsDynamicState3DepthClampEnable();
+    dynamic_features.has_dynamic_state3_logic_op_enable =
+        dynamic_features.has_extended_dynamic_state_3_enables &&
+        device.SupportsDynamicState3LogicOpEnable();
+    dynamic_features.has_dynamic_state3_line_stipple_enable =
+        dynamic_features.has_extended_dynamic_state_3_enables &&
+        device.SupportsDynamicState3LineStippleEnable();
+
+    // VIDS: Independent toggle (not affected by dyna_state levels)
+    dynamic_features.has_dynamic_vertex_input =
+        device.IsExtVertexInputDynamicStateSupported() &&
+        Settings::values.vertex_input_dynamic_state.GetValue();
+    dynamic_features.has_static_vertex_repack =
+        StaticVertexRepackEnabled(device.GetMinVertexInputBindingStrideAlignment());
+
+    dynamic_features.has_provoking_vertex = device.IsExtProvokingVertexSupported();
+    dynamic_features.has_provoking_vertex_first_mode =
+        device.SupportsProvokingVertexFirstMode();
+    dynamic_features.has_provoking_vertex_last_mode =
+        device.SupportsProvokingVertexLastMode();
+    dynamic_features.has_provoking_vertex_tf_preserve =
+        device.SupportsTransformFeedbackProvokingVertexPreservation();
+}
+
+namespace {
+// <title>/vulkan_used.bin: the graphics pipelines recent sessions used, as key hash + sessions
+// since the last use.
+constexpr u32 UsedPipelinesMagic = 0x31505545; // "EUP1"
+// Pipelines the last two sessions used are built at boot. Each holds ~0.45 MB of driver memory:
+// title 1 built 4,800 from eight sessions, 1.5 GB more than building them on first use (but that
+// stalled frames 4x as often), while one session of its title screen uses ~1,500.
+// MoltenVK keeps the previous eight sessions: a pipeline built while playing goes through
+// SPIR-V -> MSL -> Metal, far more than the 2-3 ms the shorter window assumes, so each one
+// built at boot is a stutter avoided.
+constexpr u8 UsedPipelinesMaxAge = 2;
+constexpr u8 UsedPipelinesMaxAgeMoltenVK = 8;
+
+u8 MaxUsedPipelineAge(const Device& device) {
+    return device.IsMoltenVK() ? UsedPipelinesMaxAgeMoltenVK : UsedPipelinesMaxAge;
+}
+
+std::unordered_map<u64, u8> LoadUsedPipelines(const std::filesystem::path& path, u8 max_age) {
+    std::unordered_map<u64, u8> used;
+    std::ifstream file{path, std::ios::binary};
+    u32 magic{}, count{};
+    if (!file.read(reinterpret_cast<char*>(&magic), sizeof(magic)) || magic != UsedPipelinesMagic ||
+        !file.read(reinterpret_cast<char*>(&count), sizeof(count))) {
+        return used;
+    }
+    // The count comes from the file; the loop below stops at its end anyway.
+    used.reserve((std::min)(count, u32{65536}));
+    for (u32 i = 0; i < count; ++i) {
+        u64 hash{};
+        u8 age{};
+        if (!file.read(reinterpret_cast<char*>(&hash), sizeof(hash)) ||
+            !file.read(reinterpret_cast<char*>(&age), sizeof(age))) {
+            break;
+        }
+        if (age < max_age) { // lists saved with a longer window
+            used.emplace(hash, age);
+        }
+    }
+    return used;
+}
+
+// Without a list of the pipelines recent sessions used (the first boot with this cache, or a session
+// that ended before saving it), this many cached graphics pipelines at most are built at boot and the
+// rest when first needed. A cache that grew over many builds held 48k pipelines, ~21 GB of driver
+// memory built before the game started; the list is only saved at exit or after two minutes, so a
+// boot that ran out of memory never saved one and the next boot did the same.
+constexpr size_t MaxPipelinesWithoutUsedList = 3000;
+
+// True when the transferable cache at path has the header this build writes (shader_environment.cpp).
+bool IsOwnPipelineCache(const std::filesystem::path& path, u32 version) {
+    static constexpr std::array<char, 8> Magic{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
+    std::ifstream file{path, std::ios::binary};
+    std::array<char, 8> magic{};
+    u32 file_version{};
+    return file.read(magic.data(), magic.size()) &&
+           file.read(reinterpret_cast<char*>(&file_version), sizeof(file_version)) &&
+           magic == Magic && file_version == version;
+}
+
+// EDEN_NX2_PRELOAD_ALL_PIPELINES=1 builds every cached pipeline at boot, as before.
+bool PreloadAllPipelines() {
+    static const bool all = [] {
+        const char* value = std::getenv("EDEN_NX2_PRELOAD_ALL_PIPELINES");
+        return value != nullptr && value[0] == '1';
+    }();
+    return all;
+}
+} // Anonymous namespace
+
+PipelineCache::~PipelineCache() {
+    SaveUsedPipelines();
+    if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
+        SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
+                                     CACHE_VERSION);
+    }
+}
+
+void PipelineCache::SaveUsedPipelines() {
+    used_pipelines_saved = std::chrono::steady_clock::now();
+    // A session too short to say what the game uses (a boot to the menu) keeps the old list.
+    constexpr size_t MinimumUsed = 64;
+    if (used_pipelines_filename.empty() ||
+        used_this_session.size() + used_and_evicted.size() < MinimumUsed) {
+        return;
+    }
+    std::unordered_map<u64, u8> next;
+    next.reserve(used_pipelines.size() + used_this_session.size());
+    for (const auto& [key, pipeline] : graphics_cache) {
+        if (used_this_session.contains(pipeline.get())) {
+            next.emplace(key.Hash(), u8{0});
+        }
+    }
+    for (const u64 hash : used_and_evicted) {
+        next.emplace(hash, u8{0});
+    }
+    for (const auto& [hash, age] : used_pipelines) {
+        if (age + 1 < MaxUsedPipelineAge(device)) {
+            next.try_emplace(hash, static_cast<u8>(age + 1));
+        }
+    }
+    std::ofstream file{used_pipelines_filename, std::ios::binary | std::ios::trunc};
+    const u32 count = static_cast<u32>(next.size());
+    file.write(reinterpret_cast<const char*>(&UsedPipelinesMagic), sizeof(UsedPipelinesMagic));
+    file.write(reinterpret_cast<const char*>(&count), sizeof(count));
+    for (const auto& [hash, age] : next) {
+        file.write(reinterpret_cast<const char*>(&hash), sizeof(hash));
+        file.write(reinterpret_cast<const char*>(&age), sizeof(age));
+    }
+}
+
+GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
+    if (!RefreshStages(graphics_key.unique_hashes)) {
+        current_pipeline = nullptr;
+        return nullptr;
+    }
+    graphics_key.state.Refresh(*maxwell3d, dynamic_features);
+
+    if (current_pipeline) {
+        GraphicsPipeline* const next{current_pipeline->Next(graphics_key)};
+        if (next) {
+            current_pipeline = next;
+            current_pipeline->MarkUsed(frame_count);
+            return BuiltPipeline(current_pipeline);
+        }
+    }
+    return CurrentGraphicsPipelineSlowPath();
+}
+
+ComputePipeline* PipelineCache::CurrentComputePipeline(std::optional<u64>& diagnostic_key) {
+
+    const ShaderInfo* const shader{ComputeShader()};
+    if (!shader) {
+        return nullptr;
+    }
+    if (shader->lowered_native)
+        diagnostic_key = shader->lowered_native->diagnostic_native_key;
+    const auto& qmd{kepler_compute->launch_description};
+    const ComputePipelineCacheKey key{
+        .unique_hash = shader->unique_hash,
+        .shared_memory_size = qmd.shared_alloc,
+        .workgroup_size{qmd.block_dim_x, qmd.block_dim_y, qmd.block_dim_z},
+    };
+    if (const auto rejected = rejected_tensor_pipelines.find(key);
+        rejected != rejected_tensor_pipelines.end()) {
+        std::rethrow_exception(rejected->second);
+    }
+    const auto [pair, is_new]{compute_cache.try_emplace(key)};
+    auto& pipeline{pair->second};
+    if (!is_new) {
+        return pipeline.get();
+    }
+    try {
+        pipeline = CreateComputePipeline(key, shader);
+    } catch (const Shader::TensorRejected&) {
+        compute_cache.erase(pair);
+        rejected_tensor_pipelines.emplace(key, std::current_exception());
+        throw;
+    }
+    return pipeline.get();
+}
+
+void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading,
+                                      const VideoCore::DiskResourceLoadCallback& callback) {
+    if (title_id == 0) {
+        return;
+    }
+    if (!pipeline_cache_filename.empty()) {
+        serialization_thread.WaitForRequests();
+        if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
+            SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
+                                         CACHE_VERSION);
+        }
+    }
+
+    const auto shader_dir{Common::FS::GetEdenPath(Common::FS::EdenPath::ShaderDir)};
+    const auto base_dir{shader_dir / fmt::format("{:016x}", title_id)};
+    if (!Common::FS::CreateDir(shader_dir) || !Common::FS::CreateDir(base_dir)) {
+        LOG_ERROR(Common_Filesystem, "Failed to create pipeline cache directories");
+        return;
+    }
+    // Upstream Eglantine and other forks use the same <title>/vulkan*.bin names with other cache
+    // versions and delete a file of another version at boot, so switching between builds started
+    // every run with no pipelines (RX 6600 log: "Deleting old pipeline cache", ~600 pipelines
+    // built in game). Own names let the caches coexist; files this version wrote under the old
+    // names move over once.
+    // Serialized environments contain lowered Maxwell code. The corrected Yoshi carry/gather
+    // lowering must not reuse an older translation; leave V3's cache intact for comparisons.
+    // The Kirby fog workaround changes lowered code, so it keeps its own files.
+    const std::string_view cache_suffix =
+        Settings::values.kirby_fog_workaround ? "mythos-kirby-fog-v1" : "mythos-v4";
+    const auto cache_path = [&](std::string_view stem) {
+        return base_dir / fmt::format("{}.{}.bin", stem, cache_suffix);
+    };
+    if (!Settings::values.kirby_fog_workaround && !Common::FS::Exists(cache_path("vulkan")) &&
+        IsOwnPipelineCache(base_dir / "vulkan.bin", CACHE_VERSION)) {
+        for (const std::string_view stem : {"vulkan", "vulkan_pipelines", "vulkan_used"}) {
+            std::error_code ec;
+            std::filesystem::rename(base_dir / fmt::format("{}.bin", stem), cache_path(stem), ec);
+        }
+    }
+    pipeline_cache_filename = cache_path("vulkan");
+    used_pipelines_filename = cache_path("vulkan_used");
+    used_pipelines = LoadUsedPipelines(used_pipelines_filename, MaxUsedPipelineAge(device));
+    used_pipelines_saved = std::chrono::steady_clock::now();
+    size_t skipped_pipelines = 0;
+    size_t queued_graphics = 0;
+
+    if (use_vulkan_pipeline_cache) {
+        vulkan_pipeline_cache_filename = cache_path("vulkan_pipelines");
+        vulkan_pipeline_cache =
+            LoadVulkanPipelineCache(vulkan_pipeline_cache_filename, CACHE_VERSION);
+    }
+
+    struct {
+        std::mutex mutex;
+        size_t total{};
+        size_t built{};
+        bool has_loaded{};
+        std::unique_ptr<PipelineStatistics> statistics;
+    } state;
+
+    if (device.IsKhrPipelineExecutablePropertiesEnabled()) {
+        state.statistics = std::make_unique<PipelineStatistics>(device);
+    }
+    const auto load_compute{[&](std::ifstream& file, FileEnvironment env) {
+        ComputePipelineCacheKey key;
+        file.read(reinterpret_cast<char*>(&key), sizeof(key));
+
+        workers.QueueWork([this, key, env_ = std::move(env), &state, &callback]() mutable {
+            ShaderPools pools;
+            auto pipeline{CreateComputePipeline(pools, key, env_, state.statistics.get(), false)};
+            std::scoped_lock lock{state.mutex};
+            if (pipeline) {
+                compute_cache.emplace(key, std::move(pipeline));
+            }
+            ++state.built;
+            if (state.has_loaded) {
+                callback(VideoCore::LoadCallbackStage::Build, state.built, state.total);
+            }
+        });
+        ++state.total;
+    }};
+    const auto load_graphics{[&](std::ifstream& file, std::vector<FileEnvironment> envs) {
+        GraphicsPipelineCacheKey key;
+        file.read(reinterpret_cast<char*>(&key), sizeof(key));
+
+        // Task/mesh pipelines are not stored (their mesh registers are not in the format); skip
+        // any that were.
+        if (std::ranges::any_of(envs, [](const FileEnvironment& env) {
+                return env.ShaderStage() == Shader::Stage::Task ||
+                       env.ShaderStage() == Shader::Stage::Mesh;
+            })) {
+            return;
+        }
+
+        if ((key.state.extended_dynamic_state != 0) !=
+                dynamic_features.has_extended_dynamic_state ||
+            (key.state.extended_dynamic_state_2 != 0) !=
+                dynamic_features.has_extended_dynamic_state_2 ||
+            (key.state.extended_dynamic_state_2_logic_op != 0) !=
+                dynamic_features.has_extended_dynamic_state_2_logic_op ||
+            (key.state.extended_dynamic_state_3_blend != 0) !=
+                dynamic_features.has_extended_dynamic_state_3_blend ||
+            (key.state.extended_dynamic_state_3_enables != 0) !=
+                dynamic_features.has_extended_dynamic_state_3_enables ||
+            (key.state.color_write_enable_dynamic != 0) !=
+                dynamic_features.has_color_write_enable ||
+            (key.state.dynamic_vertex_input != 0) !=
+                dynamic_features.has_dynamic_vertex_input) {
+            return;
+        }
+
+        const bool key_requests_provoking_last = key.state.provoking_vertex_last != 0;
+        if (key_requests_provoking_last && !dynamic_features.has_provoking_vertex_last_mode) {
+            return;
+        }
+
+        const bool key_uses_transform_feedback = key.state.xfb_enabled != 0;
+        if (key_uses_transform_feedback && key_requests_provoking_last &&
+            !dynamic_features.has_provoking_vertex_tf_preserve) {
+            return;
+        }
+
+        const u64 hash = key.Hash();
+        disk_pipelines.insert(hash);
+        if (!PreloadAllPipelines() &&
+            (used_pipelines.empty() ? queued_graphics >= MaxPipelinesWithoutUsedList
+                                    : !used_pipelines.contains(hash))) {
+            ++skipped_pipelines;
+            return;
+        }
+        ++queued_graphics;
+
+        workers.QueueWork([this, key, envs_ = std::move(envs), &state, &callback]() mutable {
+            ShaderPools pools;
+            boost::container::static_vector<Shader::Environment*, 5> env_ptrs;
+            for (auto& env : envs_) {
+                env_ptrs.push_back(&env);
+            }
+            auto pipeline{CreateGraphicsPipeline(pools, key, MakeSpan(env_ptrs),
+                                                 state.statistics.get(), false)};
+
+            std::scoped_lock lock{state.mutex};
+            if (pipeline) {
+                graphics_cache.emplace(key, std::move(pipeline));
+            }
+            ++state.built;
+            if (state.has_loaded) {
+                callback(VideoCore::LoadCallbackStage::Build, state.built, state.total);
+            }
+        });
+        ++state.total;
+    }};
+    VideoCommon::LoadPipelines(stop_loading, pipeline_cache_filename, CACHE_VERSION, load_compute,
+                               load_graphics);
+
+    LOG_INFO(Render_Vulkan, "Total Pipeline Count: {}", state.total);
+    if (skipped_pipelines != 0) {
+        LOG_INFO(Render_Vulkan,
+                 "{} cached graphics pipelines are built when first needed",
+                 skipped_pipelines);
+    }
+
+    std::unique_lock lock{state.mutex};
+    callback(VideoCore::LoadCallbackStage::Build, 0, state.total);
+    state.has_loaded = true;
+    lock.unlock();
+
+    {
+        VideoCommon::StallDiagnostics::Scope diagnostic{
+            {VideoCommon::StallDiagnostics::Phase::PipelineLoadJoin, "pipeline-cache-load"}};
+        workers.WaitForRequests(stop_loading);
+    }
+
+    if (use_vulkan_pipeline_cache) {
+        SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
+                                     CACHE_VERSION);
+        size_t size = 0;
+        vulkan_pipeline_cache.Read(&size, nullptr);
+        last_cache_size.store(size, std::memory_order_relaxed);
+        last_flush = std::chrono::steady_clock::now();
+    }
+
+    if (state.statistics) {
+        state.statistics->Report();
+    }
+}
+
+void PipelineCache::QueueVulkanPipelineCacheFlush() {
+    if (!use_vulkan_pipeline_cache || vulkan_pipeline_cache_filename.empty()) {
+        return;
+    }
+    if (++pipelines_since_flush < VULKAN_CACHE_FLUSH_PIPELINES) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const auto megabytes = last_cache_size.load(std::memory_order_relaxed) / (1024 * 1024);
+    const std::chrono::seconds interval{
+        std::max<size_t>(VULKAN_CACHE_FLUSH_MIN_SECONDS, megabytes)};
+    if (last_flush.time_since_epoch().count() != 0 && now - last_flush < interval) {
+        return;
+    }
+    if (flush_in_flight.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    pipelines_since_flush = 0;
+    last_flush = now;
+    serialization_thread.QueueWork([this] {
+        SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
+                                     CACHE_VERSION);
+        size_t size = 0;
+        vulkan_pipeline_cache.Read(&size, nullptr);
+        last_cache_size.store(size, std::memory_order_relaxed);
+        flush_in_flight.store(false, std::memory_order_release);
+    });
+}
+
+namespace {
+// EDEN_NX2_PIPELINE_DIFF=1: for a new graphics pipeline whose shaders an earlier one uses too,
+// log which parts of the fixed state differ from that one (finds state that splits the same
+// draws into many pipelines, each translated on the GPU thread).
+void ReportNewPipelineKey(const GraphicsPipelineCacheKey& key) {
+    static const bool enabled = std::getenv("EDEN_NX2_PIPELINE_DIFF") != nullptr;
+    if (!enabled) {
+        return;
+    }
+    static std::unordered_map<u64, GraphicsPipelineCacheKey> last_by_shaders;
+    static u32 logged{};
+    const u64 shaders = Common::CityHash64(reinterpret_cast<const char*>(key.unique_hashes.data()),
+                                           sizeof(key.unique_hashes));
+    const auto [it, first] = last_by_shaders.try_emplace(shaders, key);
+    if (first) {
+        return;
+    }
+    const FixedPipelineState& now = key.state;
+    const FixedPipelineState& before = it->second.state;
+    std::string diffs;
+    if (now.raw1 != before.raw1) diffs += fmt::format(" raw1^{:#x}", now.raw1 ^ before.raw1);
+    if (now.raw2 != before.raw2) diffs += fmt::format(" raw2^{:#x}", now.raw2 ^ before.raw2);
+    if (now.color_formats != before.color_formats) {
+        diffs += fmt::format(" color_formats {:02x} -> {:02x}", fmt::join(before.color_formats, ""),
+                             fmt::join(now.color_formats, ""));
+    }
+    if (now.alpha_test_ref != before.alpha_test_ref) {
+        diffs += fmt::format(" alpha_test_ref {:#x} -> {:#x} (func {})", before.alpha_test_ref,
+                             now.alpha_test_ref, now.alpha_test_func.Value());
+    }
+    if (now.point_size != before.point_size) {
+        diffs += fmt::format(" point_size {:#x} -> {:#x}", before.point_size, now.point_size);
+    }
+    if (now.viewport_swizzles != before.viewport_swizzles) diffs += " viewport_swizzles";
+    if (now.attribute_types != before.attribute_types) {
+        diffs += fmt::format(" attribute_types^{:#x}", now.attribute_types ^ before.attribute_types);
+    }
+    if (std::memcmp(&now.dynamic_state, &before.dynamic_state, sizeof(now.dynamic_state)) != 0) {
+        diffs += " dynamic_state";
+    }
+    if (now.driver_id != before.driver_id || now.driver_version != before.driver_version) {
+        diffs += " driver";
+    }
+    const size_t size = now.Size();
+    if (diffs.empty() && size > offsetof(FixedPipelineState, attachments)) {
+        diffs = fmt::format(" past attachments (key size {})", size);
+    }
+    it->second = key;
+    if (logged++ < 400) {
+        LOG_INFO(Render_Vulkan, "New pipeline for known shaders {:016x} differs in:{}", shaders,
+                 diffs.empty() ? std::string{" nothing in the key prefix"} : diffs);
+    }
+}
+} // Anonymous namespace
+
+GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
+    auto it{graphics_cache.find(graphics_key)};
+    if (it == graphics_cache.end()) {
+        ReportNewPipelineKey(graphics_key);
+        it = graphics_cache.emplace(graphics_key, BuildNewGraphicsPipeline()).first;
+    }
+    auto& pipeline{it->second};
+    if (!pipeline) {
+        return nullptr;
+    }
+    if (used_this_session.insert(pipeline.get()).second &&
+        std::chrono::steady_clock::now() - used_pipelines_saved > std::chrono::minutes{2}) {
+        SaveUsedPipelines();
+    }
+    if (current_pipeline) {
+        current_pipeline->AddTransition(pipeline.get());
+    }
+    current_pipeline = pipeline.get();
+    current_pipeline->MarkUsed(frame_count);
+    return BuiltPipeline(current_pipeline);
+}
+
+void PipelineCache::TickFrame() {
+    ++frame_count;
+    while (!evicted_pipelines.empty() && scheduler.IsFree(evicted_pipelines.front().first)) {
+        evicted_pipelines.pop_front();
+    }
+    constexpr u64 EvictCheckFrames = 600;
+    if (frame_count % EvictCheckFrames == 0) {
+        EvictUnusedPipelines();
+    }
+}
+
+void PipelineCache::EvictUnusedPipelines() {
+    // Building a pipeline again on MoltenVK means a Metal compile mid-game, far dearer than the
+    // 2-3 ms below, so none are evicted there.
+    if (device.IsMoltenVK()) {
+        return;
+    }
+    // Each built pipeline holds ~0.45 MB of driver memory and none was ever destroyed, so it grew
+    // with every place a session went (title 1: 1,500 on its title screen alone). One unused for
+    // this long is destroyed; it takes 2-3 ms to build again from the driver's pipeline cache.
+    constexpr u64 EvictAfterFrames = 9000;
+    if (frame_count <= EvictAfterFrames) {
+        return;
+    }
+    const u64 cutoff = frame_count - EvictAfterFrames;
+    const u64 tick = scheduler.CurrentTick();
+    size_t evicted = 0;
+    for (auto it = graphics_cache.begin(); it != graphics_cache.end();) {
+        GraphicsPipeline* const pipeline = it->second.get();
+        if (pipeline == nullptr || pipeline == current_pipeline || !pipeline->IsBuilt() ||
+            pipeline->LastUse() >= cutoff) {
+            ++it;
+            continue;
+        }
+        if (used_this_session.erase(pipeline) != 0) {
+            used_and_evicted.insert(it->first.Hash());
+        }
+        evicted_pipelines.emplace_back(tick, std::move(it->second));
+        it = graphics_cache.erase(it);
+        ++evicted;
+    }
+    if (evicted == 0) {
+        return;
+    }
+    for (auto& [key, pipeline] : graphics_cache) {
+        if (pipeline) {
+            pipeline->ClearTransitions();
+        }
+    }
+    LOG_INFO(Render_Vulkan, "Evicted {} graphics pipelines unused for {} frames, {} left", evicted,
+             EvictAfterFrames, graphics_cache.size());
+}
+
+GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) const noexcept {
+    if (pipeline->IsBuilt()) {
+        return pipeline;
+    }
+    if (maxwell3d->GetNativeMacroEngine().native_turing || !use_asynchronous_shaders) {
+        return pipeline;
+    }
+    return CanSkipDraw() ? nullptr : pipeline;
+}
+
+bool PipelineCache::CanSkipDraw() const noexcept {
+    // If something is using depth, we can assume that games are not rendering anything which
+    // will be used one time.
+    if (maxwell3d->regs.zeta_enable) {
+        return true;
+    }
+    // If games are using a small index count, we can assume these are full screen quads.
+    // Usually these shaders are only used once for building textures so we can assume they
+    // can't be built async
+    const auto& draw_state = maxwell3d->draw_manager.draw_state;
+    if (draw_state.draw_element_count <= 6) {
+        return false;
+    }
+    return true;
+}
+
+std::unique_ptr<GraphicsPipeline> PipelineCache::BuildNewGraphicsPipeline() {
+    if (CanTranslateAsynchronously()) {
+        // With an earlier pipeline's shaders only the driver compile is left, and it goes to the
+        // pipeline workers: no translation worker is needed.
+        if (std::unique_ptr<GraphicsPipeline> pipeline{CreateGraphicsPipelineFromReusedShaders()}) {
+            return pipeline;
+        }
+        if (std::optional<std::future<TranslatedGraphicsPipeline>> translated{
+                QueueGraphicsTranslation()}) {
+            return AdoptTranslatedGraphicsPipeline(*translated);
+        }
+    }
+    return CreateGraphicsPipeline();
+}
+
+std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
+    ShaderPools& pools, const GraphicsPipelineCacheKey& key,
+    std::span<Shader::Environment* const> envs, PipelineStatistics* statistics,
+    bool build_in_parallel, bool allow_translation) try {
+    auto hash = key.Hash();
+    VideoCommon::StallDiagnostics::Scope diagnostic{
+        {VideoCommon::StallDiagnostics::Phase::PipelinePrepare, "graphics-prepare", hash}};
+    LOG_DEBUG(Render_Vulkan, "{:#016x}", hash);
+    const ShaderTranslationKey translation_key{MakeShaderTranslationKey(key, device)};
+    std::shared_ptr<const ReusableShaders> shaders{FindReusableShaders(translation_key, envs, hash)};
+    if (!shaders && !allow_translation) {
+        return nullptr;
+    }
+    if (!shaders) {
+        shaders = BuildGraphicsShaders(pools, translation_key, envs, hash);
+        if (!shaders) {
+            return nullptr;
+        }
+        if (use_shader_reuse) {
+            shader_reuse.Add(translation_key, shaders);
+        }
+    }
+    Common::ThreadWorker* const thread_worker{build_in_parallel ? &workers : nullptr};
+    return std::make_unique<GraphicsPipeline>(
+        scheduler, buffer_cache, texture_cache, vulkan_pipeline_cache, &shader_notify, device,
+        descriptor_pool, guest_descriptor_queue, descriptor_buffer_ring, thread_worker, statistics,
+        render_pass_cache, key, shaders->modules, shaders->InfoPointers());
+
+} catch (const Shader::Exception& exception) {
+    LOG_ERROR(Render_Vulkan, "{}", exception.what());
+    auto hash = key.Hash();
+    size_t env_index{0};
+    for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+        if (key.unique_hashes[index] == 0) {
+            continue;
+        }
+        Shader::Environment& env{*envs[env_index]};
+        ++env_index;
+
+        // The CFG throws again for the stage that failed its flow analysis, and a throw out of this
+        // handler would end the process; that stage is still the one worth dumping.
+        try {
+            const u32 cfg_offset{static_cast<u32>(env.StartAddress() + sizeof(Shader::ProgramHeader))};
+            Shader::Maxwell::Flow::CFG cfg(env, pools.flow_block, cfg_offset, index == 0);
+        } catch (const Shader::Exception&) {
+        }
+        env.Dump(hash, key.unique_hashes[index]);
+    }
+    return nullptr;
+}
+
+std::shared_ptr<const ReusableShaders> PipelineCache::FindReusableShaders(
+    const ShaderTranslationKey& key, std::span<Shader::Environment* const> envs,
+    u64 pipeline_hash) const {
+    if (!use_shader_reuse) {
+        return nullptr;
+    }
+    const ShaderReuseCache::Lookup found{shader_reuse.Find(key, envs)};
+    if (found.shaders && Settings::values.dump_guest_shaders) {
+        // What BuildGraphicsShaders dumps for a pipeline it translates.
+        size_t env_index{0};
+        for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+            if (key.unique_hashes[index] != 0) {
+                envs[env_index++]->Dump(pipeline_hash, key.unique_hashes[index]);
+            }
+        }
+    }
+    return found.shaders;
+}
+
+bool PipelineCache::HasReusableShaders(const GraphicsPipelineCacheKey& key) const {
+    return use_shader_reuse && shader_reuse.Contains(MakeShaderTranslationKey(key, device));
+}
+
+// A geometry program drawing with the layer relative to the viewport is lowered on every host:
+// Vulkan's NV extensions don't offset the layer by the viewport, the lowered passthrough does.
+Shader::HostTranslateInfo PipelineCache::StageHostInfo(const ShaderTranslationKey& key,
+                                                       size_t index) const {
+    Shader::HostTranslateInfo info{host_info};
+    if (key.layer_viewport_relative && index == static_cast<size_t>(Maxwell::ShaderType::Geometry)) {
+        info.support_viewport_mask = false;
+        info.support_geometry_shader_passthrough = false;
+        info.layer_viewport_relative = true;
+    }
+    return info;
+}
+
+// Translation (Maxwell code to IR) and SPIR-V emission of a graphics pipeline's programs. Reads
+// nothing of the pipeline key but `key`, so the shaders fit every pipeline with that key and
+// environments that answer the same (vk_shader_reuse.h). Null for programs with known issues.
+std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
+    ShaderPools& pools, const ShaderTranslationKey& key,
+    std::span<Shader::Environment* const> pipeline_envs, u64 pipeline_hash) {
+    // With reuse on, translation asks the environments through recorders: their answers tell
+    // which later pipelines these shaders fit.
+    boost::container::static_vector<RecordingEnvironment, Maxwell::MaxShaderProgram> recorders;
+    boost::container::static_vector<Shader::Environment*, Maxwell::MaxShaderProgram> envs;
+    for (Shader::Environment* const env : pipeline_envs) {
+        envs.push_back(use_shader_reuse ? &recorders.emplace_back(*env) : env);
+    }
+
+    size_t env_index{0};
+    std::array<Shader::IR::Program, Maxwell::MaxShaderProgram> programs;
+    const bool uses_vertex_a{key.unique_hashes[0] != 0};
+    const bool uses_vertex_b{key.unique_hashes[1] != 0};
+
+    // Layer passthrough generation for devices without VK_EXT_shader_viewport_index_layer
+    Shader::IR::Program* layer_source_program{};
+
+    for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+        const bool is_emulated_stage = layer_source_program != nullptr &&
+                                       index == static_cast<u32>(Maxwell::ShaderType::Geometry);
+        if (key.unique_hashes[index] == 0 && is_emulated_stage) {
+            programs[index] = GenerateGeometryPassthrough(pools.inst, pools.block, host_info,
+                                                          *layer_source_program,
+                                                          key.passthrough_topology);
+            continue;
+        }
+        if (key.unique_hashes[index] == 0) {
+            continue;
+        }
+        Shader::Environment& env{*envs[env_index]};
+        ++env_index;
+
+        // Without VK_EXT_mesh_shader the driver cannot build a task/mesh pipeline; the draw is
+        // skipped (see the pipeline check in the rasterizer).
+        if ((env.ShaderStage() == Shader::Stage::Task ||
+             env.ShaderStage() == Shader::Stage::Mesh) &&
+            !device.IsExtMeshShaderSupported()) {
+            return nullptr;
+        }
+
+        const u32 cfg_offset{static_cast<u32>(env.StartAddress() + sizeof(Shader::ProgramHeader))};
+        Shader::Maxwell::Flow::CFG cfg(env, pools.flow_block, cfg_offset, index == 0);
+        if (!uses_vertex_a || index != 1) {
+            // Normal path
+            programs[index] = TranslateProgram(pools.inst, pools.block, env, cfg,
+                                               StageHostInfo(key, index));
+        } else {
+            // VertexB path when VertexA is present.
+            auto& program_va{programs[0]};
+            auto program_vb{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
+            programs[index] = MergeDualVertexPrograms(program_va, program_vb, env);
+            // Each half fit its texture arrays to the stage limits on its own; joined, they are
+            // one stage.
+            Shader::Optimization::LimitSampledTextureArrays(programs[index], host_info);
+        }
+
+        if (device.GetDriverID() != VK_DRIVER_ID_NVIDIA_PROPRIETARY && Shader::Optimization::HasBrokenPattern(programs[index])) {
+            LOG_WARNING(Render_Vulkan, "0x{:016x}: Skipping shader with known issues", key.unique_hashes[index]);
+            return nullptr;
+        }
+
+        if (Settings::values.dump_guest_shaders) {
+            env.Dump(pipeline_hash, key.unique_hashes[index]);
+        }
+
+        if (programs[index].info.requires_layer_emulation) {
+            layer_source_program = &programs[index];
+        }
+    }
+    // A tessellation pipeline the driver would refuse is skipped like a missing mesh pipeline:
+    // the draw is dropped (see the pipeline check in the rasterizer) instead of failing the build.
+    {
+        const Shader::IR::Program* control{};
+        const Shader::IR::Program* evaluation{};
+        for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+            if (key.unique_hashes[index] == 0) {
+                continue;
+            }
+            if (programs[index].stage == Shader::Stage::TessellationControl) {
+                control = &programs[index];
+            } else if (programs[index].stage == Shader::Stage::TessellationEval) {
+                evaluation = &programs[index];
+            }
+        }
+        if (control != nullptr || evaluation != nullptr) {
+            const u32 max_patch_size = device.GetMaxTessellationPatchSize();
+            const char* reason = nullptr;
+            if (!device.IsTessellationSupported()) {
+                reason = "the device has no tessellation shaders";
+            } else if (control == nullptr || evaluation == nullptr) {
+                reason = "it has only one of the control and evaluation stages";
+            } else if (control->invocations == 0 || control->invocations > max_patch_size) {
+                reason = "the control shader's output vertex count is out of range";
+            }
+            if (reason != nullptr) {
+                LOG_WARNING(Render_Vulkan,
+                            "Skipping tessellation pipeline: {} (tcs={} tes={}, tcs output "
+                            "vertices {}, device max patch size {})",
+                            reason, control != nullptr, evaluation != nullptr,
+                            control != nullptr ? control->invocations : 0, max_patch_size);
+                return nullptr;
+            }
+        }
+    }
+    std::array<const Shader::Info*, Maxwell::MaxShaderStage> infos{};
+    auto modules{std::make_shared<GraphicsShaderModules>()};
+
+    const Shader::IR::Program* previous_stage{};
+    Shader::Backend::Bindings binding;
+    for (size_t index = uses_vertex_a && uses_vertex_b ? 1 : 0; index < Maxwell::MaxShaderProgram;
+         ++index) {
+        const bool is_emulated_stage = layer_source_program != nullptr &&
+                                       index == static_cast<u32>(Maxwell::ShaderType::Geometry);
+        if (key.unique_hashes[index] == 0 && !is_emulated_stage) {
+            continue;
+        }
+        UNIMPLEMENTED_IF(index == 0);
+
+        Shader::IR::Program& program{programs[index]};
+        const size_t stage_index{index - 1};
+        infos[stage_index] = &program.info;
+
+        const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage)};
+        ConvertLegacyToGeneric(program, runtime_info);
+        const bool relative_layer_geometry = key.layer_viewport_relative &&
+            index == static_cast<size_t>(Maxwell::ShaderType::Geometry);
+        if (index == static_cast<size_t>(Maxwell::ShaderType::Geometry)) {
+            PruneUnreadGeometryOutputs(program, programs[static_cast<size_t>(Maxwell::ShaderType::Pixel)],
+                                       key, device.IsNvGeometryShaderPassthroughSupported() &&
+                                                !relative_layer_geometry);
+        }
+        Shader::Profile stage_profile{profile};
+        stage_profile.has_broken_spirv_dynamic_subgroup_shuffle =
+            device.NeedsGraphicsSubgroupShuffleWorkaround(MaxwellToVK::ShaderStage(program.stage));
+        if (relative_layer_geometry) {
+            // Translated as on hosts without the NV extensions (StageHostInfo), emitted the same.
+            stage_profile.support_viewport_mask = false;
+            stage_profile.support_geometry_shader_passthrough = false;
+        }
+        const std::vector<u32> code{EmitSPIRV(stage_profile, runtime_info, program, binding)};
+        device.SaveShader(code);
+        (*modules)[stage_index] = BuildShader(device, code);
+
+        // Text log + .spv dump. Text log is gated by gpu_log_level != Off; .spv dump
+        // is independent and gated only by gpu_log_shader_dumps.
+        const bool should_log = GPU::Logging::IsActive();
+        const bool should_dump = Settings::values.gpu_log_shader_dumps.GetValue();
+        if (should_log || should_dump) {
+            static constexpr std::array stage_names{"vertex", "tess_control", "tess_eval", "geometry", "fragment"};
+            const std::string shader_name = fmt::format("shader_{:016x}_{}", key.unique_hashes[index], stage_names[stage_index]);
+            if (should_log) {
+                const std::string shader_info = fmt::format("SPIR-V size: {} bytes, hash: {:016x}",
+                    code.size() * sizeof(u32), key.unique_hashes[index]);
+                GPU::Logging::GPULogger::GetInstance().LogShaderCompilation(shader_name, shader_info);
+            }
+            if (should_dump) {
+                GPU::Logging::DumpSpirvShader(key.unique_hashes[index],
+                                              std::span<const u32>(code.data(), code.size()));
+            }
+        }
+
+        if (device.HasDebuggingToolAttached()) {
+            const std::string name{fmt::format("Shader {:016x}", key.unique_hashes[index])};
+            (*modules)[stage_index].SetObjectNameEXT(name.c_str());
+        }
+        previous_stage = &program;
+    }
+
+    auto shaders{std::make_shared<ReusableShaders>()};
+    shaders->modules = std::move(modules);
+    for (size_t stage = 0; stage < infos.size(); ++stage) {
+        if (infos[stage]) {
+            shaders->infos[stage] = *infos[stage];
+        }
+    }
+    for (RecordingEnvironment& recorder : recorders) {
+        shaders->reads.push_back(recorder.TakeReads());
+    }
+    return shaders;
+}
+
+namespace {
+// Pipelines built on the GPU thread at run time (shader translation; the driver compile is on
+// workers): every one over 2 ms is logged, and the total every 10 s, to tell how much of the
+// stutter on new content is translation.
+void ReportRuntimePipeline(const char* kind, std::chrono::steady_clock::time_point begin) {
+    static std::chrono::steady_clock::duration total{};
+    static u32 count{}, logged{};
+    static auto window = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed = now - begin;
+    total += elapsed;
+    ++count;
+    const auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    if (elapsed > std::chrono::milliseconds{2} && logged < 400) {
+        ++logged;
+        LOG_INFO(Render_Vulkan, "{} pipeline built on the GPU thread in {:.1f} ms", kind, ms(elapsed));
+    }
+    if (now - window > std::chrono::seconds{10}) {
+        LOG_INFO(Render_Vulkan, "Runtime pipelines in the last 10 s: {} built, {:.1f} ms on the GPU thread",
+                 count, ms(total));
+        total = {};
+        count = 0;
+        window = now;
+    }
+}
+
+// Graphics pipelines translated on worker threads: what they still cost the GPU thread
+// (environments and snapshots, waiting) and the workers, logged every 10 s.
+// Used on the GPU thread only.
+class TranslationReport {
+public:
+    using Duration = std::chrono::steady_clock::duration;
+
+    void Queued(Duration preparation, size_t snapshot_bytes) {
+        ++queued;
+        preparation_time += preparation;
+        copied_bytes += snapshot_bytes;
+        LogEvery10Seconds();
+    }
+
+    void NotDetached(ShaderSnapshotFailure reason, u32 limit) {
+        ++not_detached;
+        ++failures[static_cast<size_t>(reason)];
+        largest_rejected_limit = (std::max)(largest_rejected_limit, limit);
+        LogEvery10Seconds();
+    }
+
+    void Waited(Duration wait) {
+        wait_time += wait;
+        LogEvery10Seconds();
+    }
+
+    void Adopted(Duration build) {
+        ++adopted;
+        build_time += build;
+        LogEvery10Seconds();
+    }
+
+private:
+    void LogEvery10Seconds() {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - window < std::chrono::seconds{10}) {
+            return;
+        }
+        const auto ms = [](Duration d) { return std::chrono::duration<double, std::milli>(d).count(); };
+        LOG_INFO(Render_Vulkan,
+                 "Graphics pipelines translated on workers in the last 10 s: {} queued ({} KiB "
+                 "of state copied), {} adopted ({:.1f} ms on workers), {} built on the GPU "
+                 "thread (snapshot fallback); GPU thread: {:.1f} ms preparing, {:.1f} "
+                 "ms waiting",
+                 queued, copied_bytes / 1024, adopted, ms(build_time),
+                 not_detached, ms(preparation_time), ms(wait_time));
+        LOG_INFO(Render_Vulkan,
+                 "Graphics snapshot fallback reasons: texture pool entry limit {}, texture pool "
+                 "not fully mapped {}, largest rejected limit {}",
+                 failures[static_cast<size_t>(ShaderSnapshotFailure::TexturePoolEntryLimit)],
+                 failures[static_cast<size_t>(ShaderSnapshotFailure::TexturePoolNotMapped)],
+                 largest_rejected_limit);
+        // Start a new window.
+        *this = TranslationReport{};
+    }
+
+    u32 queued{};
+    u32 not_detached{};
+    u32 adopted{};
+    u32 largest_rejected_limit{};
+    std::array<u32, static_cast<size_t>(ShaderSnapshotFailure::Count)> failures{};
+    size_t copied_bytes{};
+    Duration preparation_time{};
+    Duration wait_time{};
+    Duration build_time{};
+    std::chrono::steady_clock::time_point window{std::chrono::steady_clock::now()};
+};
+
+TranslationReport& GetTranslationReport() {
+    static TranslationReport report;
+    return report;
+}
+} // Anonymous namespace
+
+std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline() {
+    const auto begin = std::chrono::steady_clock::now();
+    SCOPE_EXIT {
+        ReportRuntimePipeline("Graphics", begin);
+    };
+    GraphicsEnvironments environments;
+    GetGraphicsEnvironments(environments, graphics_key.unique_hashes);
+
+    main_pools.ReleaseContents();
+    auto pipeline{
+        CreateGraphicsPipeline(main_pools, graphics_key, environments.Span(), nullptr, true)};
+    if (!pipeline || pipeline_cache_filename.empty()) {
+        return pipeline;
+    }
+    SerializeGraphicsPipeline(graphics_key, std::move(environments.envs),
+                              pipeline->IsMeshPipeline());
+    QueueVulkanPipelineCacheFlush();
+    return pipeline;
+}
+
+std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipelineFromReusedShaders() {
+    if (!HasReusableShaders(graphics_key)) {
+        return nullptr;
+    }
+    const auto begin = std::chrono::steady_clock::now();
+    GraphicsEnvironments environments;
+    GetGraphicsEnvironments(environments, graphics_key.unique_hashes);
+    auto pipeline{CreateGraphicsPipeline(main_pools, graphics_key, environments.Span(), nullptr,
+                                         true, false)};
+    if (!pipeline) {
+        return nullptr;
+    }
+    ReportRuntimePipeline("Graphics (reused shaders)", begin);
+    if (!pipeline_cache_filename.empty()) {
+        SerializeGraphicsPipeline(graphics_key, std::move(environments.envs),
+                                  pipeline->IsMeshPipeline());
+        QueueVulkanPipelineCacheFlush();
+    }
+    return pipeline;
+}
+
+void PipelineCache::SerializeGraphicsPipeline(const GraphicsPipelineCacheKey& key,
+                                              GraphicsEnvironmentArray envs, bool mesh_pipeline) {
+    // Task and mesh programs are translated with the mesh registers, which the cache format does
+    // not carry: the few of them rebuild quickly from the driver cache. Pipelines in the disk
+    // cache already were only not built at boot.
+    if (mesh_pipeline || !disk_pipelines.insert(key.Hash()).second) {
+        return;
+    }
+    serialization_thread.QueueWork([this, key, envs = std::move(envs)] {
+        boost::container::static_vector<const GenericEnvironment*, Maxwell::MaxShaderProgram>
+            env_ptrs;
+        for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+            if (key.unique_hashes[index] != 0) {
+                env_ptrs.push_back(&envs[index]);
+            }
+        }
+        SerializePipeline(key, env_ptrs, pipeline_cache_filename, CACHE_VERSION);
+    });
+}
+
+// Native graphics translation workers are retained for a future complete environment snapshot.
+// Driver pipeline compilation remains asynchronous independently of this translation gate.
+bool PipelineCache::CanTranslateAsynchronously() const {
+    // This path only supports native programs. Their storage-pointer classification reads live
+    // GPU mappings, which GraphicsEnvironment::Detach does not snapshot. The reuse recorder must
+    // forward and record that classification too; it cannot make the live read worker-safe.
+    // Keep translation on the GPU thread until mapping answers have an immutable snapshot.
+    // Driver pipeline compilation can still use its asynchronous workers.
+    return false;
+}
+
+std::optional<std::future<PipelineCache::TranslatedGraphicsPipeline>>
+PipelineCache::QueueGraphicsTranslation() {
+    const auto begin = std::chrono::steady_clock::now();
+    GraphicsEnvironments environments;
+    GetGraphicsEnvironments(environments, graphics_key.unique_hashes);
+
+    size_t snapshot_bytes{};
+    for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+        if (graphics_key.unique_hashes[index] == 0) {
+            continue;
+        }
+        const auto failure = environments.envs[index].Detach();
+        if (failure != ShaderSnapshotFailure::None) {
+            GetTranslationReport().NotDetached(failure, maxwell3d->regs.tex_header.limit);
+            return std::nullopt;
+        }
+        snapshot_bytes += environments.envs[index].SnapshotSizeBytes();
+    }
+
+    std::promise<TranslatedGraphicsPipeline> promise;
+    std::future<TranslatedGraphicsPipeline> result{promise.get_future()};
+    translation_workers.QueueWork([this, key = graphics_key, envs = std::move(environments.envs),
+                                   promise = std::move(promise)]() mutable {
+        promise.set_value(TranslateGraphicsPipeline(key, std::move(envs)));
+    });
+    GetTranslationReport().Queued(std::chrono::steady_clock::now() - begin, snapshot_bytes);
+    return result;
+}
+
+PipelineCache::TranslatedGraphicsPipeline PipelineCache::TranslateGraphicsPipeline(
+    const GraphicsPipelineCacheKey& key, GraphicsEnvironmentArray envs) {
+    const auto begin = std::chrono::steady_clock::now();
+    ShaderPools pools;
+    boost::container::static_vector<Shader::Environment*, Maxwell::MaxShaderProgram> env_ptrs;
+    for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+        if (key.unique_hashes[index] != 0) {
+            env_ptrs.push_back(&envs[index]);
+        }
+    }
+    std::unique_ptr<GraphicsPipeline> pipeline;
+    try {
+        // The scheduler waits for driver compilation at the first draw, while the GPU thread
+        // waits only for translation.
+        pipeline = CreateGraphicsPipeline(pools, key, MakeSpan(env_ptrs), nullptr, true);
+    } catch (const std::exception& exception) {
+        // Shader errors are handled inside; nothing else may end the worker thread.
+        LOG_ERROR(Render_Vulkan, "Graphics pipeline translation failed: {}", exception.what());
+    }
+    return {
+        .key = key,
+        .pipeline = std::move(pipeline),
+        .envs = std::move(envs),
+        .build_time = std::chrono::steady_clock::now() - begin,
+    };
+}
+
+std::unique_ptr<GraphicsPipeline> PipelineCache::AdoptTranslatedGraphicsPipeline(
+    std::future<TranslatedGraphicsPipeline>& translated) {
+    const auto begin = std::chrono::steady_clock::now();
+    TranslatedGraphicsPipeline result{translated.get()};
+    GetTranslationReport().Waited(std::chrono::steady_clock::now() - begin);
+    GetTranslationReport().Adopted(result.build_time);
+    // What CreateGraphicsPipeline() does after building on the GPU thread.
+    if (result.pipeline && !pipeline_cache_filename.empty()) {
+        SerializeGraphicsPipeline(result.key, std::move(result.envs),
+                                  result.pipeline->IsMeshPipeline());
+        QueueVulkanPipelineCacheFlush();
+    }
+    return std::move(result.pipeline);
+}
+
+std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
+    const ComputePipelineCacheKey& key, const ShaderInfo* shader) {
+    const auto begin = std::chrono::steady_clock::now();
+    SCOPE_EXIT {
+        ReportRuntimePipeline("Compute", begin);
+    };
+    const GPUVAddr program_base{kepler_compute->regs.code_loc.Address()};
+    const auto& qmd{kepler_compute->launch_description};
+    namespace diag = VideoCommon::ComputeBindingDiagnostic;
+    std::optional<diag::Record> trace;
+    std::optional<diag::Scope> trace_scope;
+    if (shader->lowered_native && diag::Matches(shader->lowered_native->diagnostic_native_key) &&
+        diag::compile_limit.Claim()) {
+        trace.emplace();
+        trace->phase = diag::Phase::Compile;
+        trace->native_key = *shader->lowered_native->diagnostic_native_key;
+        trace->shader_hash = key.unique_hash;
+        trace->serial = diag::sequence.fetch_add(1, std::memory_order_relaxed);
+        trace->program = program_base + qmd.program_start;
+        trace->cbuf_enabled = (qmd.const_buffer_enable_mask & 1) != 0;
+        if (trace->cbuf_enabled) {
+            trace->cbuf_base = qmd.const_buffer_config[0].Address();
+            trace->cbuf_size = qmd.const_buffer_config[0].size;
+        }
+        trace_scope.emplace(*trace);
+    }
+    SCOPE_EXIT {
+        if (trace_scope)
+            diag::Emit(*trace);
+    };
+    ComputeEnvironment env{*kepler_compute, *gpu_memory, program_base, qmd.program_start,
+                           shader->lowered_native,
+                           profile.support_cooperative_matrix || profile.support_software_tensor};
+    env.SetCachedSize(shader->size_bytes);
+
+    main_pools.ReleaseContents();
+    auto pipeline{CreateComputePipeline(main_pools, key, env, nullptr, true)};
+    if (!pipeline || pipeline_cache_filename.empty()) {
+        return pipeline;
+    }
+    serialization_thread.QueueWork([this, key, env_ = std::move(env)] {
+        SerializePipeline(key, std::array<const GenericEnvironment*, 1>{&env_},
+                          pipeline_cache_filename, CACHE_VERSION);
+    });
+    QueueVulkanPipelineCacheFlush();
+    return pipeline;
+}
+
+std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
+    ShaderPools& pools, const ComputePipelineCacheKey& key, Shader::Environment& env,
+    PipelineStatistics* statistics, bool build_in_parallel) try {
+    auto hash = key.Hash();
+    VideoCommon::StallDiagnostics::Scope diagnostic{
+        {VideoCommon::StallDiagnostics::Phase::PipelinePrepare, "compute-prepare",
+         key.unique_hash}};
+    if (device.HasBrokenCompute()) {
+        LOG_ERROR(Render_Vulkan, "Skipping {:#016x}", hash);
+        return nullptr;
+    }
+
+    LOG_DEBUG(Render_Vulkan, "{:#016x}", hash);
+
+    Shader::Maxwell::Flow::CFG cfg{env, pools.flow_block, env.StartAddress()};
+
+    // Dump it before error.
+    if (Settings::values.dump_guest_shaders) {
+        env.Dump(hash, key.unique_hash);
+    }
+
+    auto program{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
+    const VkDriverIdKHR driver_id = device.GetDriverID();
+    const bool needs_shared_mem_clamp =
+        driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||
+        driver_id == VK_DRIVER_ID_ARM_PROPRIETARY || driver_id == VK_DRIVER_ID_MOLTENVK;
+    const u32 max_shared_memory = device.GetMaxComputeSharedMemorySize();
+    if (needs_shared_mem_clamp && program.shared_memory_size > max_shared_memory) {
+        LOG_WARNING(Render_Vulkan,
+                    "Compute shader {:#016x} requests {}KB shared memory but device max is {}KB - clamping",
+                    key.unique_hash,
+                    program.shared_memory_size / 1024,
+                    max_shared_memory / 1024);
+        program.shared_memory_size = max_shared_memory;
+    }
+    std::vector<u32> code{EmitSPIRV(profile, program)};
+
+    // Text log + .spv dump. Done before pipeline build so a driver crash still leaves the module.
+    {
+        const bool should_log = GPU::Logging::IsActive();
+        const bool should_dump = Settings::values.gpu_log_shader_dumps.GetValue();
+        if (should_log || should_dump) {
+            const std::string shader_name = fmt::format("shader_{:016x}_compute", key.unique_hash);
+            if (should_log) {
+                const std::string shader_info = fmt::format("SPIR-V size: {} bytes, hash: {:016x}",
+                    code.size() * sizeof(u32), key.unique_hash);
+                GPU::Logging::GPULogger::GetInstance().LogShaderCompilation(shader_name, shader_info);
+            }
+            if (should_dump) {
+                GPU::Logging::DumpSpirvShader(key.unique_hash,
+                                              std::span<const u32>(code.data(), code.size()));
+            }
+        }
+    }
+
+    device.SaveShader(code);
+    vk::ShaderModule spv_module{BuildShader(device, code)};
+
+    if (device.HasDebuggingToolAttached()) {
+        const auto name{fmt::format("Shader {:016x}", key.unique_hash)};
+        spv_module.SetObjectNameEXT(name.c_str());
+    }
+    Common::ThreadWorker* const thread_worker{build_in_parallel ? &workers : nullptr};
+    const Shader::Info info{std::move(program.info)};
+    pools.ReleaseComputeContents(program, code, build_in_parallel);
+    return std::make_unique<ComputePipeline>(device, scheduler, vulkan_pipeline_cache, descriptor_pool,
+                                             guest_descriptor_queue, descriptor_buffer_ring,
+                                             thread_worker, statistics,
+                                             &shader_notify, info, std::move(spv_module),
+                                             key.unique_hash);
+
+} catch (const Shader::TensorRejected& exception) {
+    if (build_in_parallel) {
+        throw;
+    }
+    LOG_WARNING(Render_Vulkan, "Skipping cached tensor shader: {}", exception.what());
+    return nullptr;
+} catch (const Shader::Exception& exception) {
+    LOG_ERROR(Render_Vulkan, "compute {:016x}: {}", key.unique_hash, exception.what());
+    return nullptr;
+}
+
+void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& filename,
+                                                 const vk::PipelineCache& pipeline_cache,
+                                                 u32 cache_version) try {
+    // Written beside the cache and renamed over it: the emulator stopped mid-write left the cache
+    // empty, and every later boot failed to read it.
+    auto temporary = filename;
+    temporary += ".tmp";
+    std::ofstream file(temporary, std::ios::binary);
+    file.exceptions(std::ifstream::failbit);
+    if (!file.is_open()) {
+        LOG_ERROR(Common_Filesystem, "Failed to open Vulkan driver pipeline cache file {}",
+                  Common::FS::PathToUTF8String(filename));
+        return;
+    }
+    file.write(VULKAN_CACHE_MAGIC_NUMBER.data(), VULKAN_CACHE_MAGIC_NUMBER.size())
+        .write(reinterpret_cast<const char*>(&cache_version), sizeof(cache_version));
+
+    size_t cache_size = 0;
+    std::vector<char> cache_data;
+    if (pipeline_cache) {
+        pipeline_cache.Read(&cache_size, nullptr);
+        cache_data.resize(cache_size);
+        pipeline_cache.Read(&cache_size, cache_data.data());
+    }
+    file.write(cache_data.data(), cache_size);
+    file.close();
+    std::error_code error;
+    std::filesystem::rename(temporary, filename, error);
+    if (error) {
+        LOG_ERROR(Common_Filesystem, "Failed to replace Vulkan driver pipeline cache file {}: {}",
+                  Common::FS::PathToUTF8String(filename), error.message());
+        std::filesystem::remove(temporary, error);
+        return;
+    }
+
+    LOG_INFO(Render_Vulkan, "Vulkan driver pipelines cached at: {}",
+             Common::FS::PathToUTF8String(filename));
+
+} catch (const std::ios_base::failure& e) {
+    LOG_ERROR(Common_Filesystem, "{}", e.what());
+    if (!Common::FS::RemoveFile(filename)) {
+        LOG_ERROR(Common_Filesystem, "Failed to delete Vulkan driver pipeline cache file {}",
+                  Common::FS::PathToUTF8String(filename));
+    }
+}
+
+vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::path& filename,
+                                                         u32 expected_cache_version) {
+    const auto create_pipeline_cache = [this](size_t data_size, const void* data) {
+        VkPipelineCacheCreateInfo pipeline_cache_ci = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .initialDataSize = data_size,
+            .pInitialData = data};
+        return device.GetLogical().CreatePipelineCache(pipeline_cache_ci);
+    };
+    try {
+        std::ifstream file(filename, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            return create_pipeline_cache(0, nullptr);
+        }
+        file.exceptions(std::ifstream::failbit);
+        const auto end{file.tellg()};
+        file.seekg(0, std::ios::beg);
+
+        std::array<char, 8> magic_number;
+        u32 cache_version;
+        // A file cut short (the emulator stopped while writing it) would throw from the reads
+        // below, and macOS's libc++ throws an ios_base::failure the handler doesn't match.
+        if (static_cast<size_t>(end) < magic_number.size() + sizeof(cache_version)) {
+            file.close();
+            LOG_ERROR(Common_Filesystem, "Truncated Vulkan driver pipeline cache file, deleting it");
+            Common::FS::RemoveFile(filename);
+            return create_pipeline_cache(0, nullptr);
+        }
+        file.read(magic_number.data(), magic_number.size())
+            .read(reinterpret_cast<char*>(&cache_version), sizeof(cache_version));
+        if (magic_number != VULKAN_CACHE_MAGIC_NUMBER || cache_version != expected_cache_version) {
+            file.close();
+            if (Common::FS::RemoveFile(filename)) {
+                if (magic_number != VULKAN_CACHE_MAGIC_NUMBER) {
+                    LOG_ERROR(Common_Filesystem, "Invalid Vulkan driver pipeline cache file");
+                }
+                if (cache_version != expected_cache_version) {
+                    LOG_INFO(Common_Filesystem, "Deleting old Vulkan driver pipeline cache");
+                }
+            } else {
+                LOG_ERROR(Common_Filesystem,
+                          "Invalid Vulkan pipeline cache file and failed to delete it in \"{}\"",
+                          Common::FS::PathToUTF8String(filename));
+            }
+            return create_pipeline_cache(0, nullptr);
+        }
+
+        static constexpr size_t header_size = magic_number.size() + sizeof(cache_version);
+        const size_t cache_size = static_cast<size_t>(end) - header_size;
+        std::vector<char> cache_data(cache_size);
+        file.read(cache_data.data(), cache_size);
+
+        LOG_INFO(Render_Vulkan,
+                 "Loaded Vulkan driver pipeline cache: {}", Common::FS::PathToUTF8String(filename));
+
+        try {
+            return create_pipeline_cache(cache_size, cache_data.data());
+        } catch (const vk::Exception& e) {
+            // The blob came from another driver or driver version (e.g. switching between
+            // MoltenVK and KosmicKrisp on macOS): the driver rejects it. Start empty instead of
+            // aborting, and drop the stale file so the next run doesn't retry it.
+            LOG_ERROR(Render_Vulkan,
+                      "Driver rejected the Vulkan pipeline cache file ({}), starting with an empty "
+                      "cache and deleting it",
+                      e.what());
+            Common::FS::RemoveFile(filename);
+            return create_pipeline_cache(0, nullptr);
+        }
+
+    } catch (const std::ios_base::failure& e) {
+        LOG_ERROR(Common_Filesystem, "{}", e.what());
+        if (!Common::FS::RemoveFile(filename)) {
+            LOG_ERROR(Common_Filesystem, "Failed to delete Vulkan driver pipeline cache file {}",
+                      Common::FS::PathToUTF8String(filename));
+        }
+
+        return create_pipeline_cache(0, nullptr);
+    }
+}
+
+} // namespace Vulkan

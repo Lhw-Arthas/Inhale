@@ -1,0 +1,126 @@
+// SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#ifdef _WIN32
+// clang-format off
+#include <windows.h>
+#include <psapi.h>
+#include <sysinfoapi.h>
+// clang-format on
+#else
+#include <fstream>
+#include <sys/types.h>
+#if defined(__APPLE__) || defined(__FreeBSD__)
+#include <sys/sysctl.h>
+#elif defined(__linux__)
+#include <sys/sysinfo.h>
+#include <unistd.h>
+#else
+#include <unistd.h>
+#endif
+#endif
+
+#include <fmt/format.h>
+
+#include "common/memory_detect.h"
+
+namespace Common {
+
+// Detects the RAM and Swapfile sizes
+static MemoryInfo Detect() {
+    MemoryInfo mem_info{};
+
+#ifdef _WIN32
+    MEMORYSTATUSEX memorystatus;
+    memorystatus.dwLength = sizeof(memorystatus);
+    GlobalMemoryStatusEx(&memorystatus);
+    mem_info.TotalPhysicalMemory = memorystatus.ullTotalPhys;
+    mem_info.TotalSwapMemory = memorystatus.ullTotalPageFile - mem_info.TotalPhysicalMemory;
+#elif defined(__APPLE__)
+    u64 ramsize;
+    struct xsw_usage vmusage;
+    std::size_t sizeof_ramsize = sizeof(ramsize);
+    std::size_t sizeof_vmusage = sizeof(vmusage);
+    // hw and vm are defined in sysctl.h
+    // https://github.com/apple/darwin-xnu/blob/master/bsd/sys/sysctl.h#L471
+    // sysctlbyname(const char *, void *, size_t *, void *, size_t);
+    sysctlbyname("hw.memsize", &ramsize, &sizeof_ramsize, nullptr, 0);
+    sysctlbyname("vm.swapusage", &vmusage, &sizeof_vmusage, nullptr, 0);
+    mem_info.TotalPhysicalMemory = ramsize;
+    mem_info.TotalSwapMemory = vmusage.xsu_total;
+#elif defined(__FreeBSD__)
+    u_long physmem, swap_total;
+    std::size_t sizeof_u_long = sizeof(u_long);
+    // sysctlbyname(const char *, void *, size_t *, const void *, size_t);
+    sysctlbyname("hw.physmem", &physmem, &sizeof_u_long, nullptr, 0);
+    sysctlbyname("vm.swap_total", &swap_total, &sizeof_u_long, nullptr, 0);
+    mem_info.TotalPhysicalMemory = physmem;
+    mem_info.TotalSwapMemory = swap_total;
+#elif defined(__linux__)
+    struct sysinfo meminfo;
+    sysinfo(&meminfo);
+    mem_info.TotalPhysicalMemory = meminfo.totalram;
+    mem_info.TotalSwapMemory = meminfo.totalswap;
+#else
+    mem_info.TotalPhysicalMemory = sysconf(_SC_PHYS_PAGES) * sysconf(_SC_PAGE_SIZE);
+    mem_info.TotalSwapMemory = 0;
+#endif
+
+    return mem_info;
+}
+
+const MemoryInfo& GetMemInfo() {
+    static MemoryInfo mem_info = Detect();
+    return mem_info;
+}
+
+HostResources QueryHostResources() {
+    HostResources resources{};
+#ifdef _WIN32
+    const HANDLE process = GetCurrentProcess();
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (GetProcessMemoryInfo(process, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                             sizeof(counters))) {
+        resources.process_commit = counters.PrivateUsage;
+        resources.process_resident = counters.WorkingSetSize;
+    }
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (GlobalMemoryStatusEx(&status)) {
+        resources.host_commit_free = status.ullAvailPageFile;
+        resources.host_commit_limit = status.ullTotalPageFile;
+        resources.host_physical_free = status.ullAvailPhys;
+    }
+    resources.gdi_objects = GetGuiResources(process, GR_GDIOBJECTS);
+    resources.user_objects = GetGuiResources(process, GR_USEROBJECTS);
+    DWORD handles{};
+    if (GetProcessHandleCount(process, &handles)) {
+        resources.handles = handles;
+    }
+#elif defined(__linux__)
+    // Total size, then resident size, in pages. Linux has no commit charge: the data size
+    // counts the 512 GiB the guest address space reserves.
+    u64 size{}, resident{};
+    if (std::ifstream statm{"/proc/self/statm"}; statm >> size >> resident) {
+        resources.process_resident = resident * static_cast<u64>(sysconf(_SC_PAGE_SIZE));
+    }
+#endif
+    return resources;
+}
+
+std::string DescribeHostResources(const HostResources& resources) {
+    std::string text = fmt::format("process {} MiB resident", resources.process_resident >> 20);
+    if (resources.host_commit_limit != 0) {
+        text += fmt::format(", {} MiB committed; host {} of {} MiB commit free, {} MiB RAM free",
+                            resources.process_commit >> 20, resources.host_commit_free >> 20,
+                            resources.host_commit_limit >> 20, resources.host_physical_free >> 20);
+    }
+    if (resources.handles != 0) {
+        text += fmt::format("; {} GDI objects, {} USER objects, {} handles", resources.gdi_objects,
+                            resources.user_objects, resources.handles);
+    }
+    return text;
+}
+
+} // namespace Common

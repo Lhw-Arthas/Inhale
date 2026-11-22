@@ -1,0 +1,213 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#pragma once
+
+#include <functional>
+#include <optional>
+#include <span>
+#include <utility>
+#include <vector>
+#include <boost/container/small_vector.hpp>
+
+#include "common/common_types.h"
+#include "common/scratch_buffer.h"
+
+#include "video_core/surface.h"
+#include "video_core/texture_cache/image_base.h"
+#include "video_core/texture_cache/types.h"
+#include "video_core/textures/texture.h"
+
+namespace Settings {
+struct ResolutionScalingInfo;
+}
+
+namespace VideoCommon {
+
+using Tegra::Texture::TICEntry;
+
+using LevelArray = std::array<u32, MAX_MIP_LEVELS>;
+
+struct OverlapResult {
+    GPUVAddr gpu_addr;
+    VAddr cpu_addr;
+    SubresourceExtent resources;
+};
+
+[[nodiscard]] u32 CalculateGuestSizeInBytes(const ImageInfo& info) noexcept;
+
+[[nodiscard]] u32 CalculateUnswizzledSizeBytes(const ImageInfo& info) noexcept;
+
+[[nodiscard]] u32 CalculateConvertedSizeBytes(const ImageInfo& info) noexcept;
+
+/// True if no 16-byte ASTC block in `data` decodes to alpha below 1.
+[[nodiscard]] bool AstcDataLooksOpaque(std::span<const u8> data) noexcept;
+
+[[nodiscard]] bool AstcDataLooksOpaque(Tegra::MemoryManager& memory, GPUVAddr address, size_t size,
+                                      Common::ScratchBuffer<u8>& scratch);
+
+[[nodiscard]] u32 CalculateLayerStride(const ImageInfo& info) noexcept;
+
+[[nodiscard]] u32 CalculateLayerSize(const ImageInfo& info) noexcept;
+
+[[nodiscard]] LevelArray CalculateMipLevelOffsets(const ImageInfo& info) noexcept;
+
+[[nodiscard]] LevelArray CalculateMipLevelSizes(const ImageInfo& info) noexcept;
+
+[[nodiscard]] boost::container::small_vector<u32, 16> CalculateSliceOffsets(const ImageInfo& info);
+
+[[nodiscard]] boost::container::small_vector<SubresourceBase, 16> CalculateSliceSubresources(
+    const ImageInfo& info);
+
+[[nodiscard]] u32 CalculateLevelStrideAlignment(const ImageInfo& info, u32 level);
+
+[[nodiscard]] VideoCore::Surface::PixelFormat PixelFormatFromTIC(
+    const Tegra::Texture::TICEntry& config) noexcept;
+
+[[nodiscard]] ImageViewType RenderTargetImageViewType(const ImageInfo& info) noexcept;
+
+[[nodiscard]] boost::container::small_vector<ImageCopy, 16> MakeShrinkImageCopies(
+    const ImageInfo& dst, const ImageInfo& src, SubresourceBase base, u32 up_scale = 1,
+    u32 down_shift = 0);
+
+[[nodiscard]] boost::container::small_vector<ImageCopy, 16> MakeReinterpretImageCopies(
+    const ImageInfo& src, u32 up_scale = 1, u32 down_shift = 0);
+
+[[nodiscard]] bool IsValidEntry(const Tegra::MemoryManager& gpu_memory, const TICEntry& config);
+
+/// Unswizzles the guest bytes `input` of a block-linear image into `output`. A pitch-linear image
+/// is read from guest memory straight into `output` instead: `input` is not used and can be empty.
+[[nodiscard]] boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(
+    Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, const ImageInfo& info,
+    std::span<const u8> input, std::span<u8> output);
+
+[[nodiscard]] boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(
+    const std::function<void(GPUVAddr, std::span<u8>)>& read, GPUVAddr gpu_addr,
+    const ImageInfo& info, std::span<const u8> input, std::span<u8> output, bool native_tiling);
+
+/// Switch 2 block-linear surfaces swap GOB offset bits 5 and 6, unless their texture header asks
+/// for the Maxwell GOB layout (ImageInfo::maxwell_gobs).
+[[nodiscard]] constexpr bool UsesNativeGobs(bool native_memory, const ImageInfo& info) {
+    return native_memory && !info.maxwell_gobs;
+}
+
+[[nodiscard]] boost::container::small_vector<BufferImageCopy, 16> UnswizzleBlockLinearImage(
+    const ImageInfo& info, std::span<const u8> input, std::span<u8> output, bool native_tiling);
+
+/// Unswizzles only the blocks of a 2D block-linear image that overlap `dirty_ranges` (sorted,
+/// non-overlapping [begin, end) byte offsets from the image start). Calls `allocate` once with the
+/// complete linear size, then decodes directly into that storage. Unsupported/empty layouts return
+/// no copies without allocating or reading; the caller can then upload the whole image.
+[[nodiscard]] boost::container::small_vector<BufferImageCopy, 16> UnswizzleImageRows(
+    Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, const ImageInfo& info,
+    std::span<const std::pair<u64, u64>> dirty_ranges,
+    const std::function<std::span<u8>(size_t)>& allocate);
+
+[[nodiscard]] boost::container::small_vector<BufferImageCopy, 16> UnswizzleImageRows(
+    const std::function<void(GPUVAddr, std::span<u8>)>& read, GPUVAddr gpu_addr,
+    const ImageInfo& info, std::span<const std::pair<u64, u64>> dirty_ranges,
+    const std::function<std::span<u8>(size_t)>& allocate, bool native_tiling);
+
+/// Rewrites `copies` (from UnswizzleImage) to the layout ConvertImage produces, without converting.
+void ConvertedLayout(const ImageInfo& info, std::span<BufferImageCopy> copies);
+
+[[nodiscard]] std::vector<LevelRect> SparseTileRects(
+    const ImageInfo& info, std::span<const std::pair<u64, u64>> ranges, u32 tile_width,
+    u32 tile_height, s32 tail_level);
+
+[[nodiscard]] size_t UnswizzledRectsBytes(const ImageInfo& info, std::span<const LevelRect> rects);
+
+[[nodiscard]] std::vector<BufferImageCopy> UnswizzleImageRects(
+    Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, const ImageInfo& info,
+    std::span<const LevelRect> rects, std::span<u8> output);
+
+[[nodiscard]] std::vector<BufferImageCopy> UnswizzleImageRects(
+    const std::function<void(GPUVAddr, std::span<u8>)>& read, GPUVAddr gpu_addr,
+    const ImageInfo& info, std::span<const LevelRect> rects, std::span<u8> output,
+    bool native_tiling);
+
+void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8> output,
+                  std::span<BufferImageCopy> copies);
+
+[[nodiscard]] boost::container::small_vector<BufferImageCopy, 16> FullDownloadCopies(
+    const ImageInfo& info);
+
+[[nodiscard]] Extent3D MipSize(Extent3D size, u32 level);
+
+[[nodiscard]] Extent3D MipBlockSize(const ImageInfo& info, u32 level);
+
+[[nodiscard]] boost::container::small_vector<SwizzleParameters, 16> FullUploadSwizzles(
+    const ImageInfo& info);
+
+void SwizzleImage(Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, const ImageInfo& info,
+                  std::span<const BufferImageCopy> copies, std::span<const u8> memory,
+                  Common::ScratchBuffer<u8>& tmp_buffer);
+
+[[nodiscard]] bool IsBlockLinearSizeCompatible(const ImageInfo& new_info,
+                                               const ImageInfo& overlap_info, u32 new_level,
+                                               u32 overlap_level, bool strict_size) noexcept;
+
+[[nodiscard]] bool IsPaddedWidth(const ImageInfo& info, u32 width) noexcept;
+
+[[nodiscard]] u32 PaddedTargetWidth(const ImageInfo& info, u32 clip_right) noexcept;
+
+[[nodiscard]] u32 PaddedBlitWidth(const ImageInfo& info, s32 x0, s32 x1) noexcept;
+
+struct RenderTargetClip {
+    bool Update(u32 clip_right) noexcept {
+        const bool moved = clip_right != right;
+        right = clip_right;
+        return moved;
+    }
+
+    u32 right = 0;
+};
+
+[[nodiscard]] bool IsPitchLinearSameSize(const ImageInfo& lhs, const ImageInfo& rhs,
+                                         bool strict_size) noexcept;
+
+[[nodiscard]] bool IsBlockLinearSizeCompatibleBPPRelaxed(const ImageInfo& lhs, const ImageInfo& rhs,
+                                                         u32 lhs_level, u32 rhs_level) noexcept;
+
+[[nodiscard]] std::optional<OverlapResult> ResolveOverlap(const ImageInfo& new_info,
+                                                          GPUVAddr gpu_addr, VAddr cpu_addr,
+                                                          const ImageBase& overlap,
+                                                          bool strict_size, bool broken_views,
+                                                          bool native_bgr);
+
+[[nodiscard]] bool IsLayerStrideCompatible(const ImageInfo& lhs, const ImageInfo& rhs);
+
+[[nodiscard]] std::optional<SubresourceBase> FindSubresource(const ImageInfo& candidate,
+                                                             const ImageBase& image,
+                                                             GPUVAddr candidate_addr,
+                                                             RelaxedOptions options,
+                                                             bool broken_views, bool native_bgr);
+
+[[nodiscard]] bool IsSubresource(const ImageInfo& candidate, const ImageBase& image,
+                                 GPUVAddr candidate_addr, RelaxedOptions options, bool broken_views,
+                                 bool native_bgr);
+
+[[nodiscard]] bool IsSubCopy(const ImageInfo& candidate, const ImageBase& image,
+                             GPUVAddr candidate_addr);
+
+void DeduceBlitImages(ImageInfo& dst_info, ImageInfo& src_info, const ImageBase* dst,
+                      const ImageBase* src);
+
+[[nodiscard]] u32 MapSizeBytes(const ImageBase& image);
+
+/// Largest scaled image the device takes, in texels.
+struct ScaledExtentLimit {
+    u32 width;
+    u32 height;
+};
+
+/// Whether an image scaled by the resolution setting stays within 16384 per side of info.size
+/// (the sample grid for MSAA) and within the device's max_extent texels.
+[[nodiscard]] bool ScaledImageFits(const ImageInfo& info,
+                                   const Settings::ResolutionScalingInfo& resolution,
+                                   ScaledExtentLimit max_extent) noexcept;
+
+} // namespace VideoCommon
