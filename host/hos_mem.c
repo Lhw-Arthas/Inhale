@@ -133,7 +133,11 @@ uint64_t hos_region_alloc(uint64_t size, uint64_t align) {
         if (found < region_floor && found >= HOS_HEAP_BASE) region_floor = found;   /* (not the holes below) */
     }
     UNLOCK();
-    if (found) hos_commit(found, size);
+    // Original code: if (found) hos_commit(found, size);
+    // Optimized: pre-commit only when HOS_HEAP_COMMIT=1 is set; otherwise, let commit_on_touch handle on-demand commit
+    static int commit_region = -1;
+    if (commit_region < 0) commit_region = env_on("HOS_HEAP_COMMIT");
+    if (found && commit_region) hos_commit(found, size);
     if (!found) hos_fatal(NULL, "address space exhausted (%#llx bytes asked, heap %#llx)", (unsigned long long)size,
                           (unsigned long long)hos_heap_size);
     return found;
@@ -380,7 +384,13 @@ HLE(_ZN2nn2os19AllocateMemoryPagesEmm) {
            when the game mapped pages over memory it already used (a heap's list lost its links). Horizon's rule
            instead: only newly mapped pages read as zero. A commit leaves committed pages as they are and gives fresh
            ones zeroed; FreeMemoryPages decommits. */
+#if !defined(_WIN32)
         hos_commit(a, n);
+#else
+        static int commit_pages = -1;
+        if (commit_pages < 0) commit_pages = env_on("HOS_HEAP_COMMIT");
+        if (commit_pages) hos_commit(a, n);
+#endif
     } else if (zero_all || end > (1ULL << 32) || end < a) {
         memset(GP(a), 0, n);
     } else {
