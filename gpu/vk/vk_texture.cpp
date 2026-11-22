@@ -1975,7 +1975,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - u0).count();
                 }
                 if (tex.astc) {
-                    Tegra::Texture::ASTC::Decompress(std::span<const uint8_t>(blocks, block_bytes), g.w, px_h, g.d,
+                    Tegra::Texture::ASTC::DecompressSerial(std::span<const uint8_t>(blocks, block_bytes), g.w, px_h, g.d,
                                                            (u32)tex.block_w, (u32)tex.block_h,
                                                            std::span<uint8_t>(out, (size_t)g.w * px_h * g.d * 4));
                 } else if (widen_from) {
