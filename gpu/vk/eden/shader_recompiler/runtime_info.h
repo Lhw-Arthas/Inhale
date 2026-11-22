@@ -88,38 +88,14 @@ struct RuntimeInfo {
     VaryingState previous_stage_stores;
     /// Fragment stage after a mesh program: generic inputs it writes per primitive.
     std::bitset<32> per_primitive_generics{};
-    /// Last pre-rasterization stage: generic outputs the fragment stage reads screen-linear.
-    /// They are written times Position.w and the fragment stage reads them perspective-correct
-    /// times FragCoord.w, so clipping a primitive close to the camera interpolates them right.
-    std::bitset<32> noperspective_outputs{};
-    /// Fragment stage: the previous stage writes noperspective_outputs (not a mesh program).
-    bool scaled_noperspective_inputs{};
-    /// Fragment stage after a mesh program that draws points: generic inputs the hardware's point sprite
-    /// replaces with the coordinate within the point (s, t, 0, 1), as NVN's do with the generics the mesh
-    /// program leaves unwritten.
-    std::bitset<32> point_coord_generics{};
+    /// Screen-linear generics the fragment stage reads: the last vertex stage writes them times
+    /// w, the fragment stage reads them perspective-correct times FragCoord.w (see
+    /// ScreenLinearGenerics in vk_pipeline_cache.cpp).
+    std::bitset<32> screen_linear_generics{};
     std::map<IR::Attribute, IR::Attribute> previous_stage_legacy_stores_mapping;
 
     bool convert_depth_mode{};
     bool force_early_z{};
-    /// Work around drivers that mix up results across calls to the 128-bit global-load helper.
-    bool inline_global_128_loads{};
-    /// (longshot) a mesh stage with no task stage before it: its workgroups start at the draw's first, as a task stage's do
-    bool mesh_without_task{};
-    /// (longshot) a GPU without VK_EXT_mesh_shader: task and mesh programs are compute shaders that write their stage
-    /// buffer outputs to storage buffers, and a generated vertex stage reads those records back.
-    bool mesh_fallback{};
-    /// (longshot) the generated vertex stage of that fallback: it reads a record per position and writes the stage's outputs
-    bool mesh_fallback_vertex{};
-    /// (longshot) a mesh program with a task program before it: the task's count in its payload bounds the mesh workgroups
-    bool mesh_fallback_task{};
-    /// (longshot) that task program's threads: task workgroup w starts its meshlets at slots w * threads + i
-    u32 mesh_fallback_task_threads{};
-    /// (longshot) the fallback's record slots: mesh workgroups past this one write nothing
-    u32 mesh_fallback_capacity{};
-    /// (longshot) how the fallback's mesh stage lays out its records and its vertex stage reads them
-    /// (Backend::SPIRV::MeshFallbackLayout, RX_VK_MESH_FB_LAYOUT); 0: record after record
-    u32 mesh_fallback_layout{};
 
     TessPrimitive tess_primitive{};
     TessSpacing tess_spacing{};

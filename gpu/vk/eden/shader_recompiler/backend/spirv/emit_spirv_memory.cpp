@@ -78,38 +78,20 @@ void WriteStorageByCasLoop(EmitContext& ctx, const IR::Value& binding, const IR:
 }
 } // Anonymous namespace
 
-// (longshot) 8- and 16-bit loads through a pointer no storage buffer was found for: the aligned 32-bit word by the same
-// search as LoadGlobal32, and the byte or half of it the address names (the console's loads are naturally aligned). They
-// threw "not implemented": 30 of OoT's mesh programs (LoadGlobalS16) were left untranslated on every card, issue 351
-namespace {
-Id LoadGlobalNarrow(EmitContext& ctx, Id address, u32 bits, bool is_signed) {
-    if (!ctx.profile.support_int64) {
-        LOG_WARNING(Shader_SPIRV, "Int64 not supported, ignoring memory operation");
-        return ctx.Const(0u);
-    }
-    const Id aligned{ctx.OpBitwiseAnd(ctx.U64, address, ctx.Constant(ctx.U64, u64{~u64{3}}))};
-    const Id word{ctx.OpFunctionCall(ctx.U32[1], ctx.load_global_func_u32, aligned)};
-    const Id low{ctx.OpUConvert(ctx.U32[1], ctx.OpBitwiseAnd(ctx.U64, address, ctx.Constant(ctx.U64, u64{3})))};
-    const Id shift{ctx.OpShiftLeftLogical(ctx.U32[1], low, ctx.Const(3u))};
-    return is_signed ? ctx.OpBitFieldSExtract(ctx.U32[1], word, shift, ctx.Const(bits))
-                     : ctx.OpBitFieldUExtract(ctx.U32[1], word, shift, ctx.Const(bits));
-}
-} // Anonymous namespace
-
-Id EmitLoadGlobalU8(EmitContext& ctx, Id address) {
-    return LoadGlobalNarrow(ctx, address, 8, false);
+void EmitLoadGlobalU8(EmitContext&) {
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
-Id EmitLoadGlobalS8(EmitContext& ctx, Id address) {
-    return LoadGlobalNarrow(ctx, address, 8, true);
+void EmitLoadGlobalS8(EmitContext&) {
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
-Id EmitLoadGlobalU16(EmitContext& ctx, Id address) {
-    return LoadGlobalNarrow(ctx, address, 16, false);
+void EmitLoadGlobalU16(EmitContext&) {
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
-Id EmitLoadGlobalS16(EmitContext& ctx, Id address) {
-    return LoadGlobalNarrow(ctx, address, 16, true);
+void EmitLoadGlobalS16(EmitContext&) {
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitLoadGlobal32(EmitContext& ctx, Id address) {
@@ -136,35 +118,20 @@ Id EmitLoadGlobal128(EmitContext& ctx, Id address) {
     return ctx.Const(0u, 0u, 0u, 0u);
 }
 
-// (longshot) 8- and 16-bit stores through a pointer no storage buffer was found for: the aligned 32-bit word by the same
-// search as LoadGlobal32, changed in place with a compare-exchange loop (spirv_emit_context.cpp). They threw "not
-// implemented", the same gap as the narrow loads (issue 192)
-namespace {
-void WriteGlobalNarrow(EmitContext& ctx, Id address, Id value, u32 bits) {
-    if (!ctx.profile.support_int64) {
-        LOG_WARNING(Shader_SPIRV, "Int64 not supported, ignoring memory operation");
-        return;
-    }
-    const Id low{ctx.OpUConvert(ctx.U32[1], ctx.OpBitwiseAnd(ctx.U64, address, ctx.Constant(ctx.U64, u64{3})))};
-    const Id bit_offset{ctx.OpShiftLeftLogical(ctx.U32[1], low, ctx.Const(3u))};
-    ctx.OpFunctionCall(ctx.TypeVoid(), ctx.write_global_cas_loop_func, address, value, bit_offset, ctx.Const(bits));
-}
-} // Anonymous namespace
-
-void EmitWriteGlobalU8(EmitContext& ctx, Id address, Id value) {
-    WriteGlobalNarrow(ctx, address, value, 8);
+void EmitWriteGlobalU8(EmitContext&) {
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
-void EmitWriteGlobalS8(EmitContext& ctx, Id address, Id value) {
-    WriteGlobalNarrow(ctx, address, value, 8);
+void EmitWriteGlobalS8(EmitContext&) {
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
-void EmitWriteGlobalU16(EmitContext& ctx, Id address, Id value) {
-    WriteGlobalNarrow(ctx, address, value, 16);
+void EmitWriteGlobalU16(EmitContext&) {
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
-void EmitWriteGlobalS16(EmitContext& ctx, Id address, Id value) {
-    WriteGlobalNarrow(ctx, address, value, 16);
+void EmitWriteGlobalS16(EmitContext&) {
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 void EmitWriteGlobal32(EmitContext& ctx, Id address, Id value) {
@@ -243,8 +210,21 @@ Id EmitLoadStorage32(EmitContext& ctx, const IR::Value& binding, const IR::Value
     return LoadStorage32(ctx, binding, offset);
 }
 
+// Offsets are relative to a binding base aligned only to the device's storage buffer alignment
+// (4 bytes on AMD), so the vector view (offset >> 3 or 4) is right only for offsets known to be
+// multiples of the access size; otherwise it reads the previous vector (Ocarina's lighting).
+static bool VectorViewIsExact(EmitContext& ctx, const IR::Value& offset, u32 size) {
+    if (!ctx.profile.support_descriptor_aliasing) {
+        return false;
+    }
+    if (offset.IsImmediate()) {
+        return offset.U32() % size == 0;
+    }
+    return ctx.profile.min_ssbo_alignment >= size;
+}
+
 Id EmitLoadStorage64(EmitContext& ctx, const IR::Value& binding, const IR::Value& offset) {
-    if (ctx.profile.support_descriptor_aliasing) {
+    if (VectorViewIsExact(ctx, offset, sizeof(u32[2]))) {
         return LoadStorage(ctx, binding, offset, ctx.U32[2], ctx.storage_types.U32x2,
                            sizeof(u32[2]), &StorageDefinitions::U32x2);
     } else {
@@ -254,7 +234,7 @@ Id EmitLoadStorage64(EmitContext& ctx, const IR::Value& binding, const IR::Value
 }
 
 Id EmitLoadStorage128(EmitContext& ctx, const IR::Value& binding, const IR::Value& offset) {
-    if (ctx.profile.support_descriptor_aliasing) {
+    if (VectorViewIsExact(ctx, offset, sizeof(u32[4]))) {
         return LoadStorage(ctx, binding, offset, ctx.U32[4], ctx.storage_types.U32x4,
                            sizeof(u32[4]), &StorageDefinitions::U32x4);
     } else {
@@ -316,7 +296,7 @@ void EmitWriteStorage32(EmitContext& ctx, const IR::Value& binding, const IR::Va
 
 void EmitWriteStorage64(EmitContext& ctx, const IR::Value& binding, const IR::Value& offset,
                         Id value) {
-    if (ctx.profile.support_descriptor_aliasing) {
+    if (VectorViewIsExact(ctx, offset, sizeof(u32[2]))) {
         WriteStorage(ctx, binding, offset, value, ctx.storage_types.U32x2, sizeof(u32[2]),
                      &StorageDefinitions::U32x2);
     } else {
@@ -329,7 +309,7 @@ void EmitWriteStorage64(EmitContext& ctx, const IR::Value& binding, const IR::Va
 
 void EmitWriteStorage128(EmitContext& ctx, const IR::Value& binding, const IR::Value& offset,
                          Id value) {
-    if (ctx.profile.support_descriptor_aliasing) {
+    if (VectorViewIsExact(ctx, offset, sizeof(u32[4]))) {
         WriteStorage(ctx, binding, offset, value, ctx.storage_types.U32x4, sizeof(u32[4]),
                      &StorageDefinitions::U32x4);
     } else {

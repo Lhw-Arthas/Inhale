@@ -7,12 +7,10 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cstdlib>
 #include <deque>
 #include <map>
 #include <optional>
 #include <tuple>
-#include <vector>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -27,86 +25,9 @@
 #include "shader_recompiler/frontend/ir/value.h"
 #include "shader_recompiler/host_translate_info.h"
 #include "shader_recompiler/ir_opt/passes.h"
-#ifndef INHALE_ENV_H   // (env_on: the switches' one rule)
-#include "inhale_env.h"
-#endif
 
 namespace Shader::Optimization {
-
-/// (EvilOOT) RX_VK_PTR_DIAG=1: how this thread's last translations' global memory accesses were bound, read and reset by
-/// gpu/vk/vk_shader.cpp around each program (no header: declared there by hand, so Eden's ~500 files do not rebuild).
-///   tracked   bound to a constant buffer pointer, the address made from constant buffer words only
-///   fallback  not tracked: the run-time search (NVN slots, tables, the mesh pointer table), table = a table was found
-///   mixed     bound to a constant buffer pointer although part of the address comes from memory (often only an index)
-///   split     bound to a constant buffer pointer while a select or phi gives the address either from constant buffer
-///             words or from memory (a pointer loaded through it): EvilOOT's near-leaf bug (zortos293/Lichii #410), the
-///             loaded pointer's reads go to the wrong buffer
-///   fallback_split  the same pattern among the fallbacks
-struct PointerDiag {
-    u32 tracked, fallback, fallback_table, mixed, split, fallback_split;
-};
-thread_local PointerDiag g_pointer_diag{};
-// (collect_shader_info_pass.cpp: NVN2 compute's storage buffer slots for the program translated on this thread, 0: not compute)
-extern thread_local u32 g_nvn2_compute_ssbo_base;
-extern thread_local u32 g_nvn2_compute_ssbo_count;
-extern thread_local bool g_all_global_this;   // (RX_VK_ALL_GLOBAL_PROGS, vk_shader.cpp: no access of this program bound)
-extern thread_local bool g_gm_port_this;      // (EDEN_NX2_GM_PORT_PROGS, vk_shader.cpp: the port for this program)
-
 namespace {
-bool PointerDiagOn() {
-    static const bool on = std::getenv("RX_VK_PTR_DIAG") != nullptr && std::atoi(std::getenv("RX_VK_PTR_DIAG")) != 0;
-    return on;
-}
-// (EvilOOT) a split address (see PointerDiag) is not bound to the constant buffer pointer on one side of its select or phi;
-// it is left to the run-time search (CollectStorageBuffers, origins.split), which finds whichever bound buffer (or table
-// entry, or pointer table pool) the address really falls in. #410's bug class (EvilOOT's near leaves): bound to one side,
-// the other side's reads went to the wrong buffer. The search covers whole pools (OoT's culling: characters, fallen
-// leaves and fireflies came back).
-
-/// (longshot) Switches for the analysis ported from Fritchii (Frizti/Fritchii), read once. EDEN_* variables are part of the
-/// program cache's key (vk_shader.cpp disk_stamp), so a change translates the programs again.
-///   EDEN_NX2_GM_LEGACY=0     the port (default 1 since v2.0.4: the tracking as before the port (NVN-biased, then unbiased search; no pairing, no native rules)
-///   EDEN_NX2_GM_NATIVE=0     the pairing, but not the native-program rules (mapped pointers, candidates bound together)
-///   EDEN_NX2_GM_COMPETING=0  a split access's tracked pointer is not bound (Lichii #410's adaptation off)
-bool EnvSwitch(const char* name, bool fallback) {
-    const char* const value{std::getenv(name)};
-    return value && *value ? std::atoi(value) != 0 : fallback;
-}
-bool GmLegacy() {
-    // (the tracking as before is the default again since v2.0.4: with the port on, v2.0.3 drew Link and the NPCs nearly black
-    // and its lighting wrong (Discord, 11-08; an A/B in Link's house: his face lit with it off, a dark silhouette with it on),
-    // and more draws cost fps. EDEN_NX2_GM_LEGACY=0: the port, for testing)
-    static const bool on{EnvSwitch("EDEN_NX2_GM_LEGACY", true)};
-    return on;
-}
-/// (longshot) The tracking a stage gets. EDEN_NX2_GM_LEGACY=0/1: the port / the tracking as before, for every stage. Unset: the port
-/// for the geometry and compute stages, the tracking as before for the fragment stage. The port placed the trees and terrain right
-/// (v2.0.3: no floating trees, issue #729) and the dark characters were lighting, which the fragment stage reads (light probes).
-/// EDEN_NX2_GM_SPLIT=1: that split; unset or 0: the tracking as before everywhere (v2.0.4/v2.0.5's default). Off by default again
-/// (2026-11-08 test): with it the cold precompile of the 10340 compute programs took 650 s instead of ~130 s.
-/// (floating trees, issue 994: the full split removed them but tore the cliffs) EDEN_NX2_GM_SPLIT=2: the port for the geometry
-/// stages only; =3: for compute programs only. EDEN_NX2_GM_PORT_PROGS=<key prefix>[,...]: the port for those programs alone (the
-/// bisection of which program places the trees)
-bool GmLegacyFor(Stage stage) {
-    if (g_gm_port_this) return false;
-    static const char* const forced{std::getenv("EDEN_NX2_GM_LEGACY")};
-    if (forced && *forced) return GmLegacy();
-    static const int split{std::getenv("EDEN_NX2_GM_SPLIT") ? std::atoi(std::getenv("EDEN_NX2_GM_SPLIT")) : 0};
-    switch (split) {
-    case 1: return stage == Stage::Fragment;
-    case 2: return stage == Stage::Fragment || stage == Stage::Compute;
-    case 3: return stage != Stage::Compute;
-    default: return true;
-    }
-}
-bool GmNative() {
-    static const bool on{EnvSwitch("EDEN_NX2_GM_NATIVE", true)};
-    return on;
-}
-bool GmCompeting() {
-    static const bool on{EnvSwitch("EDEN_NX2_GM_COMPETING", true)};
-    return on;
-}
 /// Address in constant buffers to the storage buffer descriptor
 struct StorageBufferAddr {
     auto operator<=>(const StorageBufferAddr&) const noexcept = default;
@@ -151,20 +72,16 @@ struct StorageInfo {
     /// instructions (the IR does not change while storage buffers are collected).
     std::unordered_map<const IR::Inst*, std::optional<StorageBufferAddr>> biased_tracks;
     std::unordered_map<const IR::Inst*, std::optional<StorageBufferAddr>> unbiased_tracks;
-    StorageBufferSet tables;   // (longshot: TrackTable's, for the fallbacks)
+    /// Instructions from which a search with (or without) the bias cannot succeed. Each search
+    /// from a new address otherwise walked again what failed searches had walked: 725 failing
+    /// biased searches of ~5,600 instructions each in a 28,000 instruction compute shader.
+    std::unordered_set<const IR::Inst*> biased_exhausted;
+    std::unordered_set<const IR::Inst*> unbiased_exhausted;
     std::unordered_map<const IR::Inst*, small_vector<StorageBufferAddr, 4>> native_candidates;
+    /// Native accesses whose candidates include slots of a dynamically indexed pointer array.
+    std::unordered_set<const IR::Inst*> native_dynamic;
     /// A native access with several candidate pointers was left global.
     bool native_runtime_bounds{};
-    /// (longshot) Fritchii's analysis (pointer pairing, iterator words, atomics' pointers): off, the old tracks alone
-    bool pairing{true};
-    /// (longshot) Fritchii's native-program rules (Environment::IsNativeProgram): pointers must be mapped, candidates
-    bool native{};
-    /// (longshot) Several candidates of an access, and the tracked side of a split one, are bound; cleared when they
-    /// would leave too few bindings (Lichii #421: the first result kept instead of overflowing MAX_SSBOS)
-    bool bind_candidates{true};
-    /// (longshot, Lichii #410) the tracked side of a split access is bound (see CollectStorageBuffers)
-    bool bind_competing{true};
-    bool competing_bound{};
 };
 
 /// Returns true when the instruction is a global memory instruction
@@ -450,8 +367,9 @@ std::optional<LowAddrInfo> TrackLowAddress(IR::Inst* inst) {
 }
 
 /// Tries to track the storage buffer address used by a global memory instruction
-std::optional<StorageBufferAddr> Track(const IR::Value& value, const Bias* bias, bool skip_c1 = false) {
-    const auto pred{[bias, skip_c1](const IR::Inst* inst) -> std::optional<StorageBufferAddr> {
+std::optional<StorageBufferAddr> Track(const IR::Value& value, const Bias* bias,
+                                       std::unordered_set<const IR::Inst*>& exhausted) {
+    const auto pred{[bias](const IR::Inst* inst) -> std::optional<StorageBufferAddr> {
         if (inst->GetOpcode() != IR::Opcode::GetCbufU32 &&
             inst->GetOpcode() != IR::Opcode::GetCbufU32x2) {
             return std::nullopt;
@@ -471,9 +389,6 @@ std::optional<StorageBufferAddr> Track(const IR::Value& value, const Bias* bias,
             .index = index.U32(),
             .offset = offset.U32(),
         };
-        if (skip_c1 && storage_buffer.index == 1) {
-            return std::nullopt;   // (an offset, not a base: the search goes on to the other addend)
-        }
         const u32 alignment{bias ? bias->alignment : 8U};
         if (!Common::IsAligned(storage_buffer.offset, alignment)) {
             // The SSBO pointer has to be aligned
@@ -486,49 +401,15 @@ std::optional<StorageBufferAddr> Track(const IR::Value& value, const Bias* bias,
         }
         return storage_buffer;
     }};
-    // (longshot, from Lichii) A pointer loaded from memory is a new address, not an offset into the buffer that supplied it: its
-    // load is not followed back to that buffer's own constant-buffer descriptor.
+    // A pointer loaded from memory is a new address, not an offset into the buffer that supplied
+    // it. Do not follow that load back to its own constant-buffer descriptor.
     const auto stop_at_memory = [](IR::Value operand) {
         if (!operand.IsImmediate() && IsGlobalMemory(*operand.InstRecursive())) {
             return IR::Value{u32{0}};
         }
         return operand;
     };
-    return BreadthFirstSearch(value, pred, stop_at_memory);
-}
-
-/// (longshot) A low address read from a storage buffer table: GetCbuf(index, x * 16 + base), x a run-time value
-std::optional<StorageBufferAddr> TrackTable(const IR::Value& value) {
-    const auto pred{[](const IR::Inst* inst) -> std::optional<StorageBufferAddr> {
-        if (inst->GetOpcode() != IR::Opcode::GetCbufU32 && inst->GetOpcode() != IR::Opcode::GetCbufU32x2) {
-            return std::nullopt;
-        }
-        const IR::Value index{inst->Arg(0)};
-        const IR::Value offset{inst->Arg(1)};
-        if (!index.IsImmediate() || offset.IsImmediate()) {
-            return std::nullopt;
-        }
-        const IR::Inst* const add{offset.InstRecursive()};
-        if (add->GetOpcode() != IR::Opcode::IAdd32) {
-            return std::nullopt;
-        }
-        for (size_t side = 0; side < 2; ++side) {
-            const IR::Value base{add->Arg(side)};
-            const IR::Value scaled{add->Arg(1 - side)};
-            if (!base.IsImmediate() || scaled.IsImmediate() || base.U32() % 16 != 0) {
-                continue;
-            }
-            const IR::Inst* const s{scaled.InstRecursive()};
-            const bool by16{s->Arg(1).IsImmediate() &&
-                            ((s->GetOpcode() == IR::Opcode::ShiftLeftLogical32 && s->Arg(1).U32() == 4) ||
-                             (s->GetOpcode() == IR::Opcode::IMul32 && s->Arg(1).U32() == 16))};
-            if (by16) {
-                return StorageBufferAddr{.index = index.U32(), .offset = base.U32()};
-            }
-        }
-        return std::nullopt;
-    }};
-    return BreadthFirstSearch(value, pred);
+    return BreadthFirstSearchPruned(value, pred, exhausted, stop_at_memory);
 }
 
 /// Finds the one constant buffer word added directly into the low address, which is the base
@@ -928,13 +809,13 @@ StorageBufferSet CollectIteratorWords(IR::Program& program) {
                     WordSum sum;
                     SumWords(inst.Arg(arg), &inst, sum);
                     if (sum.reaches_loop) {
-                        for (const StorageBufferAddr& word : sum.words) result.insert(word);   // (the compat flat_set has no range insert)
+                        result.insert(sum.words.begin(), sum.words.end());
                     }
                 }
             } else if (inst.GetOpcode() == IR::Opcode::IAdd32) {
                 WordSum sum;
                 if (SumWords(IR::Value{&inst}, nullptr, sum) && sum.words.size() >= 3) {
-                    for (const StorageBufferAddr& word : sum.words) result.insert(word);   // (the compat flat_set has no range insert)
+                    result.insert(sum.words.begin(), sum.words.end());
                 }
             }
         }
@@ -1137,11 +1018,82 @@ std::optional<StorageBufferAddr> TrackPointerAddend(const LowAddrInfo& addr,
     return tied || (!legacy_nearest && candidates.size() != 1) ? std::nullopt : result;
 }
 
+/// The first slot and stride of a pointer array read at a dynamic constant buffer offset:
+/// (index << shift) + base or index * stride + base.
+std::optional<std::pair<u32, u32>> DynamicPointerSlots(const IR::Value& offset) {
+    const auto stride_of = [](const IR::Value& value) -> std::optional<u32> {
+        if (value.IsImmediate()) {
+            return std::nullopt;
+        }
+        const IR::Inst* const inst{value.InstRecursive()};
+        if (inst->GetOpcode() == IR::Opcode::ShiftLeftLogical32 && inst->Arg(1).IsImmediate() &&
+            inst->Arg(1).U32() < 16) {
+            return 1U << inst->Arg(1).U32();
+        }
+        if (inst->GetOpcode() == IR::Opcode::IMul32 && inst->Arg(1).IsImmediate()) {
+            return inst->Arg(1).U32();
+        }
+        return std::nullopt;
+    };
+    u32 base{};
+    std::optional<u32> stride{stride_of(offset)};
+    if (!stride && !offset.IsImmediate() &&
+        offset.InstRecursive()->GetOpcode() == IR::Opcode::IAdd32) {
+        const IR::Inst* const add{offset.InstRecursive()};
+        for (size_t arg = 0; arg < 2 && !stride; ++arg) {
+            if (add->Arg(arg ^ 1).IsImmediate()) {
+                base = add->Arg(arg ^ 1).U32();
+                stride = stride_of(add->Arg(arg));
+            }
+        }
+    }
+    if (!stride || *stride < 8 || !Common::IsAligned(*stride, 8)) {
+        return std::nullopt;
+    }
+    return std::pair{base, *stride};
+}
+
+/// Slots of a pointer array read at a dynamic offset, following phis and selects of the offset.
+/// A stride of zero is a single slot.
+void CollectPointerSlots(const IR::Value& offset, small_vector<std::pair<u32, u32>, 4>& slots,
+                         std::unordered_set<const IR::Inst*>& visited) {
+    if (offset.IsImmediate()) {
+        if (std::ranges::find(slots, std::pair{offset.U32(), 0U}) == slots.end()) {
+            slots.emplace_back(offset.U32(), 0U);
+        }
+        return;
+    }
+    const IR::Inst* const inst{offset.InstRecursive()};
+    if (!visited.insert(inst).second) {
+        return;
+    }
+    if (const auto pattern{DynamicPointerSlots(offset)}) {
+        if (std::ranges::find(slots, *pattern) == slots.end()) {
+            slots.push_back(*pattern);
+        }
+        return;
+    }
+    switch (inst->GetOpcode()) {
+    case IR::Opcode::Phi:
+        for (size_t arg = 0; arg < inst->NumArgs(); ++arg) {
+            CollectPointerSlots(inst->Arg(arg), slots, visited);
+        }
+        break;
+    case IR::Opcode::SelectU32:
+        CollectPointerSlots(inst->Arg(1), slots, visited);
+        CollectPointerSlots(inst->Arg(2), slots, visited);
+        break;
+    default:
+        break;
+    }
+}
+
 /// Native programs: every constant buffer pointer the low address can come from, following only
 /// additions, selects and phis. A predicated address assignment becomes a phi whose other input
-/// can point into a different buffer, so the search does not stop at the first pointer.
+/// can point into a different buffer, so the search does not stop at the first pointer. A pointer
+/// read from an array at a dynamic offset contributes every mapped slot of the array.
 small_vector<StorageBufferAddr, 4> NativePointerCandidates(const IR::U32& low_addr,
-                                                           Environment& env) {
+                                                           Environment& env, bool& dynamic) {
     small_vector<StorageBufferAddr, 4> candidates;
     small_vector<const IR::Inst*, 16> pending{low_addr.InstRecursive()};
     std::unordered_set<const IR::Inst*> visited{pending.front()};
@@ -1157,6 +1109,25 @@ small_vector<StorageBufferAddr, 4> NativePointerCandidates(const IR::U32& low_ad
         case IR::Opcode::GetCbufU32x2: {
             const IR::Value index{inst->Arg(0)};
             const IR::Value offset{inst->Arg(1)};
+            if (index.IsImmediate() && !offset.IsImmediate()) {
+                static constexpr u32 max_slots{16};
+                small_vector<std::pair<u32, u32>, 4> slots;
+                std::unordered_set<const IR::Inst*> slot_visited;
+                CollectPointerSlots(offset, slots, slot_visited);
+                for (const auto& [first, stride] : slots) {
+                    for (u32 slot = 0; slot < (stride ? max_slots : 1U); ++slot) {
+                        const StorageBufferAddr pointer{.index = index.U32(),
+                                                        .offset = first + slot * stride};
+                        if (Common::IsAligned(pointer.offset, 8) &&
+                            std::ranges::find(candidates, pointer) == candidates.end() &&
+                            env.IsCbufStorageBufferPointer(pointer.index, pointer.offset)) {
+                            candidates.push_back(pointer);
+                            dynamic = true;
+                        }
+                    }
+                }
+                break;
+            }
             if (!index.IsImmediate() || !offset.IsImmediate()) {
                 break;
             }
@@ -1178,6 +1149,10 @@ small_vector<StorageBufferAddr, 4> NativePointerCandidates(const IR::U32& low_ad
             enqueue(inst->Arg(1));
             enqueue(inst->Arg(2));
             break;
+        case IR::Opcode::ShuffleIndex:
+            // A pointer made uniform (R2UR broadcasts the first active lane's value).
+            enqueue(inst->Arg(0));
+            break;
         case IR::Opcode::CompositeExtractU32x2:
             if (inst->Arg(1).IsImmediate() && inst->Arg(1).U32() == 0) {
                 enqueue(inst->Arg(0));
@@ -1190,143 +1165,9 @@ small_vector<StorageBufferAddr, 4> NativePointerCandidates(const IR::U32& low_ad
     return candidates;
 }
 
-/// (EvilOOT, RX_VK_PTR_DIAG) Where an address comes from: constant buffer words, memory (a global load: a pointer loaded
-/// from memory), and whether a select or phi joins values on the way. The walk stops at both kinds of source.
-/// split: a select or phi with a side from constant buffer words only and a side from memory (#410's pattern: the
-/// pointer is c0[x] or *c0[x], and only c0[x] gets bound). An index loaded from memory into a constant buffer
-/// pointer's offset is not split.
-struct AddrOrigins {
-    bool cbuf{}, load{}, branch{}, split{};
-};
-/// (11-07) One walk for the whole program, each instruction's origins kept: the first version walked up to 1024
-/// instructions per address and walked each side of every select or phi again, nested three deep, which on a compute
-/// shader with many loop phis ran for minutes on the submit's thread (the freeze after Load, vk_hangdump.cpp found it).
-/// Origins of an instruction = the union of its arguments' (a select's condition left out); split where a select or
-/// phi joins a side from constant buffer words only with a side from memory, or below. A phi's argument still being
-/// walked (a loop) adds nothing.
-thread_local std::unordered_map<const IR::Inst*, AddrOrigins> g_origins;
-AddrOrigins Origins(const IR::Value& root) {
-    if (root.IsImmediate()) {
-        return {};
-    }
-    const IR::Inst* const top{root.InstRecursive()};
-    if (const auto it{g_origins.find(top)}; it != g_origins.end()) {
-        return it->second;
-    }
-    const auto is_cbuf{[](IR::Opcode op) { return op == IR::Opcode::GetCbufU32 || op == IR::Opcode::GetCbufU32x2; }};
-    const auto first_arg{[](IR::Opcode op) -> size_t {
-        return op == IR::Opcode::SelectU32 || op == IR::Opcode::SelectU64 ? 1 : 0;   // (not the condition)
-    }};
-    struct Frame {
-        const IR::Inst* inst;
-        size_t next;
-    };
-    std::vector<Frame> stack{{top, first_arg(top->GetOpcode())}};
-    std::unordered_set<const IR::Inst*> walking{top};
-    while (!stack.empty()) {
-        const IR::Inst* const inst{stack.back().inst};
-        const IR::Opcode op{inst->GetOpcode()};
-        const bool source{is_cbuf(op) || IsGlobalMemory(*inst)};
-        const IR::Inst* child{};
-        while (!source && !child && stack.back().next < inst->NumArgs()) {
-            const IR::Value arg{inst->Arg(stack.back().next++)};
-            if (arg.IsImmediate()) {
-                continue;
-            }
-            const IR::Inst* const a{arg.InstRecursive()};
-            if (!g_origins.contains(a) && !walking.contains(a)) {
-                child = a;
-            }
-        }
-        if (child) {
-            stack.push_back({child, first_arg(child->GetOpcode())});
-            walking.insert(child);
-            continue;
-        }
-        AddrOrigins o;
-        if (is_cbuf(op)) {
-            o.cbuf = true;
-        } else if (IsGlobalMemory(*inst)) {
-            o.load = true;
-        } else {
-            const size_t first{first_arg(op)};
-            const bool joins{op == IR::Opcode::Phi || first == 1};
-            bool cbuf_only{}, from_memory{};
-            o.branch = joins;
-            for (size_t i = first; i < inst->NumArgs(); ++i) {
-                const IR::Value arg{inst->Arg(i)};
-                if (arg.IsImmediate()) {
-                    continue;
-                }
-                const auto it{g_origins.find(arg.InstRecursive())};
-                if (it == g_origins.end()) {
-                    continue;   // (a loop's phi, still being walked)
-                }
-                const AddrOrigins& side{it->second};
-                o.cbuf |= side.cbuf, o.load |= side.load, o.branch |= side.branch, o.split |= side.split;
-                cbuf_only |= side.cbuf && !side.load;
-                from_memory |= side.load;
-            }
-            o.split |= joins && cbuf_only && from_memory;
-        }
-        g_origins.emplace(inst, o);
-        walking.erase(inst);
-        stack.pop_back();
-    }
-    return g_origins[top];
-}
-/// (longshot, from Lichii b8d81e20) Whether an address is a select or phi of which one input is a pointer loaded from memory: Ocarina's foliage
-/// placement records are read from c0[12] or from *c0[12]. Tracked to the constant buffer pointer alone, the loaded path read out of bounds
-/// as zeros, the near-leaf pass wrote NaN positions, and trees had no leaves. Such a load stays global: the backend's page table reads it
-bool MixesLoadedPointer(const IR::Value& value) {
-    if (value.IsImmediate()) {
-        return false;
-    }
-    std::vector<const IR::Inst*> todo{value.InstRecursive()};
-    std::unordered_set<const IR::Inst*> seen;
-    bool merge{}, loaded{};
-    while (!todo.empty() && seen.size() < 96) {
-        const IR::Inst* const inst{todo.back()};
-        todo.pop_back();
-        if (!seen.insert(inst).second) {
-            continue;
-        }
-        switch (inst->GetOpcode()) {
-        case IR::Opcode::Phi:
-        case IR::Opcode::SelectU32:
-        case IR::Opcode::SelectU64:
-            merge = true;
-            break;
-        case IR::Opcode::LoadStorage32:
-        case IR::Opcode::LoadStorage64:
-        case IR::Opcode::LoadStorage128:
-        case IR::Opcode::LoadGlobal32:
-        case IR::Opcode::LoadGlobal64:
-        case IR::Opcode::LoadGlobal128:
-            loaded = true;
-            continue;   // (what it loads from is another matter)
-        default:
-            break;
-        }
-        for (size_t i = 0; i < inst->NumArgs(); ++i) {
-            const IR::Value arg{inst->Arg(i)};
-            if (!arg.IsImmediate()) {
-                todo.push_back(arg.InstRecursive());
-            }
-        }
-    }
-    return merge && loaded;
-}
-
-thread_local bool g_follow_stage = false;   // (longshot: the program being translated is compute, where the page table is)
-thread_local bool g_graphics_stage = false;   // (sharkiix: the program being translated is a geometry stage: vertex, tessellation, geometry, task, mesh)
-
 /// Collects the storage buffer used by a global memory instruction and the instruction itself
 void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info, Environment& env,
-                           const TrackingConditions* conditions_or_null) {
-    if (g_all_global_this) {
-        return;   // (EvilOOT, a test: every access left global, found by its address at run time: search, then the page table)
-    }
+                           const TrackingConditions& conditions) {
     // NVN puts storage buffers in a specific range, we have to bias towards these addresses to
     // avoid getting false positives
     static constexpr Bias nvn_bias{
@@ -1335,198 +1176,97 @@ void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info, 
         .offset_end = 0x700,
         .alignment = 16,
     };
-    // (EvilOOT, RX_VK_PTR_DIAG) counted on every way out of here
-    const bool diag{PointerDiagOn()};
-    const AddrOrigins origins{Origins(inst.Arg(0))};
-    const auto count_fallback{[&](bool table) {
-        if (diag) {
-            ++g_pointer_diag.fallback;
-            g_pointer_diag.fallback_table += table ? 1 : 0;
-            g_pointer_diag.fallback_split += origins.split ? 1 : 0;
-        }
-    }};
     // Track the low address of the instruction
     const std::optional<LowAddrInfo> low_addr_info{TrackLowAddress(&inst)};
     if (!low_addr_info) {
         // Failed to track the low address, use NVN fallbacks
-        count_fallback(false);
         return;
     }
-    // (EvilOOT) NVN2 compute: its own storage buffer slots are the bias (collect_shader_info_pass.cpp
-    // g_nvn2_compute_ssbo_base), not Maxwell's 0x100..0x700, which never matched: every compute access went to the
-    // unbiased track, which took the first constant buffer word it met
-    const Bias compute_bias{
-        .index = 0,
-        .offset_begin = g_nvn2_compute_ssbo_base,
-        .offset_end = g_nvn2_compute_ssbo_base + 16 * g_nvn2_compute_ssbo_count,
-        .alignment = 16,
-    };
-    const Bias* const bias{g_nvn2_compute_ssbo_base ? &compute_bias : &nvn_bias};
-    {
-        // (only where the page table is: compute. A graphics stage reads such a load as 0, and that blanked every menu text)
-        const IR::Opcode op{inst.GetOpcode()};
-        // (and the writes and 32-bit atomics through such an address: the culling's outputs and counters, which the backend's page
-        // table now reaches too. Tracked to the constant buffer alone they went to a buffer at address 0, and every count stayed 0)
-        const bool load{op == IR::Opcode::LoadGlobal32 || op == IR::Opcode::LoadGlobal64 || op == IR::Opcode::LoadGlobal128};
-        const bool store{op == IR::Opcode::WriteGlobal32 || op == IR::Opcode::WriteGlobal64 || op == IR::Opcode::WriteGlobal128 ||
-                         op == IR::Opcode::GlobalAtomicIAdd32 || op == IR::Opcode::GlobalAtomicUMax32 || op == IR::Opcode::GlobalAtomicUMin32 ||
-                         op == IR::Opcode::GlobalAtomicSMax32 || op == IR::Opcode::GlobalAtomicSMin32 || op == IR::Opcode::GlobalAtomicAnd32 ||
-                         op == IR::Opcode::GlobalAtomicOr32 || op == IR::Opcode::GlobalAtomicXor32 || op == IR::Opcode::GlobalAtomicExchange32 ||
-                         op == IR::Opcode::GlobalAtomicCompareExchange32};
-        // (RX_VK_FOLLOW_STORES=1: the writes too. Off: they made the culling count but drew no leaves, and a GPU faulted in it, #132)
-        static const bool no_store{!env_on("RX_VK_FOLLOW_STORES")};
-        if (g_follow_stage && (load || (store && !no_store)) && MixesLoadedPointer(low_addr_info->value)) {
-            return;   // (left global: MixesLoadedPointer)
-        }
-    }
+    // First try to find storage buffers in the NVN address
     const IR::U32 low_addr{low_addr_info->value};
-    // (longshot) Left global: found by its address at run time (the bound buffers, the program's tables, the page table).
-    // The table the address is read from, if it is, is kept for that search, as on every way to the run-time search.
-    const auto leave_global{[&] {
-        bool table_found{};
-        if (!low_addr.IsImmediate()) {
-            if (const std::optional<StorageBufferAddr> table{TrackTable(low_addr)}) {
-                info.tables.insert(*table);
-                table_found = true;
+    // Switch 1 (NVN) programs keep the original search below; the pointer trackers are for native
+    // Switch 2 programs, whose pointers are raw constant buffer arguments.
+    const bool native = env.IsNativeProgram();
+    const std::optional<StorageBufferAddr> paired_pointer{
+        native ? TrackPointerAddend(*low_addr_info, info.iterator_words, conditions)
+               : std::nullopt};
+    std::optional<StorageBufferAddr> storage_buffer{paired_pointer};
+    if (native && storage_buffer &&
+        !env.IsCbufStorageBufferPointer(storage_buffer->index, storage_buffer->offset)) {
+        storage_buffer.reset();
+    }
+    if (native && !storage_buffer && !low_addr.IsImmediate()) {
+        const IR::Inst* const start{low_addr.InstRecursive()};
+        auto it{info.native_candidates.find(start)};
+        if (it == info.native_candidates.end()) {
+            bool dynamic{};
+            it = info.native_candidates
+                     .emplace(start, NativePointerCandidates(low_addr, env, dynamic))
+                     .first;
+            if (dynamic) {
+                info.native_dynamic.insert(start);
             }
         }
-        count_fallback(table_found);
-    }};
-    // (EvilOOT) c1 is the program's own constants: no buffer's address is known when a program is built, so a word of
-    // c1 in the address is an offset (OoT's culling passes: a pointer loaded from memory + c1[0] = 12, taken for the
-    // base: their results went to a buffer at address 12). Left to the run-time search, which finds the real one.
-    const auto not_c1{[](std::optional<StorageBufferAddr> found) {
-        return found && found->index == 1 ? std::nullopt : found;
-    }};
-    const auto cached_track = [&](const Bias* bias, auto& cache) {
+        const auto& candidates{it->second};
+        if (candidates.size() > 1 || (!candidates.empty() && info.native_dynamic.contains(start))) {
+            // Bind every candidate and keep the access global; the backend picks the buffer at
+            // run time. Rebasing on one of them drops the other path's accesses.
+            for (const StorageBufferAddr& candidate : candidates) {
+                info.set.insert(candidate);
+                if (IsGlobalMemoryWrite(inst)) {
+                    info.writes.insert(candidate);
+                }
+            }
+            info.native_runtime_bounds = true;
+            return;
+        } else if (candidates.size() == 1) {
+            // The one pointer the address is built from. The NVN search below only takes 16-byte
+            // aligned slots, so for a pointer at an 8-byte slot it can return a dimension or stride
+            // the address arithmetic reads instead, and the access then lands in the wrong buffer.
+            storage_buffer = candidates.front();
+        }
+    }
+    if (native && !storage_buffer) {
+        // A pointer that is an atomic's address keeps its buffer while unmapped, for the atomic
+        // and every access based on it: Bananza's append counters and the records stored after
+        // them were unmapped when their pipelines were first built. The binding reads the pointer
+        // again for every dispatch.
+        if (!paired_pointer || !info.atomic_pointers.contains(*paired_pointer)) {
+            return;
+        }
+        storage_buffer = paired_pointer;
+    }
+    const auto cached_track = [&](const Bias* bias, auto& cache, auto& exhausted) {
         if (low_addr.IsImmediate()) {
-            return Track(low_addr, bias);
+            return Track(low_addr, bias, exhausted);
         }
         const IR::Inst* const start{low_addr.InstRecursive()};
         if (const auto it = cache.find(start); it != cache.end()) {
             return it->second;
         }
-        const std::optional<StorageBufferAddr> result{Track(low_addr, bias)};
+        const std::optional<StorageBufferAddr> result{Track(low_addr, bias, exhausted)};
         cache.emplace(start, result);
         return result;
     };
-    std::optional<StorageBufferAddr> storage_buffer;
-    if (info.pairing && conditions_or_null) {
-        const TrackingConditions& conditions{*conditions_or_null};
-        // (Fritchii) The 64-bit constant buffer pointer whose low word is summed into the address's low half and whose
-        // high word into its high half. Inhale's mesh programs had a texture handle and a float (c5+0x60) taken for
-        // their base by the searches below, which read only the low half: the access read zeros (Death Mountain's
-        // terrain under its trees missing: the floating trees).
-        const std::optional<StorageBufferAddr> paired_pointer{
-            not_c1(TrackPointerAddend(*low_addr_info, info.iterator_words, conditions))};
-        storage_buffer = paired_pointer;
-        if (info.native && storage_buffer &&
-            !env.IsCbufStorageBufferPointer(storage_buffer->index, storage_buffer->offset)) {
-            storage_buffer.reset();
-        }
-        if (info.native && !storage_buffer && !low_addr.IsImmediate()) {
-            const IR::Inst* const start{low_addr.InstRecursive()};
-            auto it{info.native_candidates.find(start)};
-            if (it == info.native_candidates.end()) {
-                it = info.native_candidates.emplace(start, NativePointerCandidates(low_addr, env)).first;
-            }
-            const auto& candidates{it->second};
-            if (candidates.size() > 1) {
-                // Bind every candidate and keep the access global; the backend picks the buffer at
-                // run time. Rebasing on one of them drops the other path's accesses.
-                // (longshot: unless they would take too many bindings, StorageInfo::bind_candidates: then the run-time
-                // search alone)
-                if (info.bind_candidates) {
-                    for (const StorageBufferAddr& candidate : candidates) {
-                        info.set.insert(candidate);
-                        if (IsGlobalMemoryWrite(inst)) {
-                            info.writes.insert(candidate);
-                        }
-                    }
-                    info.native_runtime_bounds = true;
-                }
-                leave_global();
-                return;
-            }
-            if (candidates.size() == 1) {
-                // The one pointer the address is built from. The NVN search below only takes 16-byte
-                // aligned slots, so for a pointer at an 8-byte slot it can return a dimension or stride
-                // the address arithmetic reads instead, and the access then lands in the wrong buffer.
-                storage_buffer = candidates.front();
-            }
-        }
-        if (info.native && !storage_buffer) {
-            // A pointer that is an atomic's address keeps its buffer while unmapped, for the atomic
-            // and every access based on it: Bananza's append counters and the records stored after
-            // them were unmapped when their pipelines were first built. The binding reads the pointer
-            // again for every dispatch.
-            if (!paired_pointer || !info.atomic_pointers.contains(*paired_pointer)) {
-                leave_global();
-                return;
-            }
-            storage_buffer = paired_pointer;
-        }
-        if (!storage_buffer) {
-            storage_buffer = not_c1(TrackPointerAddend(*low_addr_info, info.iterator_words, conditions, true));
-        }
-        if (!storage_buffer) {
-            storage_buffer = not_c1(TrackAddend(low_addr));
-        }
+    if (native && !storage_buffer) {
+        storage_buffer = TrackPointerAddend(*low_addr_info, info.iterator_words, conditions, true);
     }
-    // First try to find storage buffers in the NVN address
+    if (native && !storage_buffer) {
+        storage_buffer = TrackAddend(low_addr);
+    }
     if (!storage_buffer) {
-        storage_buffer = cached_track(bias, info.biased_tracks);
+        storage_buffer = cached_track(&nvn_bias, info.biased_tracks, info.biased_exhausted);
     }
     if (!storage_buffer) {
         // If it fails, track without a bias
-        storage_buffer = not_c1(cached_track(nullptr, info.unbiased_tracks));
-        // (longshot) A float add has no run-time search: its fallback stores nothing, so where the search above found only a c1
-        // word the sum was lost. OoT's 499dbfd0721d2858 adds the sky's spherical harmonics (the outdoor ambient light) at
-        // c0+0x20's buffer plus a c1 offset: the c0 pointer beside that offset is the base. Without it the scene lost its
-        // ambient light and the exposure lifted the dark night until it looked like day. EDEN_F32_ADD_TRACK=0: as before
-        static const bool f32_track{EnvSwitch("EDEN_F32_ADD_TRACK", true)};
-        if (!storage_buffer && f32_track && inst.GetOpcode() == IR::Opcode::GlobalAtomicAddF32) {
-            storage_buffer = Track(low_addr, nullptr, true);
-        }
+        storage_buffer = cached_track(nullptr, info.unbiased_tracks, info.unbiased_exhausted);
         if (!storage_buffer) {
-            // If that also fails, use NVN fallbacks (and the table it reads the address from, if it does)
-            leave_global();
+            // If that also fails, use NVN fallbacks
             LOG_WARNING(Shader, "Storage buffer failed to track, using global memory fallbacks");
             return;
         }
         LOG_DEBUG(Shader, "Storage buffer tracked without bias, index {} offset {}",
                     storage_buffer->index, storage_buffer->offset);
-    }
-    {   // (sharkiix, from BernabeCR93 in upstream issue 667) A graphics stage's address tracked to another constant buffer than
-        // c0 while part of it comes from memory: the far-foliage and mesh programs (95db514a35353e28, d905f52b7517c681,
-        // 51183fe750d5d0c8...) took float constants for a buffer address ("storage buffer NOT bound (reads zeros)", c5+0x60),
-        // read zeros and drew the plants without colour (white/sky-blue "mirror" ferns, glowing flowers). Left to the run-time
-        // search
-        if (storage_buffer->index != 0 && g_graphics_stage && Origins(inst.Arg(0)).load) {
-            leave_global();
-            return;
-        }
-    }
-    if (origins.split) {
-        // (Lichii #410, Duck912, adapted) The tracked pointer is one side of a select or phi whose other side is a pointer
-        // loaded from memory: bound too, so that the run-time search finds the accesses through it in every stage (the
-        // loaded side's are the page table's, where the stage has one). OoT's near-leaf pass reads its placement records
-        // from c0[12] or from *c0[12]. EDEN_NX2_GM_COMPETING=0: left to the search unbound, as before
-        if (info.bind_candidates && info.bind_competing) {
-            info.set.insert(*storage_buffer);
-            if (IsGlobalMemoryWrite(inst)) {
-                info.writes.insert(*storage_buffer);
-            }
-            info.native_runtime_bounds |= info.native;
-            info.competing_bound = true;
-        }
-        count_fallback(false);   // (counted as a run-time search, split)
-        return;
-    }
-    if (diag) {
-        ++g_pointer_diag.tracked;
-        g_pointer_diag.mixed += origins.load ? 1 : 0;
-        g_pointer_diag.split += origins.split ? 1 : 0;
     }
     // Collect storage buffer and the instruction
     if (IsGlobalMemoryWrite(inst)) {
@@ -1567,7 +1307,7 @@ void ReplaceLoad(IR::Block& block, IR::Inst& inst, const IR::U32& storage_index,
     const IR::Opcode new_opcode{GlobalToStorage(inst.GetOpcode())};
     const auto it{IR::Block::InstructionList::s_iterator_to(inst)};
     const IR::Value value{
-        &*block.PrependNewInst(it, new_opcode, {storage_index, offset})};
+        &*block.PrependNewInst(it, new_opcode, {storage_index, offset}, inst.Flags<u32>())};
     inst.ReplaceUsesWith(value);
 }
 
@@ -1585,9 +1325,18 @@ void ReplaceAtomic(IR::Block& block, IR::Inst& inst, const IR::U32& storage_inde
                    const IR::U32& offset) {
     const IR::Opcode new_opcode{GlobalToStorage(inst.GetOpcode())};
     const auto it{IR::Block::InstructionList::s_iterator_to(inst)};
-    const IR::Value value{inst.NumArgs() > 2
-        ? &*block.PrependNewInst(it, new_opcode, {storage_index, offset, inst.Arg(1), inst.Arg(2)})   // (compare-exchange)
-        : &*block.PrependNewInst(it, new_opcode, {storage_index, offset, inst.Arg(1)})};
+    const IR::Value value{
+        &*block.PrependNewInst(it, new_opcode, {storage_index, offset, inst.Arg(1)})};
+    inst.ReplaceUsesWith(value);
+}
+
+/// Replace a global compare-exchange with its storage buffer equivalent, keeping both operands
+void ReplaceAtomicCompareExchange(IR::Block& block, IR::Inst& inst, const IR::U32& storage_index,
+                                 const IR::U32& offset) {
+    const IR::Opcode new_opcode{GlobalToStorage(inst.GetOpcode())};
+    const auto it{IR::Block::InstructionList::s_iterator_to(inst)};
+    const IR::Value value{&*block.PrependNewInst(
+        it, new_opcode, {storage_index, offset, inst.Arg(1), inst.Arg(2)})};
     inst.ReplaceUsesWith(value);
 }
 
@@ -1622,7 +1371,6 @@ void Replace(IR::Block& block, IR::Inst& inst, const IR::U32& storage_index,
     case IR::Opcode::GlobalAtomicOr32:
     case IR::Opcode::GlobalAtomicXor32:
     case IR::Opcode::GlobalAtomicExchange32:
-    case IR::Opcode::GlobalAtomicCompareExchange32:
     case IR::Opcode::GlobalAtomicIAdd64:
     case IR::Opcode::GlobalAtomicSMin64:
     case IR::Opcode::GlobalAtomicUMin64:
@@ -1649,6 +1397,8 @@ void Replace(IR::Block& block, IR::Inst& inst, const IR::U32& storage_index,
     case IR::Opcode::GlobalAtomicMaxF16x2:
     case IR::Opcode::GlobalAtomicMaxF32x2:
         return ReplaceAtomic(block, inst, storage_index, offset);
+    case IR::Opcode::GlobalAtomicCompareExchange32:
+        return ReplaceAtomicCompareExchange(block, inst, storage_index, offset);
     default:
         throw InvalidArgument("Invalid global memory opcode {}", inst.GetOpcode());
     }
@@ -1664,57 +1414,18 @@ void GlobalMemoryToStorageBufferPass(Environment& env, IR::Program& program,
     if (!has_global_memory) {
         return;
     }
-    // (longshot: compute only; the task and mesh stages were tried for the foliage, which it did not bring back)
-    g_follow_stage = program.stage == Stage::Compute;
-    // (geometry stages only: with the fragment stage too, the sky drew black rectangles and the lighting went too bright at the castle)
-    g_graphics_stage = program.stage != Stage::Compute && program.stage != Stage::Fragment;
-    g_origins.clear();   // (EvilOOT: Origins' walk, kept per program)
-    const bool pairing{!GmLegacyFor(program.stage)};
-    std::optional<TrackingConditions> conditions;
+    TrackingConditions conditions{program};
     StorageInfo info;
-    info.pairing = pairing;
-    // (longshot: every NVN2 program Inhale translates is native, Env::IsNativeProgram)
-    info.native = pairing && GmNative() && env.IsNativeProgram();
-    // (Lichii #410: the global memory functions that pick a buffer at run time need 64-bit integers)
-    info.bind_competing = GmCompeting() && host_info.support_int64;
-    info.bind_candidates = host_info.support_int64;
-    if (pairing) {
-        conditions.emplace(program);
-        info.iterator_words = CollectIteratorWords(program);
-        info.atomic_pointers = CollectAtomicPointers(program);
-    }
-    const PointerDiag diag_before{g_pointer_diag};
-    const auto collect{[&] {
-        for (IR::Block* const block : program.post_order_blocks) {
-            for (IR::Inst& inst : block->Instructions()) {
-                if (!IsGlobalMemory(inst)) {
-                    continue;
-                }
-                if (conditions) {
-                    conditions->current = block;
-                }
-                CollectStorageBuffers(*block, inst, info, env, conditions ? &*conditions : nullptr);
+    info.iterator_words = CollectIteratorWords(program);
+    info.atomic_pointers = CollectAtomicPointers(program);
+    for (IR::Block* const block : program.post_order_blocks) {
+        for (IR::Inst& inst : block->Instructions()) {
+            if (!IsGlobalMemory(inst)) {
+                continue;
             }
+            conditions.current = block;
+            CollectStorageBuffers(*block, inst, info, env, conditions);
         }
-    }};
-    collect();
-    // (longshot, as Lichii #421) The candidates bound together, and the tracked sides of split accesses, must leave room for
-    // what translate_program.cpp adds after this pass (up to 16 NVN slots, the tables, the pointer table, the miss log):
-    // past it the descriptors' static_vector threw bad_alloc. Collected again without them: those accesses are left to
-    // the run-time search unbound.
-    static constexpr size_t kLaterDescriptors{16 + 4 + 2};
-    if ((info.native_runtime_bounds || info.competing_bound) &&
-        info.set.size() + kLaterDescriptors > Info::MAX_SSBOS) {
-        StorageInfo again;
-        again.pairing = info.pairing;
-        again.native = info.native;
-        again.bind_competing = info.bind_competing;
-        again.bind_candidates = false;
-        again.iterator_words = std::move(info.iterator_words);
-        again.atomic_pointers = std::move(info.atomic_pointers);
-        info = std::move(again);
-        g_pointer_diag = diag_before;
-        collect();
     }
     program.info.native_global_bounds |= info.native_runtime_bounds;
     for (const StorageBufferAddr& storage_buffer : info.set) {
@@ -1724,11 +1435,6 @@ void GlobalMemoryToStorageBufferPass(Environment& env, IR::Program& program,
             .count = 1,
             .is_written = info.writes.contains(storage_buffer),
         });
-    }
-    for (const StorageBufferAddr& table : info.tables) {
-        if (program.info.num_global_tables < program.info.global_tables.size()) {
-            program.info.global_tables[program.info.num_global_tables++] = {table.index, table.offset};
-        }
     }
     for (const StorageInst& storage_inst : info.to_replace) {
         const StorageBufferAddr storage_buffer{storage_inst.storage_buffer};

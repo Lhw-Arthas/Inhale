@@ -23,7 +23,6 @@ OPCODE(EndPrimitive,                                        Void,           U32,
 // Barriers
 OPCODE(Barrier,                                             Void,                                                                                           )
 OPCODE(WorkgroupMemoryBarrier,                              Void,                                                                                           )
-OPCODE(SubgroupBarrier,                                     Void,                                                                                           )
 OPCODE(DeviceMemoryBarrier,                                 Void,                                                                                           )
 
 // Context getters/setters
@@ -50,7 +49,6 @@ OPCODE(SetAttributeIndexed,                                 Void,           U32,
 OPCODE(GetPatch,                                            F32,            Patch,                                                                          )
 OPCODE(SetPatch,                                            Void,           Patch,          F32,                                                            )
 OPCODE(IsbeRead,                                            U32,            U32,                                                                            )
-OPCODE(IsbeReadOutput,                                      U32,            U32,                                                                            )
 OPCODE(IsbeWriteAttribute,                                  Void,           U32,            U32,                                                            )
 OPCODE(IsbeWriteMapU8,                                      Void,           U32,            U32,                                                            )
 OPCODE(IsbeWriteMapU32,                                     Void,           U32,            U32,                                                            )
@@ -575,6 +573,9 @@ OPCODE(ImageAtomicOr32,                                     U32,            Opaq
 OPCODE(ImageAtomicXor32,                                    U32,            Opaque,            Opaque,            U32,                                      )
 OPCODE(ImageAtomicExchange32,                               U32,            Opaque,            Opaque,            U32,                                      )
 
+// Cooperative matrix (tensor core) operations
+OPCODE(TensorMulAdd,                                        U32x2,          U32,            U32,            U32,            U32,            U32,            U32,            U32,            U32,            )
+
 // Warp operations
 OPCODE(LaneId,                                              U32,                                                                                            )
 OPCODE(VoteAll,                                             U1,             U1,                                                                             )
@@ -590,7 +591,6 @@ OPCODE(ShuffleIndex,                                        U32,            U32,
 OPCODE(ShuffleUp,                                           U32,            U32,            U32,            U32,            U32,                            )
 OPCODE(ShuffleDown,                                         U32,            U32,            U32,            U32,            U32,                            )
 OPCODE(ShuffleButterfly,                                    U32,            U32,            U32,            U32,            U32,                            )
-OPCODE(MatrixMulAddF16,                                     U32x2,          U32x4,          U32x2,          U32x2,                                          )
 OPCODE(QuadBroadcast,                                       U32,            U32,            U32,                                                                    )
 OPCODE(QuadSwap,                                            U32,            U32,            U32,                                                                    )
 OPCODE(FSwizzleAdd,                                         F32,            F32,            F32,            U32,                                            )

@@ -113,7 +113,10 @@ public:
     explicit TypedValue(IR::Inst* inst_) : TypedValue(Value(inst_)) {}
 };
 
-class Inst : public boost::intrusive::list_base_hook<> {
+// Normal links: a block's instruction list is then destroyed and cleared without visiting every
+// instruction to reset its hook, which safe links did (5% of translation time).
+class Inst : public boost::intrusive::list_base_hook<
+                 boost::intrusive::link_mode<boost::intrusive::normal_link>> {
 public:
     explicit Inst(IR::Opcode op_, u32 flags_) noexcept;
     explicit Inst(const Inst& base);
@@ -245,11 +248,11 @@ private:
     union {
         NonTriviallyDummy dummy{};
         boost::container::small_vector<std::pair<Block*, Value>, 2> phi_args;
-        std::array<Value, 5> args;
+        std::array<Value, 8> args;
     };
     std::unique_ptr<AssociatedInsts> associated_insts;
 };
-static_assert(sizeof(Inst) <= 128, "Inst size unintentionally increased");
+static_assert(sizeof(Inst) <= 192, "Inst size unintentionally increased");
 
 struct AssociatedInsts {
     union {

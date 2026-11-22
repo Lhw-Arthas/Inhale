@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
-#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -23,13 +22,6 @@
 #include "shader_recompiler/frontend/maxwell/translate_program.h"
 #include "shader_recompiler/host_translate_info.h"
 #include "shader_recompiler/ir_opt/passes.h"
-
-namespace Shader::Optimization {   // (EvilOOT: collect_shader_info_pass.cpp, declared here so no header changes)
-extern thread_local u32 g_nvn2_compute_ssbo_base;
-extern thread_local u32 g_nvn2_compute_ssbo_count;
-extern thread_local u32 g_nvn2_compute_layout_end;
-extern thread_local bool g_nvn2_miss_log_this;
-}
 
 namespace Shader::Maxwell {
 namespace {
@@ -98,72 +90,30 @@ void CollectInterpolationInfo(Environment& env, IR::Program& program) {
     }
 }
 
-void AddGlobalTables(IR::Program& program) {
-    // (longshot) task and mesh programs read through pointers kept in small storage buffers (bones, instances): memory no
-    // binding names. The back end's table at c0+0x880 holds the regions those pointers reach (vk_bank.cpp pointer_table).
-    // Few entries: each is searched at every read, and a program has ~150 of them (with 16, the driver took so long over each
-    // pipeline that a scene never finished loading)
-    // (EvilOOT) and compute programs, whose layout ends before the table (collect_shader_info_pass.cpp
-    // g_nvn2_compute_layout_end): OoT's culling passes reach their object lists through pointers in their records
-    const bool compute_table{program.stage == Stage::Compute && Optimization::g_nvn2_compute_layout_end != 0 &&
-                             Optimization::g_nvn2_compute_layout_end <= 0x880U};
-    // (EvilOOT) the program's own tables first: the search takes the first buffer that holds an address, and the pointer
-    // table's regions are whole pools for compute (vk_bank.cpp pointer_table), bound GPU-only. Searched before the precise
-    // entries, the culling setup's count writes went through the pool's binding and the launches never saw them.
-    // (longshot, as Lichii #421) none past MAX_SSBOS: the list is a static_vector, and one more threw bad_alloc
-    const auto room{[&] { return program.info.storage_buffers_descriptors.size() < Info::MAX_SSBOS; }};
-    for (u32 i = 0; i < program.info.num_global_tables && room(); ++i) {
-        program.info.storage_buffers_descriptors.push_back({
-            .cbuf_index = program.info.global_tables[i].first,
-            .cbuf_offset = program.info.global_tables[i].second,
-            .count = Info::kGlobalTableSize,
-            .is_written = program.info.stores_global_memory,
-        });
-    }
-    if ((program.stage == Stage::Task || program.stage == Stage::Mesh || compute_table) && program.info.uses_global_memory &&
-        room()) {
-        program.info.storage_buffers_descriptors.push_back({
-            .cbuf_index = 0U,
-            .cbuf_offset = 0x880U,
-            .count = 3U,
-            .is_written = compute_table && program.info.stores_global_memory,
-        });
-        // (EvilOOT) the global memory functions read the table's words from c0 in SPIR-V, not in the IR the bound size
-        // comes from: c0 must reach past it, or those words read 0
-        u32& used{program.info.constant_buffer_used_sizes[0]};
-        used = std::max<u32>(used, 0x880U + 16U * 3U);
-    }
-}
-
 void AddNVNStorageBuffers(IR::Program& program) {
     if (!program.info.uses_global_memory) {
         return;
     }
     const u32 driver_cbuf{0};
     const u32 descriptor_size{0x10};
-    // (EvilOOT) NVN2 compute: as many slots as its table has (past them c0 holds texture handles, not buffers)
-    const u32 num_buffers{program.stage == Stage::Compute && Optimization::g_nvn2_compute_ssbo_base
-                              ? std::min<u32>(Optimization::g_nvn2_compute_ssbo_count, 16)
-                              : 16};
+    const u32 num_buffers{16};
     const u32 base{[&] {
         switch (program.stage) {
         case Stage::VertexA:
         case Stage::VertexB:
+        case Stage::Task: // bound in the vertex slot
             return 0x110u;
-        case Stage::Task:   // (longshot: NVN2's tables, gpu/vk/vk_bank.cpp)
-            return 0x670u;
-        case Stage::Mesh:
-            return 0x770u;
         case Stage::TessellationControl:
             return 0x210u;
         case Stage::TessellationEval:
+        case Stage::Mesh: // bound in the tessellation slot
             return 0x310u;
         case Stage::Geometry:
             return 0x410u;
         case Stage::Fragment:
             return 0x510u;
-        case Stage::Compute:   // (EvilOOT: NVN2's, collect_shader_info_pass.cpp g_nvn2_compute_ssbo_base)
-            return Optimization::g_nvn2_compute_ssbo_base ? Optimization::g_nvn2_compute_ssbo_base : 0x310u;
+        case Stage::Compute:
+            return 0x310u;
         }
         throw InvalidArgument("Invalid stage {}", program.stage);
     }()};
@@ -173,13 +123,12 @@ void AddNVNStorageBuffers(IR::Program& program) {
             continue;
         }
         const u32 offset{base + index * descriptor_size};
-        const auto it{std::ranges::find(descs, offset, &StorageBufferDescriptor::cbuf_offset)};
+        const auto it{std::ranges::find_if(descs, [=](const StorageBufferDescriptor& desc) {
+            return desc.cbuf_index == driver_cbuf && desc.cbuf_offset == offset;
+        })};
         if (it != descs.end()) {
             it->is_written |= program.info.stores_global_memory;
             continue;
-        }
-        if (descs.size() >= Info::MAX_SSBOS) {
-            break;   // (longshot, as Lichii #421: no bad_alloc; the slots left out read 0)
         }
         descs.push_back({
             .cbuf_index = driver_cbuf,
@@ -187,32 +136,6 @@ void AddNVNStorageBuffers(IR::Program& program) {
             .count = 1,
             .is_written = program.info.stores_global_memory,
         });
-        // (EvilOOT) the fallbacks read this slot's address and size from c0 in SPIR-V: c0 bound at least that far
-        u32& used{program.info.constant_buffer_used_sizes[driver_cbuf]};
-        used = std::max<u32>(used, offset + descriptor_size);
-    }
-    // (EvilOOT) RX_VK_MISS_LOG=1, diagnostics: a buffer at c0+0xff0 (no real slot) that the global memory functions record
-    // the addresses no binding held in (spirv_emit_context.cpp), bound by the back end per program (vk_draw.cpp)
-    static const bool miss_log{std::getenv("RX_VK_MISS_LOG") != nullptr && std::atoi(std::getenv("RX_VK_MISS_LOG")) != 0};
-    // (compute only: the driver crashed compiling a mesh program with it; and only the program vk_shader.cpp names when
-    // RX_VK_MISS_LOG_PROG is set: Optimization::g_nvn2_miss_log_this)
-    if (miss_log && (program.stage == Stage::Compute || program.stage == Stage::Mesh || program.stage == Stage::Task) &&
-        Optimization::g_nvn2_miss_log_this && descs.size() < Info::MAX_SSBOS) {
-        descs.push_back({
-            .cbuf_index = driver_cbuf,
-            .cbuf_offset = 0xff0U,
-            .count = 1,
-            .is_written = true,
-        });
-    }
-    // (EvilOOT) the global memory fallbacks search every single storage buffer (spirv_emit_context.cpp
-    // DefineGlobalMemoryFunctions): a program that stores through them may write any of them
-    if (program.info.stores_global_memory) {
-        for (auto& desc : descs) {
-            if (desc.count == 1) {
-                desc.is_written = true;
-            }
-        }
     }
 }
 
@@ -257,11 +180,17 @@ void EmitGeometryPassthrough(IR::IREmitter& ir, const IR::Program& program,
                              const Shader::VaryingState& passthrough_mask,
                              bool passthrough_position,
                              std::optional<IR::Attribute> passthrough_layer_attr,
-                             std::optional<IR::Reg> viewport_mask_reg) {
+                             std::optional<IR::Reg> viewport_mask_reg, bool multicast) {
     constexpr std::array CULLED_POSITION{2.0f, 2.0f, 2.0f, 1.0f};
     IR::U1 culled{ir.Imm1(false)};
     IR::U32 viewport{ir.Imm32(0)};
-    if (viewport_mask_reg) {
+    if (viewport_mask_reg && multicast) {
+        // One invocation per viewport: keep the primitive where its bit is set in the mask.
+        const IR::U32 mask{ir.GetReg(*viewport_mask_reg)};
+        viewport = ir.InvocationId();
+        const IR::U32 bit{ir.BitwiseAnd(IR::U32{ir.ShiftRightLogical(mask, viewport)}, ir.Imm32(1))};
+        culled = ir.IEqual(bit, ir.Imm32(0));
+    } else if (viewport_mask_reg) {
         const IR::U32 mask{ir.GetReg(*viewport_mask_reg)};
         const IR::U32 lowest_bit{ir.BitwiseAnd(mask, IR::U32{ir.INeg(mask)})};
         culled = ir.IEqual(mask, ir.Imm32(0));
@@ -297,6 +226,11 @@ void EmitGeometryPassthrough(IR::IREmitter& ir, const IR::Program& program,
         if (viewport_mask_reg) {
             ir.SetAttribute(IR::Attribute::ViewportIndex, ir.BitCast<IR::F32>(viewport),
                             ir.Imm32(0));
+        }
+        if (multicast) {
+            // ponytail: the layer is the viewport index alone; a layer the program writes itself
+            // is not added (Mario Tennis Fever's cascade shaders write none).
+            ir.SetAttribute(IR::Attribute::Layer, ir.BitCast<IR::F32>(viewport), ir.Imm32(0));
         }
 
         if (passthrough_layer_attr) {
@@ -367,10 +301,26 @@ std::optional<IR::Reg> LowerViewportMask(const IR::Program& program) {
     return reg;
 }
 
-void LowerGeometryPassthrough(const IR::Program& program, const HostTranslateInfo& host_info) {
+bool ReadsInvocationId(const IR::Program& program) {
+    return std::ranges::any_of(program.blocks, [](const IR::Block* block) {
+        return std::ranges::any_of(block->Instructions(), [](const IR::Inst& inst) {
+            return inst.GetOpcode() == IR::Opcode::InvocationId;
+        });
+    });
+}
+
+void LowerGeometryPassthrough(IR::Program& program, const HostTranslateInfo& host_info) {
     std::optional<IR::Reg> viewport_mask_reg;
     if (!host_info.support_viewport_mask) {
         viewport_mask_reg = LowerViewportMask(program);
+    }
+    // With the layer relative to the viewport (Maxwell 0x11F0) the hardware draws the primitive
+    // once per viewport in the mask, each into layer = viewport: one shadow cascade per layer in
+    // Mario Tennis Fever. Only the lowest viewport and layer 0 left every cascade in layer 0.
+    const bool multicast = viewport_mask_reg && host_info.layer_viewport_relative &&
+                           program.invocations <= 1 && !ReadsInvocationId(program);
+    if (multicast) {
+        program.invocations = 16; // Maxwell's viewport count
     }
     for (IR::Block* const block : program.blocks) {
         for (IR::Inst& inst : block->Instructions()) {
@@ -379,7 +329,7 @@ void LowerGeometryPassthrough(const IR::Program& program, const HostTranslateInf
                 EmitGeometryPassthrough(
                     ir, program, program.info.passthrough,
                     program.info.passthrough.AnyComponent(IR::Attribute::PositionX), {},
-                    viewport_mask_reg);
+                    viewport_mask_reg, multicast);
             }
         }
     }
@@ -463,6 +413,15 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
             }
 
             if (!normalized_host_info.support_geometry_shader_passthrough) {
+                // The lowered shader copies only Position and the generics; the mask's other
+                // bits (InstanceId, VertexId, FrontFace...) would declare stage inputs a geometry
+                // shader can't have, BaseInstance without DrawParameters among them.
+                for (size_t i = 0; i < program.info.passthrough.mask.size(); ++i) {
+                    if (i < static_cast<size_t>(IR::Attribute::PositionX) ||
+                        i > static_cast<size_t>(IR::Attribute::Generic31W)) {
+                        program.info.passthrough.mask[i] = false;
+                    }
+                }
                 program.output_vertices = GetOutputTopologyVertices(program.output_topology);
                 LowerGeometryPassthrough(program, normalized_host_info);
             }
@@ -488,8 +447,7 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
         const u32 threads{program.stage == Stage::Task ? init & 0x3f : (shader_b >> 20) & 0x3f};
         program.workgroup_size = {(std::max)(threads, 1U), 1, 1};
         if (program.stage == Stage::Mesh) {
-            if (program.mesh.topology != 4 && program.mesh.topology != 1 &&
-                program.mesh.topology != 0) {   // (GL's numbers: 0 points, 1 lines, 4 triangles)
+            if (program.mesh.topology != 4) {
                 throw NotImplementedException("Mesh output topology {} (SET_MESH_SHADER_A {:#010x})",
                                               program.mesh.topology, shader_a);
             }
@@ -536,6 +494,7 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
         Optimization::VerificationPass(program);
     }
     Optimization::CollectShaderInfoPass(env, program);
+    Optimization::LimitSampledTextureArrays(program, normalized_host_info);
     program.info.is_task = program.stage == Stage::Task;
     program.info.is_mesh = program.stage == Stage::Mesh;
     if (program.stage == Stage::Mesh) {
@@ -553,7 +512,6 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
 
     CollectInterpolationInfo(env, program);
     AddNVNStorageBuffers(program);
-    AddGlobalTables(program);   // (longshot: after the NVN ones, which the fallbacks index as they come)
     return program;
 }
 
@@ -673,7 +631,7 @@ IR::Program GenerateGeometryPassthrough(ObjectPool<IR::Inst>& inst_pool,
 
     IR::IREmitter ir{*current_block};
     EmitGeometryPassthrough(ir, program, program.info.stores, true,
-                            source_program.info.emulated_layer, std::nullopt);
+                            source_program.info.emulated_layer, std::nullopt, false);
 
     IR::Block* return_block{block_pool.Create(inst_pool)};
     IR::IREmitter{*return_block}.Epilogue();

@@ -458,17 +458,9 @@ void VisitUsages(Info& info, IR::Inst& inst) {
     case IR::Opcode::SetAttributeIndexed:
         info.stores_indexed_attributes = true;
         break;
-    case IR::Opcode::SetFragColor: {
-        const u32 render_target{inst.Arg(0).U32()};
-        info.stores_frag_color[render_target] = true;
-        // (amd-fix, Lichii #353) the components too: the guest keeps the others, AMD writes its export registers' garbage
-        if (inst.Arg(1).IsImmediate() && inst.Arg(1).U32() < 4) {
-            info.frag_color_components[render_target] |= static_cast<u8>(1U << inst.Arg(1).U32());
-        } else {
-            info.frag_color_components[render_target] = 0xF;
-        }
+    case IR::Opcode::SetFragColor:
+        info.stores_frag_color[inst.Arg(0).U32()] = true;
         break;
-    }
     case IR::Opcode::SetSampleMask:
         info.stores_sample_mask = true;
         break;
@@ -501,10 +493,9 @@ void VisitUsages(Info& info, IR::Inst& inst) {
     case IR::Opcode::LaneId:
         info.uses_subgroup_invocation_id = true;
         break;
-    case IR::Opcode::MatrixMulAddF16:
-        info.uses_cooperative_matrix = true;
-        info.uses_subgroup_invocation_id = true;   // (the software path's lanes)
-        info.uses_fp16 = true;
+    case IR::Opcode::TensorMulAdd:
+        info.uses_tensor_mul_add = true;
+        info.uses_subgroup_invocation_id = true;
         break;
     case IR::Opcode::ShuffleIndex:
     case IR::Opcode::ShuffleUp:
@@ -822,6 +813,8 @@ void VisitFpModifiers(Info& info, IR::Inst& inst) {
     case IR::Opcode::FPAdd32:
     case IR::Opcode::FPFma32:
     case IR::Opcode::FPMul32:
+    case IR::Opcode::FPMin32:
+    case IR::Opcode::FPMax32:
     case IR::Opcode::FPRoundEven32:
     case IR::Opcode::FPFloor32:
     case IR::Opcode::FPCeil32:
@@ -972,43 +965,25 @@ void GatherInfoFromHeader(Environment& env, Info& info) {
 }
 } // Anonymous namespace
 
-/// (EvilOOT) NVN2 compute's storage buffer table in c0 for the program being translated on this thread, set by
-/// gpu/vk/vk_shader.cpp from the control section (vk_bank.cpp cs_layout): right after the push constants and the uniform
-/// buffer table (0x40 for OoT's culling passes), not Maxwell's 0x310, where c0 holds nothing. With 0x310 every compute
-/// access left to the global memory fallbacks searched an empty table: it read 0 and its writes were lost (the GPU-culled
-/// draw lists all came out empty: no foliage, grass, falling leaves or fireflies). 0: Maxwell's.
-thread_local u32 g_nvn2_compute_ssbo_base{0};
-thread_local u32 g_nvn2_compute_ssbo_count{16};
-/// (and where that layout ends: 0 unknown. Below 0x880 the program gets the back end's pointer table there, as task and
-/// mesh programs do: translate_program.cpp AddGlobalTables, vk_bank.cpp pointer_table)
-thread_local u32 g_nvn2_compute_layout_end{0};
-/// (RX_VK_MISS_LOG: whether the program being translated gets the miss log; vk_shader.cpp sets it per program)
-thread_local bool g_nvn2_miss_log_this{true};
-/// (RX_VK_ALL_GLOBAL_PROGS=<key prefix>[,...], a test: the program's memory accesses all left global, none bound)
-thread_local bool g_all_global_this{false};
-thread_local bool g_gm_port_this{false};   // (longshot: EDEN_NX2_GM_PORT_PROGS names the program being translated)
-
 void CollectShaderInfoPass(Environment& env, IR::Program& program) {
     Info& info{program.info};
     const u32 base{[&] {
         switch (program.stage) {
         case Stage::VertexA:
         case Stage::VertexB:
+        case Stage::Task: // bound in the vertex slot
             return 0x110u;
-        case Stage::Task:   // (longshot: NVN2's tables, gpu/vk/vk_bank.cpp. At the vertex and tessellation stages' here no buffer of
-            return 0x670u;  // these programs counted as used, and every read through a pointer into one gave 0)
-        case Stage::Mesh:
-            return 0x770u;
         case Stage::TessellationControl:
             return 0x210u;
         case Stage::TessellationEval:
+        case Stage::Mesh: // bound in the tessellation slot
             return 0x310u;
         case Stage::Geometry:
             return 0x410u;
         case Stage::Fragment:
             return 0x510u;
         case Stage::Compute:
-            return g_nvn2_compute_ssbo_base ? g_nvn2_compute_ssbo_base : 0x310u;
+            return 0x310u;
         }
         throw InvalidArgument("Invalid stage {}", program.stage);
     }()};

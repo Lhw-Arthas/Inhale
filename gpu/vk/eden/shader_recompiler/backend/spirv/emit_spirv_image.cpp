@@ -6,10 +6,8 @@
 
 #include <boost/container/static_vector.hpp>
 
-#include "common/settings.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
-#include "shader_recompiler/backend/spirv/mma_layout.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 #include "shader_recompiler/frontend/ir/modifiers.h"
 
@@ -264,7 +262,7 @@ Id TextureImage(EmitContext& ctx, IR::TextureInstInfo info, const IR::Value& ind
             const Id idx{index.IsImmediate() ? ctx.Const(index.U32()) : ctx.Def(index)};
             const bool non_uniform{
                 MarkNonUniform(ctx, idx, index, NonUniformKind::UniformTexelBuffer)};
-            const Id ptr{ctx.OpAccessChain(def.pointer_type, def.id, idx)};
+            const Id ptr{ctx.OpAccessChain(ctx.image_buffer_type, def.id, idx)};
             const Id object{ctx.OpLoad(ctx.image_buffer_type, ptr)};
             if (non_uniform) {
                 DecorateNonUniform(ctx, ptr);
@@ -292,7 +290,7 @@ Id TextureImage(EmitContext& ctx, IR::TextureInstInfo info, const IR::Value& ind
     }
 }
 
-std::pair<Id, bool> Image(EmitContext& ctx, const IR::Value& index, IR::TextureInstInfo info) {
+std::pair<Id, Id> Image(EmitContext& ctx, const IR::Value& index, IR::TextureInstInfo info) {
     if (info.type == TextureType::Buffer) {
         const ImageBufferDefinition def{ctx.image_buffers.at(info.descriptor_index)};
         if (def.count > 1) {
@@ -305,9 +303,9 @@ std::pair<Id, bool> Image(EmitContext& ctx, const IR::Value& index, IR::TextureI
                 DecorateNonUniform(ctx, ptr);
                 DecorateNonUniform(ctx, image);
             }
-            return {image, def.is_integer};
+            return {image, def.texel_type};
         }
-        return {ctx.OpLoad(def.image_type, def.id), def.is_integer};
+        return {ctx.OpLoad(def.image_type, def.id), def.texel_type};
     } else {
         const ImageDefinition def{ctx.images.at(info.descriptor_index)};
         if (def.count > 1) {
@@ -319,9 +317,9 @@ std::pair<Id, bool> Image(EmitContext& ctx, const IR::Value& index, IR::TextureI
                 DecorateNonUniform(ctx, ptr);
                 DecorateNonUniform(ctx, image);
             }
-            return {image, def.is_integer};
+            return {image, def.texel_type};
         }
-        return {ctx.OpLoad(def.image_type, def.id), def.is_integer};
+        return {ctx.OpLoad(def.image_type, def.id), def.texel_type};
     }
 }
 
@@ -361,37 +359,6 @@ Id Emit(MethodPtrType sparse_ptr, MethodPtrType non_sparse_ptr, EmitContext& ctx
     sparse->Invalidate();
     Decorate(ctx, inst, sample);
     return ctx.OpCompositeExtract(result_type, sample, 1U);
-}
-
-bool IsDynamicPtp(IR::Inst* inst, const IR::Value& offset, const IR::Value& offset2) {
-    if (offset2.IsEmpty() || offset.IsEmpty() ||
-        inst->GetAssociatedPseudoOperation(IR::Opcode::GetSparseFromOp)) {
-        return false;
-    }
-    const auto constant{[](const IR::Value& value) {
-        return value.IsImmediate() || value.InstRecursive()->AreAllArgsImmediates();
-    }};
-    return !constant(offset) || !constant(offset2);
-}
-
-// Per-tap offsets the IR could not fold to constants (ConstOffsets must be constant): one gather
-// per tap with a runtime Offset, keeping the i0,j0 texel (w) of each footprint, which is the
-// texel a per-tap gather returns for that tap.
-template <typename GatherFn>
-Id GatherDynamicPtp(EmitContext& ctx, bool is_integer, Id result_type, const IR::Value& offset,
-                    const IR::Value& offset2, GatherFn&& gather) {
-    const std::array packed{ctx.Def(offset), ctx.Def(offset2)};
-    const Id component_type{is_integer ? ctx.U32[1] : ctx.F32[1]};
-    std::array<Id, 4> texels;
-    for (u32 tap = 0; tap < 4; ++tap) {
-        const Id vector{packed[tap / 2]};
-        const u32 first{(tap % 2) * 2};
-        const Id x{ctx.OpBitcast(ctx.S32[1], ctx.OpCompositeExtract(ctx.U32[1], vector, first))};
-        const Id y{ctx.OpBitcast(ctx.S32[1], ctx.OpCompositeExtract(ctx.U32[1], vector, first + 1))};
-        const Id tap_offset{ctx.OpCompositeConstruct(ctx.S32[2], x, y)};
-        texels[tap] = ctx.OpCompositeExtract(component_type, gather(tap_offset), 3U);
-    }
-    return ctx.OpCompositeConstruct(result_type, std::span<const Id>{texels.data(), texels.size()});
 }
 
 Id IsScaled(EmitContext& ctx, const IR::Value& index, Id member_index, u32 base_index) {
@@ -446,10 +413,9 @@ Id ImageGatherSubpixelOffset(EmitContext& ctx, const IR::TextureInstInfo& info, 
     case TextureType::Color2DRect:
         return calculate_coords(2);
     case TextureType::ColorArray2D:
+    case TextureType::ColorCube:
         return calculate_coords(3);
     default:
-        // (longshot) a cube's coordinates are a direction: no texel to nudge by, and its size query has two components, not
-        // three (the cube case here made invalid SPIR-V: OpImageQuerySizeLod's result of three components on a cube)
         return coords;
     }
 }
@@ -489,64 +455,6 @@ void AddOffsetToCoordinates(EmitContext& ctx, const IR::TextureInstInfo& info, I
         return;
     }
     coords = ctx.OpIAdd(result_type, coords, offset);
-}
-// (longshot, mma_layout.h fetch_bounds) Whether a texel fetch of image at coords (with its level, or its sample, when it has one)
-// is inside the image, as U1; coords, lod and sample are made ones that are (a coordinate out of range 0, a level or sample past
-// the last 0), so that the fetch itself never leaves the image, and the caller answers zero for it. NVIDIA's GPUs answer an
-// out-of-bounds fetch with zero (measured on an RTX 3090 with robustness off: every texture type, past each edge, past the last
-// level and the last sample; the alpha of a format without one is 1 there, as in range, and 0 here: the translation does not
-// know the format). Vulkan leaves such a fetch undefined without robustImageAccess, and on AMD the ground fog's depth reads at
-// points projected off screen took the other branch: a pale box at the screen's edges (found by Ocarina of Lain's author on
-// an RX 9070). Id{}: a type left as it was: a texel buffer while robustBufferAccess2 is on (on by default: the Robust buffers
-// row), which answers its out-of-bounds reads with zero already (fetch_bounds_buffers), and the cube types, which no fetch reads
-Id FetchInBounds(EmitContext& ctx, const IR::TextureInstInfo& info, Id image, Id& coords, Id& lod, Id& sample) {
-    u32 dims{};
-    switch (info.type) {
-    case TextureType::Buffer:
-        if (!fetch_bounds_buffers) {
-            return Id{};
-        }
-        dims = 1;
-        break;
-    case TextureType::Color1D:
-        dims = 1;
-        break;
-    case TextureType::ColorArray1D:
-    case TextureType::Color2D:
-    case TextureType::Color2DRect:
-        dims = 2;
-        break;
-    case TextureType::ColorArray2D:
-    case TextureType::Color3D:
-        dims = 3;
-        break;
-    default:
-        return Id{};
-    }
-    const Id size_type{ctx.U32[dims]};
-    Id level_ok{};
-    Id size{};
-    if (Sirit::ValidId(lod)) {
-        const Id levels{ctx.OpImageQueryLevels(ctx.U32[1], image)};
-        level_ok = ctx.OpULessThan(ctx.U1, lod, levels);
-        lod = ctx.OpSelect(ctx.U32[1], level_ok, lod, ctx.u32_zero_value);
-        size = ctx.OpImageQuerySizeLod(size_type, image, lod);
-    } else {
-        size = ctx.OpImageQuerySize(size_type, image);   // (a texel buffer, or a multisampled image)
-    }
-    // (unsigned: a negative coordinate is past the end too)
-    const Id inside{ctx.OpULessThan(dims == 1 ? ctx.U1 : ctx.TypeVector(ctx.U1, dims), coords, size)};
-    coords = ctx.OpSelect(size_type, inside, coords, ctx.ConstantNull(size_type));
-    Id in_bounds{dims == 1 ? inside : ctx.OpAll(ctx.U1, inside)};
-    if (Sirit::ValidId(level_ok)) {
-        in_bounds = ctx.OpLogicalAnd(ctx.U1, in_bounds, level_ok);
-    }
-    if (Sirit::ValidId(sample)) {
-        const Id sample_ok{ctx.OpULessThan(ctx.U1, sample, ctx.OpImageQuerySamples(ctx.U32[1], image))};
-        sample = ctx.OpSelect(ctx.U32[1], sample_ok, sample, ctx.u32_zero_value);
-        in_bounds = ctx.OpLogicalAnd(ctx.U1, in_bounds, sample_ok);
-    }
-    return in_bounds;
 }
 } // Anonymous namespace
 
@@ -681,11 +589,6 @@ Id EmitImageSampleExplicitLod(EmitContext& ctx, IR::Inst* inst, const IR::Value&
     Id result = Emit(&EmitContext::OpImageSparseSampleExplicitLod,
                      &EmitContext::OpImageSampleExplicitLod, ctx, inst, result_type,
                      Texture(ctx, info, index), coords, operands.Mask(), operands.Span());
-#ifdef __ANDROID__
-    if (!is_integer && Settings::values.fix_bloom_effects.GetValue()) {
-        result = ctx.OpVectorTimesScalar(ctx.F32[4], result, ctx.Const(0.98f));
-    }
-#endif
     return is_integer ? ctx.OpBitcast(ctx.F32[4], result) : result;
 }
 
@@ -719,6 +622,37 @@ Id EmitImageSampleDrefExplicitLod(EmitContext& ctx, IR::Inst* inst, const IR::Va
                 Texture(ctx, info, index), coords, dref, operands.Mask(), operands.Span());
 }
 
+namespace {
+// TLD4.PTP offsets that are not constants: ConstOffsets takes only constants, so gather once per
+// tap with that tap's offset and keep the footprint's (i0, j0) texel, component w, which is how
+// textureGatherOffsets defines each result component.
+bool IsRuntimePerTap(const IR::Value& offset, const IR::Value& offset2) {
+    const auto immediate = [](const IR::Value& value) {
+        return value.IsImmediate() || value.InstRecursive()->AreAllArgsImmediates();
+    };
+    return !offset2.IsEmpty() && (!immediate(offset) || !immediate(offset2));
+}
+
+template <typename Gather>
+Id RuntimePerTapGather(EmitContext& ctx, IR::Inst* inst, Id result_type, Id scalar_type,
+                       const IR::Value& offset, const IR::Value& offset2, Gather&& gather) {
+    if (inst->GetAssociatedPseudoOperation(IR::Opcode::GetSparseFromOp)) {
+        throw NotImplementedException("Sparse gather with runtime per-tap offsets");
+    }
+    const std::array<Id, 2> halves{ctx.Def(offset), ctx.Def(offset2)};
+    std::array<Id, 4> texels{};
+    for (u32 tap = 0; tap < 4; ++tap) {
+        const Id half{halves[tap / 2]};
+        const u32 first{(tap % 2) * 2};
+        const Id tap_offset{ctx.OpCompositeConstruct(ctx.U32[2],
+                                                     ctx.OpCompositeExtract(ctx.U32[1], half, first),
+                                                     ctx.OpCompositeExtract(ctx.U32[1], half, first + 1))};
+        texels[tap] = ctx.OpCompositeExtract(scalar_type, gather(tap_offset), 3U);
+    }
+    return ctx.OpCompositeConstruct(result_type, texels[0], texels[1], texels[2], texels[3]);
+}
+} // Anonymous namespace
+
 Id EmitImageGather(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id coords,
                    const IR::Value& offset, const IR::Value& offset2) {
     const auto info{inst->Flags<IR::TextureInstInfo>()};
@@ -727,15 +661,16 @@ Id EmitImageGather(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id 
     if (ctx.profile.need_gather_subpixel_offset) {
         coords = ImageGatherSubpixelOffset(ctx, info, TextureImage(ctx, info, index), coords);
     }
-    if (IsDynamicPtp(inst, offset, offset2)) {
+    if (IsRuntimePerTap(offset, offset2)) {
         const Id texture{Texture(ctx, info, index)};
         const Id component{ctx.Const(info.gather_component)};
-        const Id color{GatherDynamicPtp(ctx, is_integer, result_type, offset, offset2, [&](Id tap_offset) {
-            return Decorate(ctx, inst,
-                            ctx.OpImageGather(result_type, texture, coords, component,
-                                              spv::ImageOperandsMask::Offset,
-                                              std::span<const Id>{&tap_offset, 1}));
-        })};
+        const Id color{RuntimePerTapGather(
+            ctx, inst, result_type, is_integer ? ctx.U32[1] : ctx.F32[1], offset, offset2,
+            [&](Id tap_offset) {
+                return ctx.OpImageGather(result_type, texture, coords, component,
+                                         spv::ImageOperandsMask::Offset,
+                                         std::span<const Id>{&tap_offset, 1});
+            })};
         return is_integer ? ctx.OpBitcast(ctx.F32[4], color) : color;
     }
     const ImageOperands operands(ctx, offset, offset2);
@@ -754,14 +689,15 @@ Id EmitImageGatherDref(EmitContext& ctx, IR::Inst* inst, const IR::Value& index,
     if (ctx.profile.need_gather_subpixel_offset) {
         coords = ImageGatherSubpixelOffset(ctx, info, TextureImage(ctx, info, index), coords);
     }
-    if (IsDynamicPtp(inst, offset, offset2)) {
+    if (IsRuntimePerTap(offset, offset2)) {
         const Id texture{Texture(ctx, info, index)};
-        const Id color{GatherDynamicPtp(ctx, is_integer, result_type, offset, offset2, [&](Id tap_offset) {
-            return Decorate(ctx, inst,
-                            ctx.OpImageDrefGather(result_type, texture, coords, dref,
-                                                  spv::ImageOperandsMask::Offset,
-                                                  std::span<const Id>{&tap_offset, 1}));
-        })};
+        const Id color{RuntimePerTapGather(
+            ctx, inst, result_type, is_integer ? ctx.U32[1] : ctx.F32[1], offset, offset2,
+            [&](Id tap_offset) {
+                return ctx.OpImageDrefGather(result_type, texture, coords, dref,
+                                             spv::ImageOperandsMask::Offset,
+                                             std::span<const Id>{&tap_offset, 1});
+            })};
         return is_integer ? ctx.OpBitcast(ctx.F32[4], color) : color;
     }
     const ImageOperands operands(ctx, offset, offset2);
@@ -783,17 +719,6 @@ Id EmitImageFetch(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id c
     if (Sirit::ValidId(ms)) {
         // This image is multisampled, lod must be implicit
         lod = Id{};
-    }
-    if (fetch_bounds) {   // (longshot: FetchInBounds)
-        const Id image{TextureImage(ctx, info, index)};
-        const Id in_bounds{FetchInBounds(ctx, info, image, coords, lod, ms)};
-        const ImageOperands operands(lod, ms);
-        Id color{Emit(&EmitContext::OpImageSparseFetch, &EmitContext::OpImageFetch, ctx, inst,
-                      result_type, image, coords, operands.MaskOptional(), operands.Span())};
-        if (Sirit::ValidId(in_bounds)) {
-            color = ctx.OpSelect(result_type, in_bounds, color, ctx.ConstantNull(result_type));
-        }
-        return is_integer ? ctx.OpBitcast(ctx.F32[4], color) : color;
     }
     const ImageOperands operands(lod, ms);
     const Id color{Emit(&EmitContext::OpImageSparseFetch, &EmitContext::OpImageFetch, ctx, inst,
@@ -863,11 +788,10 @@ Id EmitImageRead(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id co
         LOG_WARNING(Shader_SPIRV, "Typeless image read not supported by host");
         return ctx.ConstantNull(ctx.U32[4]);
     }
-    const auto [image, is_integer] = Image(ctx, index, info);
-    const Id result_type{is_integer ? ctx.U32[4] : ctx.F32[4]};
+    const auto [image, result_type] = Image(ctx, index, info);
     Id color{Emit(&EmitContext::OpImageSparseRead, &EmitContext::OpImageRead, ctx, inst,
                   result_type, image, coords, std::nullopt, std::span<const Id>{})};
-    if (!is_integer) {
+    if (result_type.value != ctx.U32[4].value) {
         color = ctx.OpBitcast(ctx.U32[4], color);
     }
     return color;
@@ -875,9 +799,9 @@ Id EmitImageRead(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id co
 
 void EmitImageWrite(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id coords, Id color) {
     const auto info{inst->Flags<IR::TextureInstInfo>()};
-    const auto [image, is_integer] = Image(ctx, index, info);
-    if (!is_integer) {
-        color = ctx.OpBitcast(ctx.F32[4], color);
+    const auto [image, result_type] = Image(ctx, index, info);
+    if (result_type.value != ctx.U32[4].value) {
+        color = ctx.OpBitcast(result_type, color);
     }
     ctx.OpImageWrite(image, coords, color);
 }

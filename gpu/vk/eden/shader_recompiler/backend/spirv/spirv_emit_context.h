@@ -7,8 +7,10 @@
 #pragma once
 
 #include <array>
+#include <bit>
 
 #include <sirit/sirit.h>
+#include "common/container/unordered_map.h"
 #include "common/container/unordered_set.h"
 
 #include "shader_recompiler/backend/bindings.h"
@@ -45,7 +47,6 @@ struct TextureDefinition {
 
 struct TextureBufferDefinition {
     Id id;
-    Id pointer_type;
     u32 count;
 };
 
@@ -54,7 +55,7 @@ struct ImageBufferDefinition {
     Id image_type;
     Id pointer_type;
     u32 count;
-    bool is_integer;
+    Id texel_type;
 };
 
 struct ImageDefinition {
@@ -62,7 +63,7 @@ struct ImageDefinition {
     Id image_type;
     Id pointer_type;
     u32 count;
-    bool is_integer;
+    Id texel_type;
 };
 
 struct UniformDefinitions {
@@ -173,7 +174,7 @@ public:
     [[nodiscard]] Id BitOffset16(const IR::Value& offset);
 
     Id Const(u32 value) {
-        return Constant(U32[1], value);
+        return CachedConstant(u32_constants, U32[1], value, value);
     }
 
     Id Const(u32 element_1, u32 element_2) {
@@ -207,7 +208,19 @@ public:
     }
 
     Id Const(f32 value) {
-        return Constant(F32[1], value);
+        return CachedConstant(f32_constants, F32[1], std::bit_cast<u32>(value), value);
+    }
+
+    /// Sirit deduplicates constants, but by hashing a freshly allocated copy of their words on
+    /// every call; immediates are emitted over and over, so remember the ids of scalar constants.
+    /// Keys are bit patterns, like Sirit's (0.0f and -0.0f stay distinct).
+    template <typename T>
+    Id CachedConstant(::Common::unordered_map<u32, Id>& cache, Id type, u32 bits, T value) {
+        const auto [it, is_new]{cache.try_emplace(bits)};
+        if (is_new) {
+            it->second = Constant(type, value);
+        }
+        return it->second;
     }
 
     const Profile& profile;
@@ -226,6 +239,9 @@ public:
     VectorTypes S32;
     VectorTypes F16;
     VectorTypes F64;
+
+    ::Common::unordered_map<u32, Id> u32_constants;
+    ::Common::unordered_map<u32, Id> f32_constants;
 
     Id true_value{};
     Id false_value{};
@@ -263,12 +279,13 @@ public:
 
     Id workgroup_id{};
     Id local_invocation_id{};
+    bool uses_software_tensor{};
     Id invocation_id{};
     Id patch_vertices_in{};
     Id sample_id{};
     Id is_helper_invocation{};
     Id subgroup_local_invocation_id{};
-    Id software_matrix_function{};   // (longshot: emit_spirv_warp.cpp)
+    Id subgroup_id{};
     Id subgroup_mask_eq{};
     Id subgroup_mask_lt{};
     Id subgroup_mask_le{};
@@ -300,16 +317,15 @@ public:
     Id rescaling_push_constants{};
     Id rescaling_textures_type{};
     Id rescaling_images_type{};
+
+    Id cooperative_matrix_type_a{};
+    Id cooperative_matrix_type_b{};
+    Id cooperative_matrix_type_c{};
+    Id coop_scratch{};
+    Id coop_scratch_f16{};
     u32 rescaling_textures_member_index{};
     u32 rescaling_images_member_index{};
     u32 rescaling_downfactor_member_index{};
-    u32 guest_pages_member_index{};   // (longshot: GUEST_PAGES_PUSH_OFFSET's member, compute only)
-    bool wants_guest_pages{};
-    Id probe_log{};   // (EvilOOT, RX_VK_BLOCK_PROBE: the miss log's U32 storage buffer, per-block entry counters at word 128+)
-    u32 mesh_first_member_index{};    // (longshot: MESH_FIRST_PUSH_OFFSET's member, task programs)
-    bool wants_mesh_first{};
-    Id mesh_first_block_pointer{};    // (a PhysicalStorageBuffer pointer to a block of one u32, and to its member)
-    Id mesh_first_member_pointer{};
     u32 texture_rescaling_index{};
     u32 image_rescaling_index{};
 
@@ -317,6 +333,7 @@ public:
     u32 render_are_member_index{};
 
     Id local_memory{};
+    u32 local_memory_words{};
 
     bool uses_explicit_workgroup_layout{};
     Id shared_memory_u8{};
@@ -335,7 +352,6 @@ public:
     Id decrement_cas_shared{};
     Id decrement_cas_ssbo{};
     Id f32_add_cas{};
-    bool native_f32_add{};   // (longshot) the float adds are OpAtomicFAddEXT, not f32_add_cas (DefineStorageBuffers)
     Id f16x2_add_cas{};
     Id f16x2_min_cas{};
     Id f16x2_max_cas{};
@@ -345,32 +361,20 @@ public:
 
     Id write_storage_cas_loop_func{};
 
-    // (longshot) storage buffer tables (Info::global_tables): one array variable a type, which only the global
-    // memory fallbacks use; and those fallbacks for the 32-bit atomics (IAdd SMin UMin SMax UMax And Or Xor Exchange)
-    struct GlobalTableVars {
-        u32 cbuf_index{};
-        u32 cbuf_offset{};
-        u32 count{};
-        StorageDefinitions vars{};
-    };
-    std::vector<GlobalTableVars> ssbo_tables;
-    std::array<Id, 9> atomic_global_func_u32{};
-    Id atomic_global_cas_func_u32{};   // (longshot) (address, comparator, value) -> the old value
-
     Id load_global_func_u32{};
     Id load_global_func_u32x2{};
     Id load_global_func_u32x4{};
     Id write_global_func_u32{};
     Id write_global_func_u32x2{};
     Id write_global_func_u32x4{};
-    Id write_global_cas_loop_func{};
-    Id atomic_global_add_f32_func{};   // (longshot) (address, value) -> the old value
+    // Global 32-bit atomics routed through the storage buffers, (address, value) -> old value.
+    // Indexed like the operations table in DefineGlobalMemoryFunctions.
+    std::array<Id, 9> atomic_global_func_u32{};
+    Id atomic_cas_global_func_u32{};
 
     bool need_input_position_indirect{};
     Id input_position{};
     std::array<InputGenericInfo, 32> input_generics{};
-    /// Screen-linear fragment inputs read through perspective interpolation, times FragCoord.w.
-    std::array<bool, 32> noperspective_as_smooth_inputs{};
 
     Id output_point_size{};
     Id output_position{};
@@ -401,11 +405,6 @@ public:
     Id mesh_attributes{};
     Id mesh_map{};
     Id mesh_primitive_count{};
-    /// (longshot) a fallback mesh workgroup's slot (task workgroup * threads + its index), read from the task's map in the
-    /// entry block (EmitMeshPrologue); invalid without a task program, where the slot is the workgroup id
-    Id mesh_fallback_slot{};
-    Id mesh_fallback_epilogue_word{};   ///< (longshot) the fallback epilogue's loop index, a function variable of the entry block
-    Id mesh_fallback_epilogue_line{};   ///< (longshot) the Soa records' line, WriteFallbackLines' inner loop index, as above
     Id mesh_shared_u32{};   ///< pointer type to one workgroup word
     Id mesh_primitive_indices{};
     MeshInfo mesh_info{};
@@ -414,27 +413,9 @@ public:
     u32 mesh_map_bytes{};
     u32 mesh_primitive_base{}; ///< first word of the per-primitive groups
     std::vector<MeshLineTarget> mesh_vertex_targets;
-    // (longshot) a vertex generic output and the components no vertex line writes: they get (0,0,0,1) as in the vertex stage
-    struct MeshDefault {
-        Id variable;
-        u32 missing;
-    };
-    std::vector<MeshDefault> mesh_vertex_defaults;
     std::vector<MeshLineTarget> mesh_primitive_targets;
     std::array<Id, 2> mesh_outputs_marker{};
-    bool mesh_zero_outputs_marker{};   ///< (longshot) OpStore(zero, zero): OpSetMeshOutputsEXT 0 0 where a branch has no target
     std::array<Id, 4> mesh_tasks_marker{};
-
-    // (longshot) a GPU without VK_EXT_mesh_shader: Task and Mesh are compute shaders. Their stage buffer outputs go to
-    // the payload, map and record buffers, pushed as device addresses; a generated vertex stage reads the records.
-    bool mesh_fallback{};
-    bool wants_mesh_fallback{};
-    Id mesh_fallback_word_ptr{};   ///< PhysicalStorageBuffer pointer to a block of one u32
-    u32 mesh_fallback_payload_member_index{};
-    u32 mesh_fallback_records_member_index{};
-    u32 mesh_fallback_indirect_input_member_index{};
-    /// A pointer to the u32 at a PhysicalStorageBuffer device address
-    Id MeshFallbackWord(Id address);
 
     Id load_const_func_u8{};
     Id load_const_func_u16{};
@@ -458,6 +439,7 @@ private:
     void DefineLocalMemory(const IR::Program& program);
     void DefineSharedMemory(const IR::Program& program);
     void DefineSharedMemoryFunctions(const IR::Program& program);
+    void DefineCooperativeMatrixScratch(const IR::Program& program);
     void DefineConstantBuffers(const Info& info, u32& binding);
     void DefineConstantBufferIndirectFunctions(const Info& info);
     void DefineStorageBuffers(const Info& info, u32& binding);
@@ -467,7 +449,7 @@ private:
     void DefineImages(const Info& info, u32& binding, u32& scaling_index);
     void DefineAttributeMemAccess(const Info& info);
     void DefineWriteStorageCasLoopFunction(const Info& info);
-    void DefineGlobalMemoryFunctions(const Info& info);
+    void DefineGlobalMemoryFunctions(const IR::Program& program);
     void DefineRescalingInput(const Info& info);
     void DefineRescalingInputPushConstant();
     void DefineRescalingInputUniformConstant();

@@ -1075,6 +1075,16 @@ void ConstantPropagation(Environment& env, IR::Block& block, IR::Inst& inst) {
     case IR::Opcode::SelectF32:
     case IR::Opcode::SelectF64:
         return FoldSelect(inst);
+    case IR::Opcode::VoteAny:
+    case IR::Opcode::VoteAll:
+        // A lane running the vote is active, so a constant predicate is its own result. The
+        // lowered R2UR selects the broadcast with VoteAny(true); left unfolded, the texture pass
+        // tracked a bindless handle through the select's other value, the uniform register's
+        // stale content (Ocarina of Time took a buffer address in cbuf 0 as a texture handle).
+        if (inst.Arg(0).IsImmediate()) {
+            inst.ReplaceUsesWith(inst.Arg(0));
+        }
+        return;
     case IR::Opcode::FPNeg32:
         FoldWhenAllImmediates(inst, [](f32 a) { return -a; });
         return;
@@ -1130,11 +1140,15 @@ void ConstantPropagation(Environment& env, IR::Block& block, IR::Inst& inst) {
         return;
     case IR::Opcode::BitFieldUExtract:
         FoldWhenAllImmediates(inst, [](u32 base, u32 shift, u32 count) {
-            if (static_cast<size_t>(shift) + static_cast<size_t>(count) > 32) {
+            if (shift > 32 || count > 32 - shift) {
                 throw LogicError("Undefined result in {}({}, {}, {})", IR::Opcode::BitFieldUExtract,
                                  base, shift, count);
             }
-            return (base >> shift) & ((1U << count) - 1);
+            if (count == 0) {
+                return 0U;
+            }
+            const u32 mask = count == 32 ? ~0U : (1U << count) - 1;
+            return (base >> shift) & mask;
         });
         return;
     case IR::Opcode::BitFieldSExtract:

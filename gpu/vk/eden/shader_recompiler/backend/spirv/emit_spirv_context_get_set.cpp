@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
-#include "shader_recompiler/backend/spirv/mma_layout.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 
 namespace Shader::Backend::SPIRV {
@@ -49,6 +48,9 @@ std::optional<OutAttr> OutputAttrPointer(EmitContext& ctx, IR::Attribute attr) {
         const u32 index{IR::GenericAttributeIndex(attr)};
         const u32 element{IR::GenericAttributeElement(attr)};
         const GenericElementInfo& info{ctx.output_generics.at(index).at(element)};
+        if (!Sirit::ValidId(info.id)) {
+            return std::nullopt; // output pruned, nothing downstream reads it
+        }
         if (info.num_components == 1) {
             return info.id;
         } else {
@@ -114,7 +116,7 @@ std::optional<OutAttr> OutputAttrPointer(EmitContext& ctx, IR::Attribute attr) {
     }
 }
 
-Id GetCbuf(EmitContext& ctx, Id result_type, Id UniformDefinitions::*member_ptr, u32 element_size,
+Id GetCbuf(EmitContext& ctx, Id result_type, Id UniformDefinitions::* member_ptr, u32 element_size,
            const IR::Value& binding, const IR::Value& offset, const Id indirect_func) {
     Id buffer_offset;
     const Id uniform_type{ctx.uniform_types.*member_ptr};
@@ -308,14 +310,6 @@ Id EmitGetAttribute(EmitContext& ctx, IR::Attribute attr, Id vertex) {
     const u32 element{static_cast<u32>(attr) % 4};
     if (IR::IsGeneric(attr)) {
         const u32 index{IR::GenericAttributeIndex(attr)};
-        if (ctx.stage == Stage::Fragment && ctx.runtime_info.point_coord_generics.test(index)) {
-            // (longshot) the point sprite's coordinate in place of the generic (RuntimeInfo::point_coord_generics)
-            if (element < 2) {
-                return ctx.OpLoad(ctx.F32[1],
-                                  ctx.OpAccessChain(ctx.input_f32, ctx.point_coord, ctx.Const(element)));
-            }
-            return ctx.Const(element == 3 ? 1.0f : 0.0f);
-        }
         const auto& generic{ctx.input_generics.at(index)};
         if (!ValidId(generic.id)) {
             // Attribute is disabled or varying component is not written
@@ -323,15 +317,13 @@ Id EmitGetAttribute(EmitContext& ctx, IR::Attribute attr, Id vertex) {
         }
         const Id pointer{
             AttrPointer(ctx, generic.pointer_type, vertex, generic.id, ctx.Const(element))};
-        Id value{ctx.OpLoad(generic.component_type, pointer)};
-        if (ctx.stage == Stage::Fragment && ctx.noperspective_as_smooth_inputs[index]) {
-            // Written times Position.w and interpolated perspective-correct: undo with 1/w.
-            // Only float inputs are marked, and DefineInputs forces FragCoord for them.
-            ASSERT(generic.load_op == InputGenericLoadOp::None && ValidId(ctx.input_position));
-            const Id frag_w{ctx.OpLoad(
-                ctx.F32[1],
-                ctx.OpAccessChain(ctx.input_f32, ctx.input_position, ctx.Const(3u)))};
-            value = ctx.OpFMul(ctx.F32[1], value, frag_w);
+        const Id value{ctx.OpLoad(generic.component_type, pointer)};
+        if (ctx.stage == Stage::Fragment && ctx.runtime_info.screen_linear_generics.test(index) &&
+            generic.load_op == InputGenericLoadOp::None) {
+            // Written times w by the last vertex stage: interpolated perspective-correct, this
+            // gives the screen-linear value even where the host clipped the primitive.
+            const Id frag_coord{ctx.OpLoad(ctx.F32[4], ctx.input_position)};
+            return ctx.OpFMul(ctx.F32[1], value, ctx.OpCompositeExtract(ctx.F32[1], frag_coord, 3u));
         }
         return [&ctx, generic, value]() {
             switch (generic.load_op) {
@@ -502,10 +494,6 @@ void EmitSetFragColor(EmitContext& ctx, u32 index, u32 component, Id value) {
     const AttributeType type{ctx.runtime_info.color_output_types[index]};
     if (type == AttributeType::Float) {
         const Id pointer{ctx.OpAccessChain(ctx.output_f32, ctx.frag_color.at(index), component_id)};
-        if (frag_nan_guard) {   // (amd-fix, mma_layout.h) NaN -> 0, the rest clamped to +-1e30
-            const Id clamped{ctx.OpNMin(ctx.F32[1], ctx.OpNMax(ctx.F32[1], value, ctx.Const(-1e30f)), ctx.Const(1e30f))};
-            value = ctx.OpSelect(ctx.F32[1], IsNan(ctx, value, 32), ctx.Const(0.0f), clamped);
-        }
         ctx.OpStore(pointer, value);
     } else if (type == AttributeType::UnsignedInt) {
         const Id pointer{ctx.OpAccessChain(ctx.output_u32, ctx.frag_color.at(index), component_id)};
@@ -537,51 +525,49 @@ void EmitSetFragDepth(EmitContext& ctx, Id value) {
 }
 
 void EmitGetZFlag(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 void EmitGetSFlag(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 void EmitGetCFlag(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 void EmitGetOFlag(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 void EmitSetZFlag(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 void EmitSetSFlag(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 void EmitSetCFlag(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 void EmitSetOFlag(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitWorkgroupId(EmitContext& ctx) {
-    const Id id{ctx.OpLoad(ctx.U32[3], ctx.workgroup_id)};
-    if (ctx.mesh_fallback && ctx.stage == Stage::Mesh && ctx.runtime_info.mesh_fallback_task) {
-        // (longshot) a fallback mesh workgroup is a slot (its task's map gives it, EmitMeshPrologue): its id is its index in its
-        // task, as a task launches them from 0
-        const Id slot{Sirit::ValidId(ctx.mesh_fallback_slot) ? ctx.mesh_fallback_slot
-                                                             : ctx.OpCompositeExtract(ctx.U32[1], id, 0U)};
-        const Id x{ctx.OpUMod(ctx.U32[1], slot, ctx.Const(ctx.runtime_info.mesh_fallback_task_threads))};
-        return ctx.OpCompositeConstruct(ctx.U32[3], x, ctx.u32_zero_value, ctx.u32_zero_value);
-    }
-    return id;
+    return ctx.OpLoad(ctx.U32[3], ctx.workgroup_id);
 }
 
 Id EmitLocalInvocationId(EmitContext& ctx) {
+    if (ctx.uses_software_tensor) {
+        // Vulkan does not tie native local IDs to subgroup lanes. Preserve guest warp grouping.
+        const Id warp{ctx.OpLoad(ctx.U32[1], ctx.subgroup_id)};
+        const Id lane{ctx.OpLoad(ctx.U32[1], ctx.subgroup_local_invocation_id)};
+        const Id x{ctx.OpIAdd(ctx.U32[1], ctx.OpIMul(ctx.U32[1], warp, ctx.Const(32U)), lane)};
+        return ctx.OpCompositeConstruct(ctx.U32[3], x, ctx.Const(0U), ctx.Const(0U));
+    }
     return ctx.OpLoad(ctx.U32[3], ctx.local_invocation_id);
 }
 
@@ -593,9 +579,12 @@ Id EmitInvocationInfo(EmitContext& ctx) {
     switch (ctx.stage) {
     case Stage::TessellationControl:
     case Stage::TessellationEval:
-        return ctx.OpShiftLeftLogical(ctx.U32[1], ctx.OpLoad(ctx.U32[1], ctx.patch_vertices_in), ctx.Const(16u));
+        return ctx.OpShiftLeftLogical(ctx.U32[1], ctx.OpLoad(ctx.U32[1], ctx.patch_vertices_in),
+                                      ctx.Const(16u));
     case Stage::Geometry:
-        return ctx.OpShiftLeftLogical(ctx.U32[1], ctx.Const(InputTopologyVertices::vertices(ctx.runtime_info.input_topology)), ctx.Const(16u));
+        return ctx.OpShiftLeftLogical(
+            ctx.U32[1], ctx.Const(InputTopologyVertices::vertices(ctx.runtime_info.input_topology)),
+            ctx.Const(16u));
     default:
         LOG_WARNING(Shader, "(STUBBED) called");
         return ctx.Const(0x00ff0000u);
@@ -643,20 +632,25 @@ Id EmitRenderArea(EmitContext& ctx) {
         const Id pointer{ctx.OpAccessChain(pointer_type, ctx.render_area_push_constant, index)};
         return ctx.OpLoad(ctx.F32[4], pointer);
     } else {
-        throw NotImplementedException("SPIR-V Instruction");
+        throw NotImplementedException("SPIR-V Instruction {}", __func__);
     }
 }
 
+// A dynamic index past the array is undefined in SPIR-V: drivers that put the array in scratch
+// memory (RADV) read or write wherever the offset points and fault the GPU (Kirby Air Riders).
+// Out-of-range words go to the spare word past the end; the frontend already turns such loads
+// into zero.
+static Id LocalPointer(EmitContext& ctx, Id word_offset) {
+    const Id index{ctx.OpUMin(ctx.U32[1], word_offset, ctx.Const(ctx.local_memory_words))};
+    return ctx.OpAccessChain(ctx.private_u32, ctx.local_memory, index, ctx.Const(0U));
+}
+
 Id EmitLoadLocal(EmitContext& ctx, Id word_offset) {
-    const Id pointer{
-        ctx.OpAccessChain(ctx.private_u32, ctx.local_memory, word_offset, ctx.Const(0U))};
-    return ctx.OpLoad(ctx.U32[1], pointer);
+    return ctx.OpLoad(ctx.U32[1], LocalPointer(ctx, word_offset));
 }
 
 void EmitWriteLocal(EmitContext& ctx, Id word_offset, Id value) {
-    const Id pointer{
-        ctx.OpAccessChain(ctx.private_u32, ctx.local_memory, word_offset, ctx.Const(0U))};
-    ctx.OpStore(pointer, value);
+    ctx.OpStore(LocalPointer(ctx, word_offset), value);
 }
 
 } // namespace Shader::Backend::SPIRV

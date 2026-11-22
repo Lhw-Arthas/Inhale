@@ -17,7 +17,6 @@
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 #include "shader_recompiler/frontend/ir/basic_block.h"
 #include "shader_recompiler/frontend/ir/program.h"
-#include "shader_recompiler/backend/spirv/mma_layout.h"   // (longshot)
 
 namespace Shader::Backend::SPIRV {
 namespace {
@@ -100,7 +99,7 @@ void Invoke(EmitContext& ctx, IR::Inst* inst) {
     }
 }
 
-void EmitInstOf(EmitContext& ctx, IR::Inst* inst) {
+void EmitInst(EmitContext& ctx, IR::Inst* inst) {
     switch (inst->GetOpcode()) {
 #define OPCODE(name, result_type, ...)                                                             \
     case IR::Opcode::name:                                                                         \
@@ -111,30 +110,48 @@ void EmitInstOf(EmitContext& ctx, IR::Inst* inst) {
     throw LogicError("Invalid opcode {}", inst->GetOpcode());
 }
 
-void EmitInst(EmitContext& ctx, IR::Inst* inst) {
-    // (longshot) the emitters that are left unimplemented say only "SPIR-V Instruction": name the IR op
-    try {
-        EmitInstOf(ctx, inst);
-    } catch (const NotImplementedException& e) {
-        throw NotImplementedException("{} ({})", e.what(), IR::NameOf(inst->GetOpcode()));
-    } catch (const std::runtime_error& e) {   // (super build: sirit's null Id, named by the IR op that asked for it)
-        std::string args;
-        for (size_t i = 0; i < inst->NumArgs(); ++i) {
-            const IR::Value a{inst->Arg(i)};
-            args += a.IsImmediate() ? " imm" : a.IsEmpty() ? " empty" : a.IsIdentity() ? " identity"
-                  : (" " + std::string(IR::NameOf(a.InstRecursive()->GetOpcode())) +
-                     (a.InstRecursive()->Definition<Id>().value == 0 ? "(undefined)" : ""));
-        }
-        throw LogicError("{} ({}; args:{})", e.what(), IR::NameOf(inst->GetOpcode()), args);
-    }
-}
-
 Id TypeId(const EmitContext& ctx, IR::Type type) {
     switch (type) {
     case IR::Type::U1:
         return ctx.U1;
+    case IR::Type::U8:
+        return ctx.U8;
+    case IR::Type::U16:
+        return ctx.U16;
     case IR::Type::U32:
         return ctx.U32[1];
+    case IR::Type::U64:
+        return ctx.U64;
+    case IR::Type::F16:
+        return ctx.F16[1];
+    case IR::Type::F32:
+        return ctx.F32[1];
+    case IR::Type::F64:
+        return ctx.F64[1];
+    case IR::Type::U32x2:
+        return ctx.U32[2];
+    case IR::Type::U32x3:
+        return ctx.U32[3];
+    case IR::Type::U32x4:
+        return ctx.U32[4];
+    case IR::Type::F16x2:
+        return ctx.F16[2];
+    case IR::Type::F16x3:
+        return ctx.F16[3];
+    case IR::Type::F16x4:
+        return ctx.F16[4];
+    case IR::Type::F32x2:
+        return ctx.F32[2];
+    case IR::Type::F32x3:
+        return ctx.F32[3];
+    case IR::Type::F32x4:
+        return ctx.F32[4];
+    case IR::Type::F64x2:
+        return ctx.F64[2];
+    case IR::Type::F64x3:
+        return ctx.F64[3];
+    case IR::Type::F64x4:
+        return ctx.F64[4];
     default:
         throw NotImplementedException("Phi node type {}", type);
     }
@@ -142,14 +159,6 @@ Id TypeId(const EmitContext& ctx, IR::Type type) {
 
 void Traverse(EmitContext& ctx, IR::Program& program) {
     IR::Block* current_block{};
-    // (EvilOOT, RX_VK_BLOCK_PROBE=1 with RX_VK_MISS_LOG=1 and RX_VK_MISS_LOG_PROG=<key>: each block's entries counted, by
-    // invocation, in the miss log's words 128 + the block's index in program.blocks: IR::DumpProgram's "Block $n")
-    static const bool probe_env{std::getenv("RX_VK_BLOCK_PROBE") != nullptr};
-    const bool probe{probe_env && Sirit::ValidId(ctx.probe_log)};
-    const auto block_index{[&](const IR::Block* b) -> u32 {
-        const auto it{std::find(program.blocks.begin(), program.blocks.end(), b)};
-        return static_cast<u32>(it - program.blocks.begin());
-    }};
     for (const IR::AbstractSyntaxNode& node : program.syntax_list) {
         switch (node.type) {
         case IR::AbstractSyntaxNode::Type::Block: {
@@ -159,16 +168,7 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
             }
             current_block = node.data.block;
             ctx.AddLabel(label);
-            bool probed{!probe};
             for (IR::Inst& inst : node.data.block->Instructions()) {
-                if (!probed && inst.GetOpcode() != IR::Opcode::Phi) {   // (after the phis: they must lead the block)
-                    probed = true;
-                    const u32 at{128U + std::min<u32>(block_index(node.data.block), 4000U)};
-                    const Id counter{ctx.OpAccessChain(ctx.storage_types.U32.element, ctx.probe_log, ctx.u32_zero_value,
-                                                       ctx.Const(at))};
-                    ctx.OpAtomicIAdd(ctx.U32[1], counter, ctx.Const(static_cast<u32>(spv::Scope::Device)), ctx.u32_zero_value,
-                                     ctx.Const(1U));
-                }
                 EmitInst(ctx, &inst);
             }
             break;
@@ -226,17 +226,7 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
             ctx.OpReturn();
             break;
         case IR::AbstractSyntaxNode::Type::Unreachable:
-            if (ctx.stage == Stage::Mesh && !ctx.mesh_fallback) {
-                // (longshot) an indirect branch to none of its table's targets: the mesh shader leaves with no outputs.
-                // RADV makes OpUnreachable a return that leaves its output counts undefined, and GS_ALLOC_REQ then asked
-                // for a garbage count and hung the GPU (issue 1000). Marker for OpSetMeshOutputsEXT 0 0
-                // (PatchMeshInstructions); the epilogue writes the outputs, so none were written yet
-                ctx.OpStore(ctx.u32_zero_value, ctx.u32_zero_value);
-                ctx.mesh_zero_outputs_marker = true;
-                ctx.OpReturn();
-            } else {
-                ctx.OpUnreachable();
-            }
+            ctx.OpUnreachable();
             break;
         }
         if (node.type != IR::AbstractSyntaxNode::Type::Block) {
@@ -282,12 +272,6 @@ spv::ExecutionMode ExecutionMode(TessSpacing spacing) {
 
 void DefineEntryPoint(const IR::Program& program, EmitContext& ctx, Id main) {
     const std::span interfaces(ctx.interfaces.data(), ctx.interfaces.size());
-    if (ctx.mesh_fallback && (program.stage == Stage::Task || program.stage == Stage::Mesh)) {
-        // (longshot, issue 640: on a GPU without mesh shaders, a task or mesh program is a compute shader)
-        ctx.AddExecutionMode(main, spv::ExecutionMode::LocalSize, program.workgroup_size[0], 1U, 1U);
-        ctx.AddEntryPoint(spv::ExecutionModel::GLCompute, main, "main", interfaces);
-        return;
-    }
     spv::ExecutionModel execution_model{};
     switch (program.stage) {
     case Stage::Compute: {
@@ -312,9 +296,7 @@ void DefineEntryPoint(const IR::Program& program, EmitContext& ctx, Id main) {
         ctx.AddExecutionMode(main, spv::ExecutionMode::OutputVertices, program.mesh.max_vertices);
         ctx.AddExecutionMode(main, spv::ExecutionMode::OutputPrimitivesEXT,
                              program.mesh.max_primitives);
-        ctx.AddExecutionMode(main, program.mesh.Corners() == 1   ? spv::ExecutionMode::OutputPoints
-                                   : program.mesh.Corners() == 2 ? spv::ExecutionMode::OutputLinesEXT
-                                                                 : spv::ExecutionMode::OutputTrianglesEXT);
+        ctx.AddExecutionMode(main, spv::ExecutionMode::OutputTrianglesEXT);
         break;
     case Stage::TessellationControl:
         execution_model = spv::ExecutionModel::TessellationControl;
@@ -369,13 +351,12 @@ void DefineEntryPoint(const IR::Program& program, EmitContext& ctx, Id main) {
         }
         ctx.AddExecutionMode(main, spv::ExecutionMode::OutputVertices, program.output_vertices);
         ctx.AddExecutionMode(main, spv::ExecutionMode::Invocations, program.invocations);
-        if (program.is_geometry_passthrough) {
-            if (ctx.profile.support_geometry_shader_passthrough) {
-                ctx.AddExtension("SPV_NV_geometry_shader_passthrough");
-                ctx.AddCapability(spv::Capability::GeometryShaderPassthroughNV);
-            } else {
-                LOG_WARNING(Shader_SPIRV, "Geometry shader passthrough used with no support");
-            }
+        // TranslateProgram lowers passthrough to explicit vertex copies and emits on hosts
+        // without the NV extension. The flag still describes the guest shader in that case;
+        // it does not mean that the emitted SPIR-V requires native passthrough support.
+        if (program.is_geometry_passthrough && ctx.profile.support_geometry_shader_passthrough) {
+            ctx.AddExtension("SPV_NV_geometry_shader_passthrough");
+            ctx.AddCapability(spv::Capability::GeometryShaderPassthroughNV);
         }
         break;
     case Stage::Fragment:
@@ -502,10 +483,12 @@ void SetupCapabilities(const Profile& profile, const Info& info, EmitContext& ct
             ctx.AddCapability(spv::Capability::ShaderViewportIndexLayerEXT);
         }
     }
-    if ((!profile.support_vertex_instance_id &&
-         (info.loads[IR::Attribute::InstanceId] || info.loads[IR::Attribute::VertexId])) ||
-        info.loads[IR::Attribute::BaseInstance] || info.loads[IR::Attribute::BaseVertex] ||
-        info.loads[IR::Attribute::DrawID] || (ctx.wants_mesh_first && !ctx.mesh_fallback)) {
+    // BaseInstance, BaseVertex and DrawIndex are DrawParameters built-ins no matter how the
+    // instance and vertex ids are read.
+    if (info.loads[IR::Attribute::BaseInstance] || info.loads[IR::Attribute::BaseVertex] ||
+        info.loads[IR::Attribute::DrawID] ||
+        (!profile.support_vertex_instance_id &&
+         (info.loads[IR::Attribute::InstanceId] || info.loads[IR::Attribute::VertexId]))) {
         ctx.AddExtension("SPV_KHR_shader_draw_parameters");
         ctx.AddCapability(spv::Capability::DrawParameters);
     }
@@ -521,18 +504,6 @@ void SetupCapabilities(const Profile& profile, const Info& info, EmitContext& ct
             // vote ops are only used when not taking the long path
             ctx.AddCapability(spv::Capability::GroupNonUniformVote);
         }
-    }
-    if (info.uses_cooperative_matrix && !mma_software) {
-        ctx.AddExtension("SPV_KHR_cooperative_matrix");
-        ctx.AddCapability(spv::Capability::CooperativeMatrixKHR);
-        ctx.AddExtension("SPV_KHR_vulkan_memory_model");
-        ctx.AddCapability(spv::Capability::VulkanMemoryModel);
-        ctx.AddCapability(spv::Capability::VulkanMemoryModelDeviceScope);
-        ctx.SetMemoryModel(spv::MemoryModel::VulkanKHR);
-    }
-    if (info.uses_cooperative_matrix && mma_software) {   // (longshot: DefineSoftwareMatrixFunction's)
-        ctx.AddCapability(spv::Capability::GroupNonUniform);
-        ctx.AddCapability(spv::Capability::GroupNonUniformShuffle);
     }
     if (info.uses_quad_shuffles) {
         if (profile.support_quad_shuffles) {
@@ -604,7 +575,11 @@ void PatchPhiNodes(IR::Program& program, EmitContext& ctx) {
                     ++phi_index;
                 }
                 IR::Inst* phi = phi_instructions[phi_index];
-                return { ctx.Def(phi->Arg(phi_arg)), parent };
+                const Id value{ctx.Def(phi->Arg(phi_arg))};
+                if (!Sirit::ValidId(value)) {
+                    throw LogicError("Phi operand {} has no definition", phi_arg);
+                }
+                return {value, parent};
             });
         }
 
@@ -637,8 +612,7 @@ void RewriteOpcodes(std::vector<u32>& code, std::span<const std::pair<u32, spv::
 void PatchMeshInstructions(std::vector<u32>& code, const EmitContext& ctx) {
     const bool set_outputs{Sirit::ValidId(ctx.mesh_outputs_marker[0])};
     const bool emit_tasks{Sirit::ValidId(ctx.mesh_tasks_marker[0])};
-    const bool zero_outputs{ctx.mesh_zero_outputs_marker};
-    if (!set_outputs && !emit_tasks && !zero_outputs) {
+    if (!set_outputs && !emit_tasks) {
         return;
     }
     const auto store_at = [&](size_t offset, Id pointer, Id object) {
@@ -656,9 +630,6 @@ void PatchMeshInstructions(std::vector<u32>& code, const EmitContext& ctx) {
         }
         if (set_outputs &&
             store_at(offset, ctx.mesh_outputs_marker[0], ctx.mesh_outputs_marker[1])) {
-            code[offset] = (3U << 16) | static_cast<u32>(spv::Op::OpSetMeshOutputsEXT);
-            patched = true;
-        } else if (zero_outputs && store_at(offset, ctx.u32_zero_value, ctx.u32_zero_value)) {
             code[offset] = (3U << 16) | static_cast<u32>(spv::Op::OpSetMeshOutputsEXT);
             patched = true;
         } else if (emit_tasks && store_at(offset, tasks[0], tasks[1]) &&
@@ -683,18 +654,7 @@ void PatchMeshInstructions(std::vector<u32>& code, const EmitContext& ctx) {
 
 std::vector<u32> EmitSPIRV(const Profile& profile, const RuntimeInfo& runtime_info, IR::Program& program, Bindings& bindings) {
     EmitContext ctx{profile, runtime_info, program, bindings};
-    if (program.info.uses_cooperative_matrix && mma_software) DefineSoftwareMatrixFunction(ctx);
-    Id main{};
-    if (runtime_info.mesh_fallback_vertex) {   // (longshot: the fallback's generated vertex stage, which reads the records)
-        const Id void_function{ctx.TypeFunction(ctx.void_id)};
-        main = ctx.OpFunction(ctx.void_id, spv::FunctionControlMask::MaskNone, void_function);
-        ctx.AddLabel();
-        EmitMeshFallbackVertexBody(ctx);
-        ctx.OpReturn();
-        ctx.OpFunctionEnd();
-    } else {
-        main = DefineMain(ctx, program);
-    }
+    const Id main{DefineMain(ctx, program)};
     DefineEntryPoint(program, ctx, main);
     if (profile.support_float_controls) {
         ctx.AddExtension("SPV_KHR_float_controls");

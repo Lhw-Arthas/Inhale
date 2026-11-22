@@ -229,16 +229,8 @@ struct TextureDescriptor {
     u32 count;
     u32 size_shift;
     /// Index in Info::handle_programs when the handle is computed at draw time (read from a
-    /// storage buffer), ~0 when it is the constant buffer word above. With a count above 1 the
-    /// program computes the handle of each element (HandleOp::Index): a handle the shader reads
-    /// from a table at an index only each invocation knows, the shader indexing the array.
+    /// storage buffer), ~0 when it is the constant buffer word above.
     u32 handle_program{~0U};
-    /// The type is the instruction's own (TEX, TLD, TXD...) and no answer about the bound texture set it.
-    /// False for a size query that had to ask (TexturePass, ImageQueryDimensions), and for a descriptor it shares.
-    bool type_fixed{};
-    /// (Lichii 282a585a) The constant buffer word above reaches the handle only as the address of a
-    /// load: a pointer, never a texture handle, which binds no texture (vk_draw.cpp)
-    bool handle_is_pointer_word{};
 
     auto operator<=>(const TextureDescriptor&) const = default;
 };
@@ -270,22 +262,15 @@ struct MeshInfo {
     u32 payload_words{}; ///< Task output region / mesh input region, in 32-bit words
     u32 max_vertices{};
     u32 max_primitives{};
-    u32 topology{}; ///< SET_MESH_SHADER_A output topology (GL's numbers: 0 points, 1 lines, 4 triangles)
+    u32 topology{}; ///< SET_MESH_SHADER_A output topology (4 = triangles)
     boost::container::static_vector<u32, 136> vertex_lines;
     boost::container::static_vector<u32, 136> primitive_lines;
-
-    /// Vertex indices per primitive, one map byte each
-    u32 Corners() const {
-        return topology == 0 ? 1U : topology == 1 ? 2U : 3U;
-    }
 };
 
 struct Info {
     static constexpr size_t MAX_INDIRECT_CBUFS{14};
     static constexpr size_t MAX_CBUFS{18};
-    // (longshot, as Lichii #434: 64. Fritchii's pass binds every candidate pointer of an ambiguous access; the back end's
-    // layouts are built from the list, gpu/vk/vk_draw.cpp ensure_layout)
-    static constexpr size_t MAX_SSBOS{64};
+    static constexpr size_t MAX_SSBOS{32};
 
     bool is_task{}; ///< Switch 2 task program (Stage::Task)
     bool is_mesh{}; ///< Switch 2 mesh program (Stage::Mesh)
@@ -296,6 +281,7 @@ struct Info {
     bool uses_sample_id{};
     bool uses_is_helper_invocation{};
     bool uses_subgroup_invocation_id{};
+    bool uses_tensor_mul_add{};
     bool uses_subgroup_shuffles{};
     bool uses_quad_shuffles{};
     std::array<bool, 30> uses_patches{};
@@ -310,8 +296,6 @@ struct Info {
     bool loads_indexed_attributes{};
 
     std::array<bool, 8> stores_frag_color{};
-    /// (amd-fix, Lichii #353) components (bit 0 = R ... bit 3 = A) of each render target the fragment shader writes
-    std::array<u8, 8> frag_color_components{};
     bool stores_sample_mask{};
     bool stores_frag_depth{};
 
@@ -321,14 +305,9 @@ struct Info {
     bool stores_indexed_attributes{};
 
     bool stores_global_memory{};
-    /// (from Fritchii) Native global accesses whose pointer is chosen at run time: the candidate storage buffers (not
-    /// the driver bank's NVN slots) carry no NVN size word, so the binding's length bounds them, and the access goes
-    /// to the candidate whose base is the nearest at or below its address (gpu/vk/vk_draw.cpp binds them bare)
-    bool native_global_bounds{};
     bool uses_local_memory{};
 
     bool uses_fp16{};
-    bool uses_cooperative_matrix{};   // (longshot: HMMA_nx2)
     bool uses_fp64{};
     bool uses_fp16_denorms_flush{};
     bool uses_fp16_denorms_preserve{};
@@ -363,6 +342,9 @@ struct Info {
     bool uses_atomic_s32_max{};
     bool uses_int64_bit_atomics{};
     bool uses_global_memory{};
+    /// Native global accesses whose pointer is chosen at run time: every storage buffer descriptor
+    /// is a candidate and its bound length (not an NVN size word) limits the range.
+    bool native_global_bounds{};
     bool uses_atomic_image_u32{};
     bool uses_shadow_lod{};
     bool uses_rescaling_uniform{};
@@ -376,12 +358,6 @@ struct Info {
     u32 constant_buffer_mask{};
     std::array<u32, MAX_CBUFS> constant_buffer_used_sizes{};
     u32 nvn_buffer_base{};
-    // (longshot) storage buffer tables: NVN descriptors (address, size) at cbuf_offset + 16k of a constant buffer,
-    // which global memory accesses pick at run time (OoT's froxel fog: c4 + 0xe0 + 16 * a loop index). The global
-    // memory fallbacks search their kGlobalTableSize entries (AddNVNStorageBuffers adds them as descriptors).
-    static constexpr u32 kGlobalTableSize{16};
-    std::array<std::pair<u32, u32>, 4> global_tables{};
-    u32 num_global_tables{};
     std::bitset<16> nvn_buffer_used{};
 
     bool requires_layer_emulation{};
@@ -425,15 +401,13 @@ enum class HandleOp : u32 {
     Select, ///< condition, true value, false value
     Tee,    ///< slot: keeps the top value in the slot (shared subexpressions)
     Load,   ///< slot: the value kept there
-    Index,  ///< the element of the descriptor array being computed (see TextureDescriptor)
 };
 
 /// Runs a handle program; read_cbuf(index, offset) and read_storage(binding, offset) return the
-/// words it reads, and element is the descriptor array element computed (HandleOp::Index).
-/// Returns nothing for a malformed program.
+/// words it reads. Returns nothing for a malformed program.
 template <typename ReadCbuf, typename ReadStorage>
 std::optional<u32> EvaluateHandleProgram(std::span<const u32> code, ReadCbuf&& read_cbuf,
-                                         ReadStorage&& read_storage, u32 element = 0) {
+                                         ReadStorage&& read_storage) {
     std::array<u32, 64> stack{};
     std::array<u32, 256> slots{};
     size_t size = 0;
@@ -476,10 +450,6 @@ std::optional<u32> EvaluateHandleProgram(std::span<const u32> code, ReadCbuf&& r
         if (op == HandleOp::Load) {
             const u32 slot = operand();
             push(slot < slots.size() ? slots[slot] : 0U);
-            continue;
-        }
-        if (op == HandleOp::Index) {
-            push(element);
             continue;
         }
         if (op == HandleOp::Select) {

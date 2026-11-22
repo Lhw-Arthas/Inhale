@@ -17,26 +17,6 @@ struct PositionInst {
     IR::Attribute attr;
 };
 using PositionInstVector = boost::container::small_vector<PositionInst, 24>;
-
-/// True when every value reaching this one, through phis, is the bit pattern of a float.
-bool IsFloatBits(const IR::Value& value, int depth) {
-    const IR::Inst* const inst = value.TryInstRecursive();
-    if (!inst) {
-        return false;
-    }
-    if (inst->GetOpcode() == IR::Opcode::BitCastU32F32) {
-        return true;
-    }
-    if (inst->GetOpcode() != IR::Opcode::Phi || depth == 4) {
-        return false;
-    }
-    for (size_t arg = 0; arg < inst->NumArgs(); ++arg) {
-        if (!IsFloatBits(inst->Arg(arg), depth + 1)) {
-            return false;
-        }
-    }
-    return true;
-}
 } // Anonymous namespace
 
 void PositionPass(Environment& env, IR::Program& program) {
@@ -134,40 +114,6 @@ void BlitConstantsPass(Environment& env, IR::Program& program) {
     if (!reads_nonzero_word) {
         return;
     }
-    // Native fragment shaders add an integer dither bias from 0x10-0x18 to their output bits; the
-    // console leaves it zero there, while the blit block holds texel size and UV scale. Kirby Air
-    // Riders' SMAA resolve adds it to a phi of sRGB-encoded colours, which turned the world white.
-    if (env.ShaderStage() == Stage::Fragment && env.HasNativeInstructions()) {
-        for (IR::Block* const block : program.post_order_blocks) {
-            for (IR::Inst& inst : block->Instructions()) {
-                if (inst.GetOpcode() != IR::Opcode::BitCastF32U32) {
-                    continue;
-                }
-                const IR::Inst* const arithmetic = inst.Arg(0).TryInstRecursive();
-                if (!arithmetic || (arithmetic->GetOpcode() != IR::Opcode::IAdd32 &&
-                                    arithmetic->GetOpcode() != IR::Opcode::ISub32)) {
-                    continue;
-                }
-                for (size_t bias_arg = 0; bias_arg < 2; ++bias_arg) {
-                    if (bias_arg == 0 && arithmetic->GetOpcode() == IR::Opcode::ISub32) {
-                        continue;
-                    }
-                    const IR::Inst* const bias = arithmetic->Arg(bias_arg).TryInstRecursive();
-                    if (!bias || bias->GetOpcode() != IR::Opcode::GetCbufU32 ||
-                        !IsFloatBits(arithmetic->Arg(1 - bias_arg), 0) ||
-                        !bias->Arg(0).IsImmediate() || bias->Arg(0).U32() != 17 ||
-                        !bias->Arg(1).IsImmediate()) {
-                        continue;
-                    }
-                    const u32 offset = bias->Arg(1).U32();
-                    if (offset == 0x10 || offset == 0x14 || offset == 0x18) {
-                        inst.SetArg(0, arithmetic->Arg(1 - bias_arg));
-                        break;
-                    }
-                }
-            }
-        }
-    }
     bool used{};
     for (IR::Block* const block : program.post_order_blocks) {
         for (IR::Inst& inst : block->Instructions()) {
@@ -177,6 +123,12 @@ void BlitConstantsPass(Environment& env, IR::Program& program) {
                 continue;
             }
             if (!inst.Arg(0).IsImmediate() || inst.Arg(0).U32() != 17 || !inst.Arg(1).IsImmediate()) {
+                continue;
+            }
+            // ponytail: fragment shaders only get the UV clamp/dither block (0x30+). Other reads of
+            // bank 24 in a fragment shader are HDR output constants (the tonemap PQ scale and gate)
+            // that the blit block would turn into 1/width, which dimmed Fast Fusion's whole frame.
+            if (env.ShaderStage() == Stage::Fragment && inst.Arg(1).U32() < 0x30) {
                 continue;
             }
             IR::IREmitter ir{*block, IR::Block::InstructionList::s_iterator_to(inst)};

@@ -6,8 +6,6 @@
 
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
-#include "shader_recompiler/backend/spirv/mma_layout.h"
-#include "shader_recompiler/backend/spirv/mma_software.h"
 
 namespace Shader::Backend::SPIRV {
 namespace {
@@ -92,17 +90,17 @@ Id GuestLane(EmitContext& ctx, Id index) {
     return ctx.OpBitwiseAnd(ctx.U32[1], index, ctx.Const(31U));
 }
 
-bool UseShuffleFallback(EmitContext& ctx) {
-    return ctx.profile.has_broken_spirv_subgroup_shuffle ||
-           (ctx.profile.has_broken_spirv_fragment_shuffle && ctx.stage == Stage::Fragment);
-}
-
-Id ShuffleAbsolute(EmitContext& ctx, Id value, Id src_thread_id, bool broadcast) {
-    if (!broadcast) {
+Id ShuffleAbsolute(EmitContext& ctx, Id value, Id src_thread_id) {
+    const bool replace_dynamic_shuffle =
+        ctx.profile.has_broken_spirv_dynamic_subgroup_shuffle && ctx.stage != Stage::Compute;
+    if (!ctx.profile.has_broken_spirv_subgroup_shuffle && !replace_dynamic_shuffle) {
         return ctx.OpGroupNonUniformShuffle(ctx.U32[1], SubgroupScope(ctx), value, src_thread_id);
     }
     Id result{ctx.u32_zero_value};
-    for (u32 lane = 0; lane < ctx.profile.max_subgroup_size; ++lane) {
+    // The AMD path is enabled per stage only with an enforced 32-lane subgroup.
+    // Qualcomm retains its full host-subgroup fallback.
+    const u32 loop_lanes = replace_dynamic_shuffle ? 32U : ctx.profile.max_subgroup_size;
+    for (u32 lane = 0; lane < loop_lanes; ++lane) {
         const Id read{
             ctx.OpGroupNonUniformBroadcast(ctx.U32[1], SubgroupScope(ctx), value, ctx.Const(lane))};
         const Id matches{ctx.OpIEqual(ctx.U1, src_thread_id, ctx.Const(lane))};
@@ -112,9 +110,8 @@ Id ShuffleAbsolute(EmitContext& ctx, Id value, Id src_thread_id, bool broadcast)
 }
 
 Id ShuffleRelative(EmitContext& ctx, Id value, Id delta, Id src_thread_id, spv::Op op) {
-    const bool broadcast{UseShuffleFallback(ctx)};
-    if (!ctx.profile.support_shuffle_relative || broadcast) {
-        return ShuffleAbsolute(ctx, value, HostThreadId(ctx, src_thread_id), broadcast);
+    if (!ctx.profile.support_shuffle_relative) {
+        return ShuffleAbsolute(ctx, value, HostThreadId(ctx, src_thread_id));
     }
     const Id result{ctx.OpGroupNonUniformShuffleXor(ctx.U32[1], SubgroupScope(ctx), value, delta)};
     ctx.opcode_rewrites.emplace_back(result.value, op);
@@ -262,8 +259,7 @@ Id EmitShuffleIndex(EmitContext& ctx, IR::Inst* inst, Id value, Id index, Id cla
         return ctx.OpSelect(ctx.U32[1], in_range, BroadcastLane(ctx, value, lane.U32() & 31),
                             value);
     }
-    const Id shuffled{
-        ShuffleAbsolute(ctx, value, HostThreadId(ctx, src_thread_id), UseShuffleFallback(ctx))};
+    const Id shuffled{ShuffleAbsolute(ctx, value, HostThreadId(ctx, src_thread_id))};
     return ctx.OpSelect(ctx.U32[1], in_range, shuffled, value);
 }
 
@@ -316,11 +312,7 @@ Id EmitShuffleButterfly(EmitContext& ctx, IR::Inst* inst, Id value, Id index, Id
     const Id in_range{ctx.OpSLessThanEqual(ctx.U1, src_thread_id, max_thread_id)};
 
     SetInBoundsFlag(inst, in_range);
-    // (longshot) through the broadcasts where shuffles are broken (UseShuffleFallback: AMD's fragment stages, Lichii #273),
-    // as the absolute and relative shuffles are; #273 left SHFL.BFLY native, and some of Kokiri Forest's plants use it
-    const Id shuffled{UseShuffleFallback(ctx)
-                          ? ShuffleAbsolute(ctx, value, HostThreadId(ctx, src_thread_id), true)
-                          : ctx.OpGroupNonUniformShuffleXor(ctx.U32[1], SubgroupScope(ctx), value, mask)};
+    const Id shuffled{ctx.OpGroupNonUniformShuffleXor(ctx.U32[1], SubgroupScope(ctx), value, mask)};
     return ctx.OpSelect(ctx.U32[1], in_range, shuffled, value);
 }
 
@@ -331,8 +323,7 @@ Id EmitQuadBroadcast(EmitContext& ctx, Id value, Id lane) {
     const Id base{ctx.OpBitwiseAnd(ctx.U32[1], GetThreadId(ctx), ctx.Const(~3u))};
     const Id local_lane{ctx.OpBitwiseAnd(ctx.U32[1], lane, ctx.Const(3u))};
     const Id src_thread_id{ctx.OpBitwiseOr(ctx.U32[1], base, local_lane)};
-    return ShuffleAbsolute(ctx, value, src_thread_id,
-                           ctx.profile.has_broken_spirv_subgroup_shuffle);
+    return ShuffleAbsolute(ctx, value, src_thread_id);
 }
 
 Id EmitQuadSwap(EmitContext& ctx, Id value, Id direction) {
@@ -343,8 +334,6 @@ Id EmitQuadSwap(EmitContext& ctx, Id value, Id direction) {
         return result;
     }
     const Id xor_mask{ctx.OpIAdd(ctx.U32[1], direction, ctx.Const(1u))};
-    // (longshot) not through UseShuffleFallback's broadcasts: a program with quad shuffles alone (uses_quad_shuffles) has
-    // neither the lane id input nor the ballot capability they need, and the SPIR-V made with them crashed the start
     return ctx.OpGroupNonUniformShuffleXor(ctx.U32[1], SubgroupScope(ctx), value, xor_mask);
 }
 
@@ -378,59 +367,6 @@ Id EmitDPdxCoarse(EmitContext& ctx, Id op_a) {
 
 Id EmitDPdyCoarse(EmitContext& ctx, Id op_a) {
     return ctx.OpDPdyCoarse(ctx.F32[1], op_a);
-}
-
-// (longshot) HMMA in software (mma_software.h): the 32 lanes' fragments through subgroup operations in one helper function,
-// accumulated with FMA in f32 and rounded to f16 after every 8 columns of K, as HMMA.F16 does. It needs no cooperative matrices
-// (RX_VK_MMA_SOFTWARE=1, vk_coopmat.cpp); the form is the one vk_coopmat.cpp's self-test chose for this device (mma_software_form).
-void DefineSoftwareMatrixFunction(EmitContext& ctx) {
-    ctx.AddCapability(spv::Capability::GroupNonUniform);
-    ctx.AddCapability(spv::Capability::GroupNonUniformShuffle);
-    if (!ctx.profile.SupportsSubgroupStage(ctx.stage) || ctx.profile.has_broken_spirv_subgroup_shuffle)
-        throw NotImplementedException("Software HMMA requires subgroup shuffle support");
-    const auto form = static_cast<SoftwareMmaForm>(mma_software_form);
-    const bool quad = form != SoftwareMmaForm::Loop && mma_software_quad;
-    if (quad) ctx.AddCapability(spv::Capability::GroupNonUniformQuad);
-    const SoftwareMmaTypes types{ctx.U32[1], ctx.U32[2], ctx.U32[4], ctx.F32[1], ctx.F32[2], ctx.F16[1], ctx.U1};
-    ctx.software_matrix_function = DefineSoftwareMma(ctx, types, ctx.subgroup_local_invocation_id, form, quad);
-}
-
-
-// (longshot) HMMA_nx2: D(16x8) = A(16x16) * B(16x8) + C on the subgroup's cooperative matrices. Each
-// lane's fragment registers hold its elements in the console's order (two f16 a word); they go to and come
-// from the device's elements in its own order (mma_layout.h, measured by vk_coopmat.cpp).
-Id EmitMatrixMulAddF16(EmitContext& ctx, Id a, Id b, Id c) {
-    if (mma_software) return ctx.OpFunctionCall(ctx.U32[2], ctx.software_matrix_function, a, b, c);
-    const Id f16{ctx.F16[1]};
-    const Id scope{ctx.Const(static_cast<u32>(spv::Scope::Subgroup))};
-    const auto type = [&](u32 rows, u32 columns, spv::CooperativeMatrixUse use) {
-        return ctx.TypeCooperativeMatrixKHR(f16, scope, ctx.Const(rows), ctx.Const(columns),
-                                            ctx.Const(static_cast<u32>(use)));
-    };
-    const Id a_type{type(16, 16, spv::CooperativeMatrixUse::MatrixAKHR)};
-    const Id b_type{type(16, 8, spv::CooperativeMatrixUse::MatrixBKHR)};
-    const Id c_type{type(16, 8, spv::CooperativeMatrixUse::MatrixAccumulatorKHR)};
-    const Id zero{ctx.Constant(f16, 0U)};
-    const auto load = [&](Id matrix_type, Id words, u32 count, const auto& order) {
-        Id m{ctx.OpCompositeConstruct(matrix_type, zero)};
-        for (u32 w = 0; w < count; ++w) {
-            const Id word{count == 1 ? words : ctx.OpCompositeExtract(ctx.U32[1], words, w)};
-            const Id pair{ctx.OpBitcast(ctx.F16[2], word)};
-            for (u32 h = 0; h < 2; ++h) {
-                m = ctx.OpCompositeInsert(matrix_type, ctx.OpCompositeExtract(f16, pair, h), m, order[w * 2 + h]);
-            }
-        }
-        return m;
-    };
-    const Id d{ctx.OpCooperativeMatrixMulAddKHR(c_type, load(a_type, a, 4, mma_order_a), load(b_type, b, 2, mma_order_b),
-                                                    load(c_type, c, 2, mma_order_c))};
-    Id out[2];
-    for (u32 w = 0; w < 2; ++w) {
-        const Id pair{ctx.OpCompositeConstruct(ctx.F16[2], ctx.OpCompositeExtract(f16, d, mma_order_c[w * 2]),
-                                               ctx.OpCompositeExtract(f16, d, mma_order_c[w * 2 + 1]))};
-        out[w] = ctx.OpBitcast(ctx.U32[1], pair);
-    }
-    return ctx.OpCompositeConstruct(ctx.U32[2], out[0], out[1]);
 }
 
 } // namespace Shader::Backend::SPIRV

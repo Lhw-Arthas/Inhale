@@ -1,50 +1,20 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <tuple>
-
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 #include "shader_recompiler/frontend/ir/modifiers.h"
 
 namespace Shader::Backend::SPIRV {
 namespace {
-void DecorateNonUniform(EmitContext& ctx, Id object) {   // (as emit_spirv_image.cpp's)
-    if (ctx.non_uniform_ids.insert(object.value).second) {
-        ctx.Decorate(object, spv::Decoration::NonUniform);
+Id Image(EmitContext& ctx, IR::TextureInstInfo info) {
+    if (info.type == TextureType::Buffer) {
+        const ImageBufferDefinition def{ctx.image_buffers.at(info.descriptor_index)};
+        return def.id;
+    } else {
+        const ImageDefinition def{ctx.images.at(info.descriptor_index)};
+        return def.id;
     }
-}
-
-// (longshot) The image an atomic works on: the image itself, or for an array (count above 1, DefineImages and
-// DefineImageBuffers) the element the texture pass's index picks, as Image() in emit_spirv_image.cpp takes it for loads and
-// stores; nonuniform (true) where the profile indexes that kind of array so. A single image still takes no index
-Id Image(EmitContext& ctx, IR::TextureInstInfo info, const IR::Value& index, bool& non_uniform) {
-    const bool buffer{info.type == TextureType::Buffer};
-    const auto [id, pointer_type, count]{[&] {
-        if (buffer) {
-            const ImageBufferDefinition& def{ctx.image_buffers.at(info.descriptor_index)};
-            return std::tuple{def.id, def.pointer_type, def.count};
-        }
-        const ImageDefinition& def{ctx.images.at(info.descriptor_index)};
-        return std::tuple{def.id, def.pointer_type, def.count};
-    }()};
-    non_uniform = false;
-    if (count <= 1) {
-        if (!index.IsImmediate() || index.U32() != 0) {
-            throw NotImplementedException("Image indexing");
-        }
-        return id;
-    }
-    const Id idx{index.IsImmediate() ? ctx.Const(index.U32()) : ctx.Def(index)};
-    const Id element{ctx.OpAccessChain(pointer_type, id, idx)};
-    non_uniform = !index.IsImmediate() && (buffer ? ctx.profile.support_storage_texel_buffer_array_nonuniform_indexing
-                                                  : ctx.profile.support_storage_image_array_nonuniform_indexing);
-    if (non_uniform) {
-        DecorateNonUniform(ctx, idx);
-        DecorateNonUniform(ctx, element);
-        (buffer ? ctx.uses_nonuniform_storage_texel_buffer : ctx.uses_nonuniform_storage_image) = true;
-    }
-    return element;
 }
 
 std::pair<Id, Id> AtomicArgs(EmitContext& ctx) {
@@ -55,13 +25,13 @@ std::pair<Id, Id> AtomicArgs(EmitContext& ctx) {
 
 Id ImageAtomicU32(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id coords, Id value,
                   Id (Sirit::Module::*atomic_func)(Id, Id, Id, Id, Id)) {
-    const auto info{inst->Flags<IR::TextureInstInfo>()};
-    bool non_uniform{};
-    const Id image{Image(ctx, info, index, non_uniform)};
-    const Id pointer{ctx.OpImageTexelPointer(ctx.image_u32, image, coords, ctx.Const(0U))};
-    if (non_uniform) {
-        DecorateNonUniform(ctx, pointer);
+    if (!index.IsImmediate() || index.U32() != 0) {
+        // TODO: handle layers
+        throw NotImplementedException("Image indexing");
     }
+    const auto info{inst->Flags<IR::TextureInstInfo>()};
+    const Id image{Image(ctx, info)};
+    const Id pointer{ctx.OpImageTexelPointer(ctx.image_u32, image, coords, ctx.Const(0U))};
     const auto [scope, semantics]{AtomicArgs(ctx)};
     return (ctx.*atomic_func)(ctx.U32[1], pointer, scope, semantics, value);
 }
@@ -94,12 +64,12 @@ Id EmitImageAtomicUMax32(EmitContext& ctx, IR::Inst* inst, const IR::Value& inde
 
 Id EmitImageAtomicInc32(EmitContext&, IR::Inst*, const IR::Value&, Id, Id) {
     // TODO: This is not yet implemented
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitImageAtomicDec32(EmitContext&, IR::Inst*, const IR::Value&, Id, Id) {
     // TODO: This is not yet implemented
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitImageAtomicAnd32(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id coords,
@@ -123,91 +93,91 @@ Id EmitImageAtomicExchange32(EmitContext& ctx, IR::Inst* inst, const IR::Value& 
 }
 
 Id EmitBindlessImageAtomicIAdd32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicSMin32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicUMin32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicSMax32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicUMax32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicInc32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicDec32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicAnd32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicOr32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicXor32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBindlessImageAtomicExchange32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicIAdd32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicSMin32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicUMin32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicSMax32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicUMax32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicInc32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicDec32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicAnd32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicOr32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicXor32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 Id EmitBoundImageAtomicExchange32(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+    throw NotImplementedException("SPIR-V Instruction {}", __func__);
 }
 
 } // namespace Shader::Backend::SPIRV

@@ -47,9 +47,6 @@ struct Profile {
     bool support_typeless_image_loads{};
     bool support_demote_to_helper_invocation{};
     bool support_int64_atomics{};
-    /// (longshot) float adds to storage buffers as one OpAtomicFAddEXT (VK_EXT_shader_atomic_float's
-    /// shaderBufferFloat32AtomicAdd), not a compare-exchange loop; with support_descriptor_aliasing only (an f32 view)
-    bool support_float32_atomic_add{};
     bool support_shared_int64_atomics{};
     bool support_derivative_control{};
     bool support_geometry_shader_passthrough{};
@@ -107,8 +104,15 @@ struct Profile {
     /// Some drivers have broken support for OpVectorExtractDynamic on subgroup mask inputs
     bool has_broken_spirv_subgroup_mask_vector_extract_dynamic{};
     bool has_broken_spirv_subgroup_shuffle{};
-    bool has_broken_spirv_fragment_shuffle{};   // (Lichii #273: AMD's proprietary driver, fragment stages only)
+    /// AMD graphics workaround, enabled only when this stage is forced to subgroup size 32.
+    /// Compute must keep Shuffle: the broadcast loop can hang AMDVLK pipeline compilation.
+    bool has_broken_spirv_dynamic_subgroup_shuffle{};
     u32 max_subgroup_size{};
+
+    bool support_cooperative_matrix{};
+    bool support_software_tensor{};
+    u32 max_compute_shared_memory_size{};
+    u32 max_tensor_workgroup_size{};
 
     u32 gl_max_compute_smem_size{};
 

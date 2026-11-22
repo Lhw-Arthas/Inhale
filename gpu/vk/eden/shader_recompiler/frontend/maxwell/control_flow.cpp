@@ -256,12 +256,18 @@ void CFG::AnalyzeLabel(FunctionId function_id, Label& label) {
 bool CFG::InspectVisitedBlocks(FunctionId function_id, const Label& label) {
     const Location pc{label.address};
     Function& function{functions[function_id]};
-    const auto it{
-        std::ranges::find_if(function.blocks, [pc](auto& block) { return block.Contains(pc); })};
-    if (it == function.blocks.end()) {
+    // Blocks are sorted by their first instruction and do not overlap; empty blocks (virtual
+    // blocks) contain nothing. So only the last non-empty block starting at or before pc can
+    // contain it. A linear search over all blocks for every label was quadratic.
+    auto it{function.blocks.upper_bound(pc, Compare{})};
+    while (it != function.blocks.begin() && std::prev(it)->begin == std::prev(it)->end) {
+        --it;
+    }
+    if (it == function.blocks.begin() || !std::prev(it)->Contains(pc)) {
         // Address has not been visited
         return false;
     }
+    --it;
     Block* const visited_block{&*it};
     if (visited_block->begin == pc) {
         throw LogicError("Dangling block");
@@ -433,15 +439,8 @@ CFG::AnalysisState CFG::AnalyzeBRX(Block* block, Location pc, Instruction inst, 
                                    FunctionId function_id) {
     const std::optional brx_table{TrackIndirectBranchTable(env, pc, program_start)};
     if (!brx_table) {
-        // (amd-fix, diagnosis) the instructions before the jump, newest first: the pattern the tracker did not know
-        // (OoT's foliage mesh programs fail here)
-        std::string seen;
-        Location at{pc};
-        for (int k = 0; k < 14 && at >= program_start; ++k, --at) {
-            const u64 raw{env.ReadInstruction(at.Offset())};
-            seen += fmt::format(" {}:{:016x}", NameOf(Decode(raw)), raw);
-        }
-        throw NotImplementedException("Failed to track indirect branch at {:#x}:{}", pc.Offset(), seen);
+        TrackIndirectBranchTable(env, pc, program_start);
+        throw NotImplementedException("Failed to track indirect branch");
     }
     const IR::FlowTest flow_test{inst.branch.flow_test};
     const Predicate pred{inst.Pred()};
